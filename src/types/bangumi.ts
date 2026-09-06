@@ -120,6 +120,57 @@ export interface Paged<T> {
   offset?: number
 }
 
+/** GET /v0/subjects/{id}/subjects 关联条目（relation 为开放式中文名：前传/续集/主线/番外/游戏/书籍/联动…） */
+export interface RelatedSubject {
+  id: number
+  type: number
+  name: string
+  name_cn: string
+  images?: BangumiImage
+  relation: string
+}
+
+/** GET /v0/indices/{id} 目录信息 */
+export interface IndexInfo {
+  id: number
+  title: string
+  desc?: string
+  total?: number
+  creator?: { username?: string; nickname?: string }
+  nsfw?: boolean
+  updated_at?: string
+}
+
+/** GET /v0/indices/{id}/subjects 目录内条目（无评分字段） */
+export interface IndexSubjectItem {
+  id: number
+  type: number
+  name: string
+  name_cn?: string
+  images?: BangumiImage
+  date?: string
+  comment?: string
+}
+
+/** POST /v0/search/characters 结果项 */
+export interface CharacterSearchItem {
+  id: number
+  name: string
+  name_cn?: string
+  images?: BangumiImage
+  nsfw?: boolean
+}
+
+/** POST /v0/search/persons 结果项 */
+export interface PersonSearchItem {
+  id: number
+  name: string
+  name_cn?: string
+  images?: BangumiImage
+  career?: string[]
+  nsfw?: boolean
+}
+
 /** Bangumi 收藏类型：1=想看 2=看过 3=在看 4=搁置 5=抛弃 */
 export type ServerCollectionType = 1 | 2 | 3 | 4 | 5
 

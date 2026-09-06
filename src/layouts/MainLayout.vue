@@ -15,7 +15,7 @@ const collapsed = ref(false)
 
 const menuOptions = computed<MenuOption[]>(() => [
   { label: '📅 每周新番', key: 'calendar' },
-  { label: '🔥 热门在播', key: 'discover' },
+  { label: '🧭 发现', key: 'discover' },
   { label: '🔍 搜索', key: 'search' },
   { label: `📚 我的追番${library.count ? ` (${library.count})` : ''}`, key: 'library' },
   { label: '⚙️ 设置', key: 'settings' },

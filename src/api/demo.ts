@@ -1,13 +1,20 @@
 import type {
   CalendarDay,
   CalendarSubject,
+  CharacterSearchItem,
   Episode,
+  IndexInfo,
+  IndexSubjectItem,
+  Paged,
+  PersonSearchItem,
+  RelatedSubject,
   SearchResponse,
   SearchResultItem,
   SubjectCharacter,
   SubjectDetail,
   SubjectPerson,
 } from '../types/bangumi'
+import type { SearchAdvanced } from './bangumi'
 
 interface DemoSubject extends CalendarSubject {
   tags: { name: string; count: number }[]
@@ -202,6 +209,7 @@ export function demoSearch(
   sort = 'match',
   limit = 24,
   offset = 0,
+  advanced?: SearchAdvanced,
 ): SearchResponse {
   const kw = keyword.trim().toLowerCase()
   const includes = tags.filter((t) => !t.startsWith('-'))
@@ -210,7 +218,18 @@ export function demoSearch(
     const kwOk = !kw || s.name_cn.toLowerCase().includes(kw) || s.name.toLowerCase().includes(kw)
     const includeOk = includes.every((t) => s.tags.some((x) => x.name === t))
     const excludeOk = !excludes.some((t) => s.tags.some((x) => x.name === t))
-    return kwOk && includeOk && excludeOk
+    if (!kwOk || !includeOk || !excludeOk) return false
+    // D3 高级筛选在演示数据上同样生效（air_date 为 YYYY-MM-DD，可直接字符串比较）
+    if (advanced?.airDateFrom && (s.air_date ?? '') < advanced.airDateFrom) return false
+    if (advanced?.airDateTo && (s.air_date ?? '') >= advanced.airDateTo) return false
+    const score = s.rating?.score ?? 0
+    if (advanced?.ratingMin !== undefined && score < advanced.ratingMin) return false
+    if (advanced?.ratingMax !== undefined && score > advanced.ratingMax) return false
+    const ratingTotal = s.rating?.total ?? 0
+    if (advanced?.ratingCountMin !== undefined && ratingTotal < advanced.ratingCountMin) return false
+    if (advanced?.ratingCountMax !== undefined && ratingTotal > advanced.ratingCountMax) return false
+    if (advanced?.rankMax !== undefined && (s.rating?.rank ?? Infinity) > advanced.rankMax) return false
+    return true
   })
   let sorted = [...hit]
   if (sort === 'heat') sorted.sort((a, b) => (b.collection?.doing ?? 0) - (a.collection?.doing ?? 0))
@@ -222,4 +241,92 @@ export function demoSearch(
     limit,
     offset,
   }
+}
+
+/** D1 演示：按年代浏览（与在线接口同构：type=2 动画 + year/month + date/rank 排序） */
+export function demoBrowseSubjects(opts: {
+  year: number
+  month?: number
+  sort?: 'date' | 'rank'
+  limit?: number
+  offset?: number
+}): Paged<SearchResultItem> {
+  const limit = opts.limit ?? 24
+  const offset = opts.offset ?? 0
+  const hit = DEMO_SUBJECTS.filter((s) => {
+    if (!s.air_date?.startsWith(String(opts.year))) return false
+    if (opts.month && Number(s.air_date.slice(5, 7)) !== opts.month) return false
+    return true
+  })
+  const sorted = [...hit]
+  if (opts.sort === 'rank') sorted.sort((a, b) => (a.rating?.rank ?? 99999) - (b.rating?.rank ?? 99999))
+  else sorted.sort((a, b) => (b.air_date ?? '').localeCompare(a.air_date ?? ''))
+  return {
+    data: sorted.slice(offset, offset + limit) as SearchResultItem[],
+    total: sorted.length,
+    limit,
+    offset,
+  }
+}
+
+/** D2 演示：关联条目（确定性映射到演示库中相邻条目，保证演示模式下可跳转） */
+const DEMO_RELATIONS = ['续集', '前传', '番外篇', '不同演绎']
+export function demoRelatedSubjects(id: number): RelatedSubject[] {
+  const idx = DEMO_SUBJECTS.findIndex((s) => s.id === id)
+  if (idx < 0) return []
+  return DEMO_RELATIONS.map((relation, i) => {
+    const s = DEMO_SUBJECTS[(idx + i + 1) % DEMO_SUBJECTS.length]
+    return { id: s.id, type: 2, name: s.name, name_cn: s.name_cn, images: s.images, relation }
+  })
+}
+
+/** D5 演示：按 ID 查看目录（任意 ID 返回同一演示目录） */
+export function demoIndex(id: number): IndexInfo {
+  return {
+    id,
+    title: '演示目录：闭眼入的治愈系片单',
+    desc: '演示模式下内置的目录示例：收录了演示库里口碑最好的治愈向作品，适合周末补番。（在线模式可在 bgm.tv 找到目录后粘贴链接查看）',
+    total: DEMO_SUBJECTS.length - 1,
+    creator: { username: 'demo', nickname: '演示管理员' },
+    nsfw: false,
+    updated_at: '2026-08-30T10:00:00+08:00',
+  }
+}
+
+export function demoIndexSubjects(id: number, limit = 30, offset = 0): Paged<IndexSubjectItem> {
+  void id // 演示模式任意 ID 返回同一目录内容
+  const items: IndexSubjectItem[] = DEMO_SUBJECTS.filter((s) => (s.rating?.score ?? 0) >= 7.5).map((s, i) => ({
+    id: s.id,
+    type: 2,
+    name: s.name,
+    name_cn: s.name_cn,
+    images: s.images,
+    date: s.air_date,
+    comment: ['口碑佳作', '安心补番', '适合二刷', '氛围拉满'][i % 4],
+  }))
+  return { data: items.slice(offset, offset + limit), total: items.length, limit, offset }
+}
+
+/** D6 演示：角色/人物搜索（固定结果，头像走 PosterImage 渐变占位） */
+export function demoSearchCharacters(keyword: string, limit = 24, offset = 0): Paged<CharacterSearchItem> {
+  void keyword
+  const items: CharacterSearchItem[] = Array.from({ length: 6 }, (_, i) => ({
+    id: 800001 + i,
+    name: `演示角色 ${i + 1}`,
+    name_cn: `演示角色 ${i + 1}（命中「${keyword || '任意'}」）`,
+    nsfw: false,
+  }))
+  return { data: items.slice(offset, offset + limit), total: items.length, limit, offset }
+}
+
+export function demoSearchPersons(keyword: string, limit = 24, offset = 0): Paged<PersonSearchItem> {
+  void keyword
+  const items: PersonSearchItem[] = Array.from({ length: 5 }, (_, i) => ({
+    id: 900001 + i,
+    name: `演示声优 ${i + 1}`,
+    name_cn: `演示声优 ${i + 1}（命中「${keyword || '任意'}」）`,
+    career: i % 2 ? ['声优', '演员'] : ['声优'],
+    nsfw: false,
+  }))
+  return { data: items.slice(offset, offset + limit), total: items.length, limit, offset }
 }

@@ -2,9 +2,15 @@ import { useSettingsStore } from '../stores/settings'
 import type {
   BangumiMe,
   CalendarDay,
+  CharacterSearchItem,
   Episode,
+  IndexInfo,
+  IndexSubjectItem,
   Paged,
+  PersonSearchItem,
+  RelatedSubject,
   SearchResponse,
+  SearchResultItem,
   SubjectCharacter,
   SubjectDetail,
   SubjectPerson,
@@ -54,6 +60,7 @@ const subjectCache = createTtlCache<SubjectDetail>(SUBJECT_TTL)
 const charactersCache = createTtlCache<SubjectCharacter[]>(SUB_RESOURCE_TTL)
 const personsCache = createTtlCache<SubjectPerson[]>(SUB_RESOURCE_TTL)
 const episodesCache = createTtlCache<Episode[]>(SUB_RESOURCE_TTL)
+const relatedCache = createTtlCache<RelatedSubject[]>(SUB_RESOURCE_TTL)
 
 function baseUrl(): string {
   const s = useSettingsStore()
@@ -159,11 +166,28 @@ export const bangumiApi = {
       body: JSON.stringify({ episode_id: episodeIds, type }),
     })
   },
-  search(keyword: string, tags: string[], sort: string, limit = 24, offset = 0): Promise<SearchResponse> {
+  search(keyword: string, tags: string[], sort: string, limit = 24, offset = 0, advanced?: SearchAdvanced): Promise<SearchResponse> {
     // R18 开关统一控制：隐藏时只返回非 R18；显示时不传该字段（返回全部，能否看到 R18 取决于 Bangumi 鉴权）
     const filter: Record<string, unknown> = { type: [2] }
     if (useSettingsStore().hideNsfw) filter.nsfw = false
     if (tags.length) filter.tag = tags
+    // D3 高级筛选：air_date/rating/rating_count/rank，比较表达式为字符串（如 ">=2024-01-01"），多值「且」
+    if (advanced) {
+      const airDate: string[] = []
+      if (advanced.airDateFrom) airDate.push(`>=${advanced.airDateFrom}`)
+      // 实测：air_date 的 <= 表达式服务端恒匹配 0 条（官方示例亦只用 >= 与 <），上限一律用 < 表达
+      if (advanced.airDateTo) airDate.push(`<${advanced.airDateTo}`)
+      if (airDate.length) filter.air_date = airDate
+      const rating: string[] = []
+      if (advanced.ratingMin !== undefined) rating.push(`>=${advanced.ratingMin}`)
+      if (advanced.ratingMax !== undefined) rating.push(`<=${advanced.ratingMax}`)
+      if (rating.length) filter.rating = rating
+      const ratingCount: string[] = []
+      if (advanced.ratingCountMin !== undefined) ratingCount.push(`>=${advanced.ratingCountMin}`)
+      if (advanced.ratingCountMax !== undefined) ratingCount.push(`<=${advanced.ratingCountMax}`)
+      if (ratingCount.length) filter.rating_count = ratingCount
+      if (advanced.rankMax !== undefined) filter.rank = [`<=${advanced.rankMax}`]
+    }
     // 注意：limit/offset 是 query 参数（不在请求体里，放 body 会被忽略导致分页失效）；sort 在请求体里
     return request<SearchResponse>(`/v0/search/subjects?limit=${limit}&offset=${offset}`, {
       method: 'POST',
@@ -171,6 +195,59 @@ export const bangumiApi = {
       body: JSON.stringify({ keyword, filter, sort }),
     })
   },
+  /** D1 按年代浏览条目（官方注明第一页缓存 24h；结果项含 nsfw 字段可直接过滤） */
+  browseSubjects(opts: { year: number; month?: number; sort?: 'date' | 'rank'; limit?: number; offset?: number }): Promise<Paged<SearchResultItem>> {
+    const p = new URLSearchParams({ type: '2' })
+    p.set('year', String(opts.year))
+    if (opts.month) p.set('month', String(opts.month))
+    if (opts.sort) p.set('sort', opts.sort)
+    p.set('limit', String(opts.limit ?? 24))
+    p.set('offset', String(opts.offset ?? 0))
+    return request<Paged<SearchResultItem>>(`/v0/subjects?${p.toString()}`)
+  },
+  /** D2 关联条目（前传/续集/主线/番外等，relation 为开放式中文名） */
+  async relatedSubjects(id: number): Promise<RelatedSubject[]> {
+    const cached = relatedCache.get(String(id))
+    if (cached) return cached
+    const data = await request<RelatedSubject[]>(`/v0/subjects/${id}/subjects`)
+    relatedCache.set(String(id), data)
+    return data
+  },
+  /** D5 按 ID 查看目录（官方 v0 无目录列表端点，仅支持按 ID 查看） */
+  index(id: number): Promise<IndexInfo> {
+    return request<IndexInfo>(`/v0/indices/${id}`)
+  },
+  indexSubjects(id: number, limit = 30, offset = 0): Promise<Paged<IndexSubjectItem>> {
+    return request<Paged<IndexSubjectItem>>(`/v0/indices/${id}/subjects?limit=${limit}&offset=${offset}`)
+  },
+  /** D6 角色/人物搜索（实验性接口；keyword 必填） */
+  searchCharacters(keyword: string, limit = 24, offset = 0): Promise<Paged<CharacterSearchItem>> {
+    return request<Paged<CharacterSearchItem>>(`/v0/search/characters?limit=${limit}&offset=${offset}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword }),
+    })
+  },
+  searchPersons(keyword: string, limit = 24, offset = 0): Promise<Paged<PersonSearchItem>> {
+    return request<Paged<PersonSearchItem>>(`/v0/search/persons?limit=${limit}&offset=${offset}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword }),
+    })
+  },
+}
+
+/** D3 高级筛选参数（映射为搜索接口的 filter 比较表达式） */
+export interface SearchAdvanced {
+  /** 开播日期下限（含），YYYY-MM-DD */
+  airDateFrom?: string
+  /** 开播日期上限（不含），YYYY-MM-DD —— air_date 的 <= 服务端不支持，统一用 < 表达 */
+  airDateTo?: string
+  ratingMin?: number
+  ratingMax?: number
+  ratingCountMin?: number
+  ratingCountMax?: number
+  rankMax?: number
 }
 
 export function clearApiCache() {
@@ -179,4 +256,5 @@ export function clearApiCache() {
   charactersCache.clear()
   personsCache.clear()
   episodesCache.clear()
+  relatedCache.clear()
 }

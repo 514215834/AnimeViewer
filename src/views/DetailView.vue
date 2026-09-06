@@ -21,8 +21,8 @@ import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
 import type { WatchStatus } from '../stores/library'
-import { charAvatarUrl, upgradeStoredCover } from '../utils/image'
-import type { Episode, SubjectCharacter, SubjectDetail, SubjectPerson } from '../types/bangumi'
+import { charAvatarUrl, coverCardUrl, upgradeStoredCover } from '../utils/image'
+import type { Episode, RelatedSubject, SubjectCharacter, SubjectDetail, SubjectPerson } from '../types/bangumi'
 import PosterImage from '../components/PosterImage.vue'
 
 const route = useRoute()
@@ -45,6 +45,7 @@ const activeTab = ref('info')
 const characters = ref<SubjectCharacter[] | null>(null)
 const persons = ref<SubjectPerson[] | null>(null)
 const episodes = ref<Episode[] | null>(null)
+const related = ref<RelatedSubject[] | null>(null)
 const tabError = ref('')
 
 const id = computed(() => Number(route.params.id))
@@ -70,6 +71,7 @@ async function load() {
   characters.value = null
   persons.value = null
   episodes.value = null
+  related.value = null
   activeTab.value = 'info'
   tabError.value = ''
   revealed.value = false
@@ -97,10 +99,35 @@ async function loadTabData(tab: string) {
       persons.value = await dataSource.persons(subject.value.id)
     } else if (tab === 'eps' && episodes.value === null) {
       episodes.value = await dataSource.episodes(subject.value.id)
+    } else if (tab === 'related' && related.value === null) {
+      related.value = await dataSource.relatedSubjects(subject.value.id)
     }
   } catch (e) {
     tabError.value = e instanceof Error ? e.message : String(e)
   }
+}
+
+/** 系列作品按关系分组（relation 为开放式中文名，按首次出现顺序排列） */
+const relatedGroups = computed<{ relation: string; items: RelatedSubject[] }[]>(() => {
+  const groups: { relation: string; items: RelatedSubject[] }[] = []
+  const byRelation = new Map<string, RelatedSubject[]>()
+  for (const r of related.value ?? []) {
+    let list = byRelation.get(r.relation)
+    if (!list) {
+      list = []
+      byRelation.set(r.relation, list)
+      groups.push({ relation: r.relation, items: list })
+    }
+    list.push(r)
+  }
+  return groups
+})
+
+/** 关联条目的类型标注（动画条目不额外标注，非动画条目提示媒介） */
+const SUBJECT_TYPE_LABELS: Record<number, string> = { 1: '书籍', 2: '动画', 3: '音乐', 4: '游戏', 6: '三次元' }
+
+function subjectTypeLabel(type: number): string {
+  return SUBJECT_TYPE_LABELS[type] ?? '条目'
 }
 
 function add() {
@@ -296,6 +323,42 @@ function charAvatar(images?: SubjectCharacter['images']): string {
             </NSpin>
           </NTabPane>
 
+          <NTabPane name="related" tab="系列作品">
+            <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
+            <NSpin :show="related === null" v-if="activeTab === 'related'">
+              <div v-if="related && !related.length" class="empty-hint">暂无关联条目</div>
+              <template v-else-if="related">
+                <p class="related-hint">同一系列 / 企划下的关联作品，点击封面跳转（适合确认「该从哪部看起」）</p>
+                <section v-for="g in relatedGroups" :key="g.relation" class="related-group">
+                  <div class="related-group-title">
+                    <NTag size="small" type="primary" :bordered="false">{{ g.relation }}</NTag>
+                    <span class="related-group-count">{{ g.items.length }}</span>
+                  </div>
+                  <div class="related-grid">
+                    <div
+                      v-for="r in g.items"
+                      :key="r.id"
+                      class="related-card"
+                      :title="r.name_cn || r.name"
+                      @click="router.push({ name: 'subject', params: { id: String(r.id) } })"
+                    >
+                      <div class="related-poster">
+                        <PosterImage
+                          :src="coverCardUrl(r.images, settings.imageQuality)"
+                          :title="r.name_cn || r.name"
+                          :subject-id="r.id"
+                        />
+                        <span v-if="r.type !== 2" class="related-type">{{ subjectTypeLabel(r.type) }}</span>
+                      </div>
+                      <div class="related-name">{{ r.name_cn || r.name }}</div>
+                      <div v-if="r.name_cn && r.name !== r.name_cn" class="related-original">{{ r.name }}</div>
+                    </div>
+                  </div>
+                </section>
+              </template>
+            </NSpin>
+          </NTabPane>
+
           <NTabPane name="eps" tab="剧集">
             <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
             <div v-if="!inLibrary" class="empty-hint">加入追番后，可在这里勾选单集记录进度</div>
@@ -466,6 +529,77 @@ function charAvatar(images?: SubjectCharacter['images']): string {
 
 .staff-name {
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-hint {
+  margin: 4px 0 14px;
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.related-group {
+  margin-bottom: 18px;
+}
+
+.related-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.related-group-count {
+  font-size: 12px;
+  opacity: 0.45;
+}
+
+.related-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 16px 12px;
+}
+
+.related-card {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 210px;
+}
+
+.related-card:hover {
+  transform: translateY(-3px);
+}
+
+.related-poster {
+  position: relative;
+}
+
+.related-type {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
+.related-name {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-original {
+  font-size: 12px;
+  opacity: 0.5;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
