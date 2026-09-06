@@ -1,0 +1,56 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+  background: rgba(128, 128, 128, 0.4);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.page-head {
+  margin-bottom: 14px;
+}
+
+.page-head h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.page-sub {
+  font-size: 13px;
+  opacity: 0.65;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 18px 14px;
+  padding: 18px 2px 24px;
+}
+
+.empty-hint {
+  padding: 56px 0;
+  text-align: center;
+  opacity: 0.6;
+}

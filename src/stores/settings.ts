@@ -1,0 +1,60 @@
+import { defineStore } from 'pinia'
+import { loadJson, saveJson } from '../utils/storage'
+
+export type DataSource = 'online' | 'demo'
+export type ThemeMode = 'dark' | 'light'
+/** 图片清晰度：极致=400px 高清=200px 省流=150px（lain 封面仅支持 200/400 两档缩放 + 150px common） */
+export type ImageQuality = 'extreme' | 'high' | 'saver'
+
+export interface SettingsState {
+  theme: ThemeMode
+  dataSource: DataSource
+  apiBaseUrl: string
+  accessToken: string
+  hideNsfw: boolean
+  imageQuality: ImageQuality
+  /** 可选：自建 Bangumi 应用的 OAuth 凭据（bgm.tv/dev/app 注册后获得） */
+  oauthClientId: string
+  oauthClientSecret: string
+  refreshToken: string
+}
+
+const STORAGE_KEY = 'animeviewer:settings'
+
+// 用户提供的 Bangumi Access Token，用于提升接口访问限额（仅保存在本地）
+export const DEFAULT_ACCESS_TOKEN = 'GC3GCbnjU0edzqtwNe8nw5A8h35iw35Omrp3hXaz'
+
+export const DEFAULT_SETTINGS: SettingsState = {
+  theme: 'dark',
+  dataSource: 'online',
+  apiBaseUrl: 'https://api.bgm.tv',
+  accessToken: DEFAULT_ACCESS_TOKEN,
+  hideNsfw: true,
+  imageQuality: 'extreme',
+  oauthClientId: '',
+  oauthClientSecret: '',
+  refreshToken: '',
+}
+
+export const useSettingsStore = defineStore('settings', {
+  state: () => loadJson<SettingsState>(STORAGE_KEY, { ...DEFAULT_SETTINGS }),
+  getters: {
+    isDemo: (s) => s.dataSource === 'demo',
+  },
+  actions: {
+    persist() {
+      saveJson(STORAGE_KEY, { ...this.$state })
+    },
+    applyPatch(patch: Partial<SettingsState>) {
+      this.$patch(patch)
+      this.persist()
+    },
+    resetDefaults() {
+      this.$patch({ ...DEFAULT_SETTINGS })
+      this.persist()
+    },
+    toggleTheme() {
+      this.applyPatch({ theme: this.theme === 'dark' ? 'light' : 'dark' })
+    },
+  },
+})

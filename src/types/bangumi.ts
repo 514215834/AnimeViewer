@@ -1,0 +1,145 @@
+export interface BangumiImage {
+  large?: string
+  common?: string
+  medium?: string
+  small?: string
+  grid?: string
+}
+
+/** /calendar 返回的条目（旧版结构，字段较全） */
+export interface CalendarSubject {
+  id: number
+  name: string
+  name_cn: string
+  date?: string
+  images?: BangumiImage
+  summary?: string
+  air_date?: string
+  air_weekday?: number
+  rating?: { score?: number; total?: number; rank?: number }
+  rank?: number
+  collection?: { wish?: number; doing?: number; done?: number; on_hold?: number; dropped?: number }
+  type?: number
+  eps?: number
+  nsfw?: boolean
+  url?: string
+}
+
+export interface Weekday {
+  id: number
+  en: string
+  cn: string
+  ja: string
+}
+
+export interface CalendarDay {
+  weekday: Weekday
+  items: CalendarSubject[]
+}
+
+/** /v0/subjects/{id} 详情 */
+export interface SubjectDetail {
+  id: number
+  name: string
+  name_cn: string
+  date?: string
+  images?: BangumiImage
+  summary?: string
+  total_episodes?: number
+  rating?: { score?: number; total?: number; rank?: number; count?: Record<string, number> }
+  collection?: { wish?: number; doing?: number; done?: number; on_hold?: number; dropped?: number }
+  tags?: { name: string; count: number }[]
+  infobox?: { key: string; value: string | { v: string }[] }[]
+  series?: boolean
+  platform?: string
+  nsfw?: boolean
+  type?: number
+}
+
+export interface SearchResultItem {
+  id: number
+  name: string
+  name_cn: string
+  date?: string
+  images?: BangumiImage
+  summary?: string
+  rating?: { score?: number; total?: number; rank?: number }
+  tags?: { name: string; count: number }[]
+  total_episodes?: number
+  air_weekday?: number
+  type?: number
+  /** v0 搜索响应实际会带 nsfw 标记 */
+  nsfw?: boolean
+}
+
+export interface SearchResponse {
+  data: SearchResultItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface CharacterActor {
+  id?: number
+  name: string
+  type?: number
+  images?: BangumiImage
+}
+
+export interface SubjectCharacter {
+  id: number
+  name: string
+  type?: number
+  images?: BangumiImage
+  relation: string
+  actors?: CharacterActor[]
+}
+
+export interface SubjectPerson {
+  id: number
+  name: string
+  type?: number
+  images?: BangumiImage
+  relation: string
+}
+
+export interface Episode {
+  id: number
+  type: number
+  name: string
+  name_cn?: string
+  sort: number
+  ep?: number | string
+  airdate?: string
+}
+
+export interface Paged<T> {
+  data: T[]
+  total?: number
+  limit?: number
+  offset?: number
+}
+
+/** Bangumi 收藏类型：1=想看 2=看过 3=在看 4=搁置 5=抛弃 */
+export type ServerCollectionType = 1 | 2 | 3 | 4 | 5
+
+/** GET /v0/users/{username}/collections 列表项 */
+export interface UserSubjectCollection {
+  subject_id: number
+  subject_type?: number
+  rate?: number
+  type: ServerCollectionType
+  comment?: string
+  tags?: string[]
+  ep_status?: number
+  updated_at?: string
+  private?: boolean
+}
+
+/** GET /v0/me 响应（节选） */
+export interface BangumiMe {
+  id?: number
+  username?: string
+  nickname?: string
+  avatar?: BangumiImage
+}

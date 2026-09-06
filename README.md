@@ -1,0 +1,92 @@
+# AnimeViewer - 动漫面板
+
+基于 Vue 3 的本地动漫追番面板，数据来源 [Bangumi API](https://github.com/bangumi/api)。当前版本 v0.3，迭代计划见 `docs/功能迭代文档.md`。
+
+## 技术栈
+
+- **Vue 3 + TypeScript + Vite**
+- **Naive UI** 组件库（暗色主题优先）
+- **Pinia** 状态管理（localStorage 持久化）
+- **Vue Router**（Hash 模式）
+
+## 快速开始
+
+```bash
+npm install
+npm run dev     # 开发：http://localhost:5173
+npm run build   # 类型检查 + 生产构建
+```
+
+## 功能
+
+### v0.1 基础功能
+
+| 功能 | 说明 |
+|------|------|
+| 每周新番时间表 | 周一至周日分页展示每日更新，默认定位到今天，来自 `/calendar` 接口 |
+| 热门在播 | 正在播出番剧中人气最高的作品（Top 30） |
+| 条目详情 | 封面、评分、标签、简介、制作信息（infobox） |
+| 搜索 + 分类筛选 | 关键词搜索 + 类型标签（热血/恋爱/科幻…）组合筛选，走 `/v0/search/subjects` |
+| 我的追番 | 想看/在看/看完状态 + 进度话数，本地持久化 |
+| 暗色/亮色主题 | 侧边栏一键切换 |
+| 可配置化 | 数据源模式、API Base URL、Access Token 均可在设置页修改 |
+
+### v0.2 体验完善
+
+| 功能 | 说明 |
+|------|------|
+| 详情页 Tabs | 简介 / 角色（含声优）/ 制作人员 / 剧集，Tab 懒加载 + 全量 TTL 缓存 |
+| 剧集单集勾选 | 勾选单集与数字进度双向同步，支持全部看过/清空 |
+| R18 过滤开关 | 全局控制所有支持 R18 的接口：周历/热门在播按 v0 条目 `nsfw` 标记过滤（并发检查 + 会话级缓存）；搜索随开关传 `filter.nsfw`；R18 条目详情页显示遮蔽门控（可「本次查看」显式揭示） |
+| 收藏导出/导入 | JSON 备份与迁移，导入自动校验 + 合并去重 |
+| 追番列表排序 | 添加时间 / 评分 / 名称；加追自动带入评分徽章 |
+| 海报加载体验 | 失败自动重试一次，骨架屏 + 渐变占位 |
+| Token 健壮性 | 「验证 Token」按钮；Token 失效自动降级匿名访问；Auth 头仅随 `/v0/*` 发送（规避 legacy 接口 CORS 预检限制） |
+
+### v0.3 账户与云同步
+
+| 功能 | 说明 |
+|------|------|
+| 收藏双向同步 | 拉取云端动画收藏合并到本地；本地改动（状态/进度/单集）自动进入待同步队列并推送，失败保留重试 |
+| 单集进度上云 | 本地单集勾选 → Bangumi episode 标记（服务端重算完成度）；数字进度与单集双向一致 |
+| 冲突策略 | 本地有未推送改动 → 本地赢；否则按服务端 `updated_at` 新者覆盖 |
+| 启动自动同步 | 有 Token 且在线模式时启动静默同步一次；设置页可手动「立即同步」并查看同步日志 |
+| OAuth 登录（可选） | 设置页填自建应用凭据后可走 Bangumi 授权流程换取 Token（未注册应用可手动粘贴个人 Token） |
+
+## 配置说明（Key 可配置化）
+
+所有配置保存在浏览器 localStorage（`animeviewer:settings`），不经过任何服务器：
+
+- **数据源模式**：`在线 Bangumi API` / `内置演示数据`（离线演示数据，用于无网络环境体验与开发）
+- **API Base URL**：默认 `https://api.bgm.tv`，可指向自建反向代理或镜像
+- **Access Token**：可选，用于提升接口限额；在 [next.bgm.tv/demo/access-token](https://next.bgm.tv/demo/access-token) 生成，设置页可一键验证有效性
+
+> 注：浏览器安全策略禁止自定义 `User-Agent` 请求头，如需自定义请在反向代理层注入。
+
+## 性能机制
+
+- **图片加载**：统一走 `PosterImage` 组件——原生 `loading="lazy"` 懒加载 + 骨架屏 + 失败自动重试一次 + 渐变占位兜底，图片持有真实布局盒子（避免 lazy 与隐藏互锁），`decoding="async"` 异步解码
+- **尺寸分级（三档可选）**：设置页「图片清晰度」——极致 400px（默认）/ 高清 200px / 省流 100px，覆盖列表海报、追番封面、角色头像与详情主图，切换即时生效；`http://` 图片地址自动升级 `https://`
+- **URL 规范化**：Bangumi 各接口的 images 字段语义不一致（legacy 的 common=150px，v0 搜索的 common=400px、large=原图），统一取 l/ 原图路径后注入目标缩放前缀（lain 支持 100/200/400 三档），不依赖字段名；注入幂等，历史数据的堆叠前缀自动纠正（lain 缩放仅支持 200/400 两档，档位按实测约束映射）
+- **渲染优化**：所有列表卡片 `content-visibility: auto` + `contain-intrinsic-size`，屏外内容跳过渲染与布局
+- **长列表**：搜索服务端分页（24/页）、周历按 Tab 惰性挂载；条目量级再增长时引入虚拟滚动（见迭代文档）
+
+## 已知限制
+
+1. `/calendar` 旧接口不返回 `nsfw` 字段，周历侧过滤需按需调 v0 详情接口（已实现并发检查 + 缓存）
+2. R18 过滤效果取决于 Bangumi 官方 `nsfw` 标记的完整性
+3. 直连 `api.bgm.tv` 在部分网络环境超时，需系统代理或自建反代（应用内偶发瞬时失败可直接点重试）
+
+## 目录结构
+
+```
+src/
+├── api/          # Bangumi API 客户端（TTL 缓存）+ 演示数据 + 数据源门面
+├── components/   # AnimeCard / PosterImage（重试 + 骨架屏）
+├── layouts/      # 侧边栏主布局
+├── router/       # 路由（Hash 模式）
+├── stores/       # settings / library / nsfw（Pinia + localStorage）
+├── types/        # Bangumi 接口类型定义
+├── utils/        # storage 工具
+└── views/        # Calendar / Discover / Search / Library / Detail / Settings
+```
