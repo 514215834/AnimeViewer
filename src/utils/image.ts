@@ -1,5 +1,18 @@
 import type { BangumiImage } from '../types/bangumi'
 import type { ImageQuality } from '../stores/settings'
+import { useSettingsStore } from '../stores/settings'
+
+/**
+ * 可配置图片镜像（设置页「图片镜像地址」）：
+ * 将 lain.bgm.tv 主机替换为配置的镜像地址（路径保留，可含子路径），留空时原样返回。
+ * 墙内环境 lain.bgm.tv 常不可直连，与 API Base URL 一样支持自建反向代理。
+ */
+export function applyImageMirror(url: string): string {
+  if (!url) return url
+  const mirror = (useSettingsStore().mirrorImageUrl || '').trim().replace(/\/+$/, '')
+  if (!mirror) return url
+  return url.replace(/^https?:\/\/lain\.bgm\.tv/, mirror)
+}
 
 /**
  * 封面 URL 规范化工具。

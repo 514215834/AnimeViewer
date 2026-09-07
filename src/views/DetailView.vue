@@ -20,6 +20,7 @@ import {
 import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
+import { useSyncStore } from '../stores/sync'
 import type { WatchStatus } from '../stores/library'
 import { charAvatarUrl, coverCardUrl, upgradeStoredCover } from '../utils/image'
 import type { Episode, RelatedSubject, SubjectCharacter, SubjectDetail, SubjectPerson } from '../types/bangumi'
@@ -30,6 +31,7 @@ const router = useRouter()
 const message = useMessage()
 const library = useLibraryStore()
 const settings = useSettingsStore()
+const sync = useSyncStore()
 
 const subject = ref<SubjectDetail | null>(null)
 const loading = ref(true)
@@ -146,8 +148,10 @@ function add() {
 }
 
 function remove() {
+  // 先清待推单集队列，再移除（移除会记墓碑，云同步拉取不再复活该条目）
+  sync.purgePendingEpisodeMarks(id.value)
   library.remove(id.value)
-  message.info('已移出追番列表')
+  message.info('已移出本地追番列表（Bangumi 暂不支持删除云端收藏，同步不会恢复）')
 }
 
 function infoboxValue(v: string | { v: string }[]): string {
@@ -171,7 +175,59 @@ function isEpWatched(ep: Episode): boolean {
 
 function toggleEp(ep: Episode, watched: boolean) {
   if (!entry.value) return
-  library.setEpisodeWatched(entry.value.subjectId, ep.sort, watched)
+  // E1：单集变更走增量标记（本地更新 + 待推队列单集 PUT），不再整表 PATCH
+  void sync.markEpisodeWatched(entry.value.subjectId, ep.id, ep.sort, watched)
+}
+
+/* ── E1 沉浸观剧模式 ── */
+const immersive = ref(false)
+const immersiveIndex = ref(0)
+
+const immersiveEp = computed<Episode | null>(() => mainEpisodes.value[immersiveIndex.value] ?? null)
+const immersiveWatched = computed(() => (immersiveEp.value ? isEpWatched(immersiveEp.value) : false))
+
+function enterImmersive() {
+  // 从第一个未看集开始；全部看完则回到第 1 集
+  const firstUnwatched = mainEpisodes.value.findIndex((e) => !isEpWatched(e))
+  immersiveIndex.value = firstUnwatched >= 0 ? firstUnwatched : 0
+  immersive.value = true
+}
+
+function exitImmersive() {
+  immersive.value = false
+}
+
+function immersiveNext() {
+  if (immersiveIndex.value < mainEpisodes.value.length - 1) {
+    immersiveIndex.value++
+  } else {
+    message.success('已经是最后一集了')
+    exitImmersive()
+  }
+}
+
+function immersivePrev() {
+  if (immersiveIndex.value > 0) immersiveIndex.value--
+}
+
+/** 标记当前集为看过并前进；已看过的集则直接前进 */
+function immersiveMarkAndNext() {
+  const ep = immersiveEp.value
+  if (!ep || !entry.value) return
+  if (!immersiveWatched.value) {
+    void sync.markEpisodeWatched(entry.value.subjectId, ep.id, ep.sort, true)
+    message.success(`第 ${ep.sort} 话已标记看过`)
+  }
+  immersiveNext()
+}
+
+/** E4：角色卡片 → 角色页；声优/Staff 名 → 人物页 */
+function openCharacter(id: number) {
+  router.push({ name: 'character', params: { id: String(id) } })
+}
+
+function openPerson(id: number) {
+  router.push({ name: 'person', params: { id: String(id) } })
 }
 
 function markAllEps(watched: boolean) {
@@ -298,12 +354,27 @@ function charAvatar(images?: SubjectCharacter['images']): string {
             <NSpin :show="characters === null" v-if="activeTab === 'chars'">
               <div v-if="characters && !characters.length" class="empty-hint">暂无角色数据</div>
               <div v-else-if="characters" class="char-grid">
-                <div v-for="c in characters" :key="c.id" class="char-card">
+                <div
+                  v-for="c in characters"
+                  :key="c.id"
+                  class="char-card char-card-link"
+                  :title="`查看角色「${c.name}」`"
+                  @click="openCharacter(c.id)"
+                >
                   <PosterImage :src="charAvatar(c.images)" :title="c.name" :subject-id="c.id" />
                   <div class="char-name" :title="c.name">{{ c.name }}</div>
                   <NTag size="tiny" :bordered="false" type="info">{{ c.relation || '角色' }}</NTag>
-                  <div v-if="c.actors?.length" class="char-actor" :title="c.actors.map((a) => a.name).join(' / ')">
-                    🎙 {{ c.actors.map((a) => a.name).join(' / ') }}
+                  <div
+                    v-if="c.actors?.length"
+                    class="char-actor"
+                    :title="`查看声优 ${c.actors.map((a) => a.name).join(' / ')}`"
+                  >
+                    🎙 <span
+                      v-for="a in c.actors"
+                      :key="a.name"
+                      class="person-link"
+                      @click.stop="a.id && openPerson(a.id)"
+                    >{{ a.name }}</span>
                   </div>
                 </div>
               </div>
@@ -315,7 +386,13 @@ function charAvatar(images?: SubjectCharacter['images']): string {
             <NSpin :show="persons === null" v-if="activeTab === 'staff'">
               <div v-if="persons && !persons.length" class="empty-hint">暂无制作人员数据</div>
               <div v-else-if="persons" class="staff-grid">
-                <div v-for="p in persons" :key="p.id" class="staff-row">
+                <div
+                  v-for="p in persons"
+                  :key="p.id"
+                  class="staff-row staff-link"
+                  :title="`查看人物「${p.name}」`"
+                  @click="openPerson(p.id)"
+                >
                   <span class="staff-name">{{ p.name }}</span>
                   <NTag size="tiny" :bordered="false">{{ p.relation || 'Staff' }}</NTag>
                 </div>
@@ -362,10 +439,38 @@ function charAvatar(images?: SubjectCharacter['images']): string {
           <NTabPane name="eps" tab="剧集">
             <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
             <div v-if="!inLibrary" class="empty-hint">加入追番后，可在这里勾选单集记录进度</div>
+            <!-- E1 沉浸观剧模式：逐集「标记并下一集」，单集增量同步 -->
+            <template v-else-if="immersive && immersiveEp">
+              <div class="immersive-head">
+                <NButton size="tiny" quaternary @click="exitImmersive">✕ 退出沉浸观剧</NButton>
+                <span class="eps-count">第 {{ immersiveIndex + 1 }} / {{ mainEpisodes.length }} 话 · 已看 {{ entry?.watchedEps?.length ?? 0 }} 话</span>
+              </div>
+              <div class="immersive-card">
+                <div class="immersive-sort">第 {{ immersiveEp.sort }} 话</div>
+                <div class="immersive-name">{{ immersiveEp.name_cn || immersiveEp.name }}</div>
+                <div v-if="immersiveEp.name_cn && immersiveEp.name !== immersiveEp.name_cn" class="immersive-sub">
+                  {{ immersiveEp.name }}
+                </div>
+                <div v-if="immersiveEp.airdate" class="immersive-date">播出日期 {{ immersiveEp.airdate }}</div>
+                <div class="immersive-actions">
+                  <NButton
+                    type="primary"
+                    size="large"
+                    :ghost="immersiveWatched"
+                    @click="immersiveMarkAndNext"
+                  >
+                    {{ immersiveWatched ? '已看过 · 下一集 →' : '✓ 标记并下一集' }}
+                  </NButton>
+                  <NButton size="large" quaternary @click="immersiveNext">跳过</NButton>
+                  <NButton size="large" quaternary :disabled="immersiveIndex === 0" @click="immersivePrev">← 上一集</NButton>
+                </div>
+              </div>
+            </template>
             <template v-else>
               <div class="eps-tools">
                 <NButton size="tiny" secondary @click="markAllEps(true)">全部看过</NButton>
                 <NButton size="tiny" secondary @click="markAllEps(false)">清空</NButton>
+                <NButton size="tiny" type="primary" secondary @click="enterImmersive">▶ 沉浸观剧</NButton>
                 <span class="eps-count">
                   已看 {{ entry?.watchedEps?.length ?? 0 }} / {{ mainEpisodes.length }} 话
                 </span>
@@ -509,6 +614,74 @@ function charAvatar(images?: SubjectCharacter['images']): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.char-card-link,
+.staff-link {
+  cursor: pointer;
+}
+
+.char-card-link:hover .char-name,
+.staff-link:hover .staff-name {
+  color: #8a7bff;
+}
+
+.person-link {
+  cursor: pointer;
+}
+
+.person-link:hover {
+  color: #8a7bff;
+  text-decoration: underline;
+}
+
+.immersive-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.immersive-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 34px 20px;
+  border-radius: 12px;
+  background: rgba(128, 128, 128, 0.08);
+  text-align: center;
+}
+
+.immersive-sort {
+  font-size: 13px;
+  font-weight: 700;
+  color: #8a7bff;
+  letter-spacing: 1px;
+}
+
+.immersive-name {
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.immersive-sub {
+  font-size: 13px;
+  opacity: 0.55;
+}
+
+.immersive-date {
+  font-size: 12px;
+  opacity: 0.45;
+}
+
+.immersive-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .staff-grid {

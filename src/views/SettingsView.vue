@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import {
   NAlert,
@@ -15,6 +15,7 @@ import { DEFAULT_SETTINGS, useSettingsStore } from '../stores/settings'
 import type { ImageQuality, SettingsState } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
 import { useSyncStore } from '../stores/sync'
+import { applyImageMirror } from '../utils/image'
 import { bangumiApi, ApiError, clearApiCache } from '../api/bangumi'
 
 const message = useMessage()
@@ -75,22 +76,52 @@ function logout() {
   settings.applyPatch({ accessToken: '', refreshToken: '' })
   Object.assign(draft, settings.$state)
   sync.account = null
+  sync.profile = null
   message.info('已退出登录（已清除本地 Token）')
 }
 
 /** 保存基础连接配置（Base URL / Token / OAuth 凭据），供各操作按钮在保存前调用 */
 function applyDraftBase() {
-  settings.applyPatch({
+  // 只 patch 基础字段，并把规范化后的值同步回 draft；
+  // 不能用 $state 整体覆盖 draft，否则会把开关等未保存的草稿改动（如 hideNsfw）还原成旧值
+  const normalized = {
     apiBaseUrl: (draft.apiBaseUrl.trim() || DEFAULT_SETTINGS.apiBaseUrl).replace(/\/+$/, ''),
+    mirrorImageUrl: (draft.mirrorImageUrl || '').trim().replace(/\/+$/, ''),
     accessToken: draft.accessToken.trim(),
     oauthClientId: draft.oauthClientId.trim(),
     oauthClientSecret: draft.oauthClientSecret.trim(),
     refreshToken: draft.refreshToken.trim(),
-  })
-  Object.assign(draft, settings.$state)
+  }
+  settings.applyPatch(normalized)
+  Object.assign(draft, normalized)
 }
 
-const libraryDirtyCount = computed(() => library.dirtyCount())
+const libraryDirtyCount = computed(() => sync.pendingPushCount)
+
+/** E5 资料卡：优先取云端资料，回退到同步缓存的 me */
+const profile = computed(() => {
+  if (sync.profile) return sync.profile
+  if (sync.account) {
+    return {
+      id: sync.account.id ?? 0,
+      username: sync.account.username,
+      nickname: sync.account.nickname,
+      avatar: sync.account.avatar,
+      sign: '',
+    }
+  }
+  return null
+})
+const profileAvatar = computed(() => {
+  const img = profile.value?.avatar
+  // 头像统一升 https（Bangumi 头像字段是 http 明文地址），并走可配置图片镜像
+  const raw = img?.large || img?.medium || img?.small || ''
+  return applyImageMirror(raw.replace(/^http:\/\//, 'https://'))
+})
+
+onMounted(() => {
+  void sync.ensureProfile()
+})
 
 function save() {
   applyDraftBase()
@@ -167,6 +198,13 @@ async function onImportFile(ev: Event) {
           <NInput v-model:value="draft.apiBaseUrl" placeholder="https://api.bgm.tv" />
         </NFormItem>
 
+        <NFormItem label="图片镜像地址（可选：lain.bgm.tv 图片反代，填反代域名或含子路径的前缀）">
+          <NInput
+            v-model:value="draft.mirrorImageUrl"
+            placeholder="如 https://img.example.com/lain，留空使用官方图片源"
+          />
+        </NFormItem>
+
         <NFormItem label="Access Token（可选，用于提升接口访问限额）">
           <div class="token-row">
             <NInput
@@ -199,6 +237,25 @@ async function onImportFile(ev: Event) {
 
         <NFormItem label="Bangumi 账户与云同步">
           <div class="sync-box">
+            <!-- E5 用户资料卡：头像/昵称/签名 -->
+            <div v-if="profile" class="profile-card">
+              <img v-if="profileAvatar" :src="profileAvatar" class="profile-avatar" alt="头像" />
+              <div v-else class="profile-avatar profile-avatar-fallback">{{ (profile.nickname || '?').slice(0, 1) }}</div>
+              <div class="profile-info">
+                <div class="profile-nickname">
+                  {{ profile.nickname || profile.username || profile.id }}
+                  <span v-if="profile.username" class="profile-username">@{{ profile.username }}</span>
+                </div>
+                <div class="profile-sign" :title="profile.sign">{{ profile.sign || '这个人很懒，什么都没写' }}</div>
+              </div>
+              <a
+                v-if="profile.username"
+                class="profile-link"
+                :href="`https://bgm.tv/user/${profile.username}`"
+                target="_blank"
+                rel="noopener"
+              >个人主页 ↗</a>
+            </div>
             <div class="sync-row">
               <span class="sync-account">
                 {{ sync.account ? `已登录：${sync.account.nickname || sync.account.username || sync.account.id}` : '未获取账户信息（配置 Token 后可同步）' }}
@@ -283,6 +340,76 @@ async function onImportFile(ev: Event) {
   display: flex;
   gap: 10px;
   width: 100%;
+}
+
+.sync-box {
+  width: 100%;
+}
+
+/* E5 用户资料卡 */
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.profile-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.profile-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #8a7bff, #5d4fd8);
+}
+
+.profile-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.profile-nickname {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.profile-username {
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.5;
+  margin-left: 4px;
+}
+
+.profile-sign {
+  font-size: 12px;
+  opacity: 0.55;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-link {
+  font-size: 12px;
+  color: #8a7bff;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.profile-link:hover {
+  text-decoration: underline;
 }
 
 .sync-box {

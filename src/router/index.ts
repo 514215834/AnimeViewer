@@ -16,6 +16,8 @@ const router = createRouter({
         { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { title: '设置' } },
         { path: 'subject/:id', name: 'subject', component: () => import('../views/DetailView.vue'), meta: { title: '条目详情' } },
         { path: 'index/:id', name: 'index-detail', component: () => import('../views/IndexDetailView.vue'), meta: { title: '目录详情' } },
+        { path: 'character/:id', name: 'character', component: () => import('../views/CharacterDetailView.vue'), meta: { title: '角色详情' } },
+        { path: 'person/:id', name: 'person', component: () => import('../views/PersonDetailView.vue'), meta: { title: '人物详情' } },
       ],
     },
     { path: '/oauth-callback', name: 'oauth-callback', component: () => import('../views/OAuthCallbackView.vue') },

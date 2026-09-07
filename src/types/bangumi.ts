@@ -174,6 +174,68 @@ export interface PersonSearchItem {
 /** Bangumi 收藏类型：1=想看 2=看过 3=在看 4=搁置 5=抛弃 */
 export type ServerCollectionType = 1 | 2 | 3 | 4 | 5
 
+/** PUT /v0/users/-/collections/-/episodes/{episode_id} 的 type：0=未收藏 1=想看 2=看过 3=抛弃 */
+export type EpisodeMarkType = 0 | 1 | 2 | 3
+
+/** GET /v0/characters/{id} 角色详情（节选；v0 无 actors 字段，CV 经人物页浏览） */
+export interface CharacterDetail {
+  id: number
+  name: string
+  name_cn?: string
+  type?: number
+  images?: BangumiImage
+  summary?: string
+  nsfw?: boolean
+  gender?: string
+  blood_type?: number
+  birth_year?: number
+  birth_mon?: number
+  birth_day?: number
+}
+
+/** GET /v0/persons/{id} 人物详情（节选） */
+export interface PersonDetail {
+  id: number
+  name: string
+  name_cn?: string
+  type?: number
+  career?: string[]
+  images?: BangumiImage
+  summary?: string
+  nsfw?: boolean
+}
+
+/** GET /v0/characters/{id}/subjects 与 /v0/persons/{id}/subjects 的作品项（image 为单个 URL 字符串） */
+export interface StaffWork {
+  id: number
+  type?: number
+  /** 参与身份：主角 / 客串 / 导演 / 艺术家… */
+  staff: string
+  /** 参与章节/曲目（声优单曲等） */
+  eps?: string
+  name: string
+  name_cn?: string
+  image?: string
+}
+
+/** GET /v0/users/{username} 用户资料（节选） */
+export interface UserProfile {
+  id: number
+  username?: string
+  nickname?: string
+  avatar?: BangumiImage
+  sign?: string
+}
+
+/** GET /v0/users/{username}/collections/-/characters 列表项（自带名称与头像） */
+export interface UserCharacterCollection {
+  id: number
+  name: string
+  type?: number
+  images?: BangumiImage | null
+  created_at?: string
+}
+
 /** GET /v0/users/{username}/collections 列表项 */
 export interface UserSubjectCollection {
   subject_id: number

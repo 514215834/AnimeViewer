@@ -4,31 +4,42 @@ import type { SearchAdvanced } from './bangumi'
 import {
   demoBrowseSubjects,
   demoCalendar,
+  demoCharacterDetail,
+  demoCharacterSubjects,
   demoCharacters,
   demoDetail,
   demoEpisodes,
   demoIndex,
   demoIndexSubjects,
+  demoMyCharacters,
+  demoPersonDetail,
+  demoPersonSubjects,
   demoPersons,
   demoRelatedSubjects,
   demoSearch,
   demoSearchCharacters,
   demoSearchPersons,
+  demoUserProfile,
 } from './demo'
 import type {
   CalendarDay,
+  CharacterDetail,
   CharacterSearchItem,
   Episode,
   IndexInfo,
   IndexSubjectItem,
   Paged,
+  PersonDetail,
   PersonSearchItem,
   RelatedSubject,
   SearchResponse,
   SearchResultItem,
+  StaffWork,
   SubjectCharacter,
   SubjectDetail,
   SubjectPerson,
+  UserCharacterCollection,
+  UserProfile,
 } from '../types/bangumi'
 
 /** 统一数据入口：根据设置在「在线 Bangumi API」与「内置演示数据」间切换 */
@@ -96,5 +107,41 @@ export const dataSource = {
     return useSettingsStore().isDemo
       ? Promise.resolve(demoSearchPersons(keyword, limit, offset))
       : bangumiApi.searchPersons(keyword, limit, offset)
+  },
+  /* ── v0.6 ── */
+  /** E3 角色详情 */
+  characterDetail(id: number): Promise<CharacterDetail> {
+    return useSettingsStore().isDemo ? Promise.resolve(demoCharacterDetail(id)) : bangumiApi.characterDetail(id)
+  },
+  /** E3 人物详情 */
+  personDetail(id: number): Promise<PersonDetail> {
+    return useSettingsStore().isDemo ? Promise.resolve(demoPersonDetail(id)) : bangumiApi.personDetail(id)
+  },
+  /** E3 角色/人物参与作品 */
+  characterSubjects(id: number): Promise<StaffWork[]> {
+    return useSettingsStore().isDemo
+      ? Promise.resolve(demoCharacterSubjects(id))
+      : bangumiApi.characterSubjects(id)
+  },
+  personSubjects(id: number): Promise<StaffWork[]> {
+    return useSettingsStore().isDemo ? Promise.resolve(demoPersonSubjects(id)) : bangumiApi.personSubjects(id)
+  },
+  /** E5 用户资料 */
+  userProfile(username: string): Promise<UserProfile> {
+    return useSettingsStore().isDemo
+      ? Promise.resolve(demoUserProfile(username))
+      : bangumiApi.userProfile(username)
+  },
+  /** E6 我的角色收藏列表 */
+  myCharacterCollections(username: string): Promise<Paged<UserCharacterCollection>> {
+    return useSettingsStore().isDemo
+      ? Promise.resolve(demoMyCharacters())
+      : bangumiApi.myCharacterCollections(username)
+  },
+  /** E6 收藏角色（演示模式 no-op） */
+  collectCharacter(characterId: number): Promise<void> {
+    return useSettingsStore().isDemo
+      ? Promise.resolve()
+      : bangumiApi.collectCharacter(characterId)
   },
 }

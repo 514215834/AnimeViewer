@@ -4,10 +4,11 @@ import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from './library'
 import type { WatchStatus } from './library'
 import { useSettingsStore } from './settings'
-import type { BangumiMe, UserSubjectCollection } from '../types/bangumi'
+import type { BangumiMe, EpisodeMarkType, UserProfile, UserSubjectCollection } from '../types/bangumi'
 import { loadJson, saveJson } from '../utils/storage'
 
 const LAST_SYNC_KEY = 'animeviewer:sync:lastAt'
+const PENDING_EPS_KEY = 'animeviewer:sync:pendingEps'
 const PULL_PAGE_SIZE = 50
 const MAX_PULL_PAGES = 40
 const PUSH_CONCURRENCY = 2
@@ -42,21 +43,145 @@ export interface SyncResult {
   failed: number
 }
 
+/** E1 待推送的单集增量标记（与条目级 dirty 队列并行的细粒度队列） */
+export interface PendingEpisodeMark {
+  subjectId: number
+  episodeId: number
+  type: Extract<EpisodeMarkType, 0 | 2>
+  /** 入队时间，重放按序执行 */
+  at: number
+}
+
 export const useSyncStore = defineStore('sync', {
   state: () => ({
     syncing: false,
     account: null as BangumiMe | null,
+    /** E5 用户资料（头像/昵称/签名），随同步或设置页加载 */
+    profile: null as UserProfile | null,
     lastSyncAt: loadJson<number | null>(LAST_SYNC_KEY, null),
     lastError: '',
     logs: [] as string[],
+    /** E1 单集增量标记待推送队列（持久化，失败保留重放） */
+    pendingEpisodeMarks: loadJson<PendingEpisodeMark[]>(PENDING_EPS_KEY, []),
+    /** 单集队列重放中的运行时标志（防并发重入） */
+    flushingEps: false,
   }),
   getters: {
     lastSyncText: (s) => (s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString('zh-CN') : '从未同步'),
+    /** 设置页「待推送」计数：条目级 dirty + 单集标记 + 角色收藏 */
+    pendingPushCount(): number {
+      const library = useLibraryStore()
+      return library.dirtyCount() + this.pendingEpisodeMarks.length + library.pendingCharacters.length
+    },
   },
   actions: {
     log(line: string) {
       this.logs.unshift(`[${new Date().toLocaleTimeString('zh-CN')}] ${line}`)
       if (this.logs.length > 30) this.logs.length = 30
+    },
+    persistPending() {
+      saveJson(PENDING_EPS_KEY, this.pendingEpisodeMarks)
+    },
+    /** 条目被移出追番时清空其待推单集标记：避免队列重放时 400 兜底把已移除的条目重新收藏到云端 */
+    purgePendingEpisodeMarks(subjectId: number) {
+      const rest = this.pendingEpisodeMarks.filter((m) => m.subjectId !== subjectId)
+      if (rest.length !== this.pendingEpisodeMarks.length) {
+        this.pendingEpisodeMarks = rest
+        this.persistPending()
+      }
+    },
+    /** E5 拉取用户资料（失败静默：资料卡为非关键信息） */
+    async loadProfile(username: string) {
+      try {
+        this.profile = await dataSource.userProfile(username)
+      } catch {
+        /* 保持现有 profile */
+      }
+    },
+    /** E5 确保资料可用：设置页打开/同步时调用 */
+    async ensureProfile() {
+      const settings = useSettingsStore()
+      if (settings.isDemo) {
+        if (!this.profile) await this.loadProfile('demo')
+        return
+      }
+      if (!settings.accessToken.trim()) return
+      if (!this.account) {
+        try {
+          this.account = await bangumiApi.me()
+        } catch {
+          return
+        }
+      }
+      const username = this.account?.username || String(this.account?.id ?? '')
+      if (username && !this.profile) await this.loadProfile(username)
+    },
+    /**
+     * E1 沉浸观剧的单集标记入口：本地增量更新 + 入待推队列，
+     * 并尽力即时推送（失败静默留在队列，随下次同步重放）
+     */
+    async markEpisodeWatched(subjectId: number, episodeId: number, sort: number, watched: boolean) {
+      const library = useLibraryStore()
+      library.markEpisodeLocal(subjectId, sort, watched)
+      const type: PendingEpisodeMark['type'] = watched ? 2 : 0
+      this.pendingEpisodeMarks = [
+        ...this.pendingEpisodeMarks.filter((m) => !(m.subjectId === subjectId && m.episodeId === episodeId)),
+        { subjectId, episodeId, type, at: Date.now() },
+      ]
+      this.persistPending()
+      void this.flushPendingEpisodeMarks()
+    },
+    /** E1 重放单集标记队列；条目未收藏（400）时先 upsert 收藏再重试一次 */
+    async flushPendingEpisodeMarks(username?: string): Promise<number> {
+      const settings = useSettingsStore()
+      const library = useLibraryStore()
+      if (settings.isDemo || !settings.accessToken.trim()) return 0
+      if (this.flushingEps) return 0
+      if (!this.pendingEpisodeMarks.length) return 0
+      this.flushingEps = true
+      try {
+        if (!username) {
+          try {
+            const me = this.account ?? (await bangumiApi.me())
+            this.account = me
+            username = me.username || String(me.id ?? '')
+          } catch {
+            return 0
+          }
+        }
+        let ok = 0
+        const remaining: PendingEpisodeMark[] = []
+        const marks = [...this.pendingEpisodeMarks].sort((a, b) => a.at - b.at)
+        for (const m of marks) {
+          try {
+            await bangumiApi.putEpisodeMark(m.episodeId, m.type)
+            ok++
+          } catch (e) {
+            if (e instanceof ApiError && e.status === 400) {
+              try {
+                const entry = library.entry(m.subjectId)
+                // 无条目信息时按标记方向推断：标看过 → 2=看过，取消 → 3=在看
+                const t = entry ? LOCAL_TO_SERVER[entry.status] : m.type === 2 ? 2 : 3
+                await bangumiApi.upsertCollection(m.subjectId, t)
+                await bangumiApi.putEpisodeMark(m.episodeId, m.type)
+                ok++
+              } catch {
+                remaining.push(m)
+              }
+            } else {
+              remaining.push(m)
+            }
+          }
+        }
+        if (remaining.length !== this.pendingEpisodeMarks.length) {
+          this.pendingEpisodeMarks = remaining
+          this.persistPending()
+        }
+        if (ok) this.log(`单集增量标记已推送 ${ok} 条`)
+        return ok
+      } finally {
+        this.flushingEps = false
+      }
     },
     /** 拉取云端收藏并合并到本地，再推送本地待同步改动 */
     async syncNow(): Promise<SyncResult> {
@@ -71,14 +196,16 @@ export const useSyncStore = defineStore('sync', {
       this.lastError = ''
       let created = 0
       let updated = 0
+      let conflictLocal = 0
       let pushed = 0
       let failed = 0
       try {
-        // 1. 账户
+        // 1. 账户与资料
         const me = await bangumiApi.me()
         this.account = me
         const username = me.username || String(me.id ?? '')
         if (!username) return fail('无法获取当前账户用户名')
+        void this.loadProfile(username)
 
         // 2. 拉取云端动画收藏（分页全量）
         const serverItems: UserSubjectCollection[] = []
@@ -133,13 +260,13 @@ export const useSyncStore = defineStore('sync', {
             serverUpdatedAt: item.updated_at,
           })
           if (r === 'created') created++
-          else if (r === 'updated') updated++
+          else if (r === 'updated' || r === 'conflict-remote-win') updated++
+          else if (r === 'conflict-local-win') conflictLocal++
         }
-        this.log(`拉取云端 ${valid.length} 条：新增 ${created}，更新 ${updated}`)
+        this.log(`拉取云端 ${valid.length} 条：新增 ${created}，更新 ${updated}${conflictLocal ? `，冲突保留本地 ${conflictLocal}` : ''}`)
 
         // 4. 推送本地改动（dirty 即待同步队列，失败保留下次重放）
         const dirtyItems = library.list.filter((e) => e.dirty)
-        let queue = [...dirtyItems]
         const pushOne = async (entry: (typeof dirtyItems)[number]) => {
           try {
             await bangumiApi.upsertCollection(entry.subjectId, LOCAL_TO_SERVER[entry.status])
@@ -153,7 +280,13 @@ export const useSyncStore = defineStore('sync', {
               if (watchedIds.length) await bangumiApi.markEpisodes(entry.subjectId, watchedIds, 2)
               if (unwatchedIds.length) await bangumiApi.markEpisodes(entry.subjectId, unwatchedIds, 0)
             }
-            library.markSynced(entry.subjectId, new Date().toISOString())
+            // E2：推送成功后回读云端单条收藏，取真实 updated_at 作为后续冲突比对的基线
+            try {
+              const remote = await bangumiApi.userCollection(username, entry.subjectId)
+              library.markSynced(entry.subjectId, remote.updated_at ?? new Date().toISOString())
+            } catch {
+              library.markSynced(entry.subjectId, new Date().toISOString())
+            }
             pushed++
           } catch (e) {
             failed++
@@ -161,14 +294,43 @@ export const useSyncStore = defineStore('sync', {
             this.log(`推送失败（保留待重试）：${entry.nameCn || entry.name} —— ${reason}`)
           }
         }
-        await pool(queue, PUSH_CONCURRENCY, pushOne)
-        queue = []
+        await pool(dirtyItems, PUSH_CONCURRENCY, pushOne)
         if (dirtyItems.length) this.log(`推送本地改动 ${dirtyItems.length} 条：成功 ${pushed}，失败 ${failed}`)
+
+        // 5. E1 重放单集增量标记队列
+        const epMarks = await this.flushPendingEpisodeMarks(username)
+
+        // 6. E6 角色收藏：推送本地待收藏 + 拉取云端列表
+        const pendingChars = library.pendingCharacters
+        let charPushed = 0
+        await pool(pendingChars, PUSH_CONCURRENCY, async (c) => {
+          try {
+            await bangumiApi.collectCharacter(c.characterId)
+            library.markCharacterSynced(c.characterId)
+            charPushed++
+          } catch (e) {
+            const reason = e instanceof ApiError ? `HTTP ${e.status}` : e instanceof Error ? e.message : String(e)
+            this.log(`角色收藏推送失败（保留待重试）：${c.nameCn || c.name} —— ${reason}`)
+          }
+        })
+        if (pendingChars.length) this.log(`推送角色收藏 ${pendingChars.length} 个：成功 ${charPushed}`)
+        try {
+          const remoteChars = await dataSource.myCharacterCollections(username)
+          for (const c of remoteChars.data ?? []) {
+            library.upsertCharacterFromServer({
+              characterId: c.id,
+              name: c.name,
+              image: c.images?.medium || c.images?.large || undefined,
+            })
+          }
+        } catch {
+          /* 角色收藏拉取失败不影响主流程 */
+        }
 
         this.lastSyncAt = Date.now()
         saveJson(LAST_SYNC_KEY, this.lastSyncAt)
         clearApiCache()
-        const message = `同步完成：云端 ${valid.length} 条，本地新增 ${created} / 更新 ${updated}，推送 ${pushed}${failed ? `（失败 ${failed}，已保留待重试）` : ''}`
+        const message = `同步完成：云端 ${valid.length} 条，本地新增 ${created} / 更新 ${updated}，推送 ${pushed}${failed ? `（失败 ${failed}，已保留待重试）` : ''}${epMarks ? `，单集标记 ${epMarks}` : ''}${charPushed ? `，角色收藏 ${charPushed}` : ''}`
         this.log(message)
         return { ok: true, message, created, updated, pushed, failed }
       } catch (e) {

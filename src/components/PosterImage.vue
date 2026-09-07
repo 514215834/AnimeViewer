@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useSettingsStore } from '../stores/settings'
+import { applyImageMirror } from '../utils/image'
 
 const props = withDefaults(
   defineProps<{
@@ -9,6 +11,8 @@ const props = withDefaults(
   }>(),
   { src: '', subjectId: 0 },
 )
+
+const settings = useSettingsStore()
 
 type Phase = 'loading' | 'ok' | 'failed'
 
@@ -20,15 +24,28 @@ let retryTimer: ReturnType<typeof setTimeout> | undefined
 const realSrc = computed(() => {
   if (!props.src) return ''
   // Bangumi 部分图片字段是 http:// 明文地址，统一升级为 https（避免混合内容并复用连接）；
-  // 最终防线：历史数据可能带堆叠的缩放前缀（/r/200/r/400/...），折叠为最后一层
-  const normalized = props.src
-    .replace(/^http:\/\/(lain\.bgm\.tv)\//, 'https://$1/')
-    .replace(/(?:\/r\/\d+)+(?=\/pic\/)/g, (m) => {
-      const parts = m.match(/\/r\/\d+/g)
-      return parts ? parts[parts.length - 1] : m
-    })
+  // 最终防线：历史数据可能带堆叠的缩放前缀（/r/200/r/400/...），折叠为最后一层；
+  // 配置了图片镜像时，lain.bgm.tv 主机被替换为镜像地址（镜像自身协议原样保留）
+  const normalized = applyImageMirror(
+    props.src
+      .replace(/^http:\/\/(lain\.bgm\.tv)\//, 'https://$1/')
+      .replace(/(?:\/r\/\d+)+(?=\/pic\/)/g, (m) => {
+        const parts = m.match(/\/r\/\d+/g)
+        return parts ? parts[parts.length - 1] : m
+      }),
+  )
   return retryKey.value > 0 ? `${normalized}${normalized.includes('?') ? '&' : '?'}r=${retryKey.value}` : normalized
 })
+
+// 镜像地址变更时重置图片加载状态，立即按新源重载
+watch(
+  () => settings.mirrorImageUrl,
+  () => {
+    phase.value = props.src ? 'loading' : 'failed'
+    retriedOnce.value = false
+    retryKey.value = 0
+  },
+)
 
 watch(
   () => props.src,

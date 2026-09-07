@@ -2,18 +2,24 @@ import { useSettingsStore } from '../stores/settings'
 import type {
   BangumiMe,
   CalendarDay,
+  CharacterDetail,
   CharacterSearchItem,
   Episode,
+  EpisodeMarkType,
   IndexInfo,
   IndexSubjectItem,
   Paged,
+  PersonDetail,
   PersonSearchItem,
   RelatedSubject,
   SearchResponse,
   SearchResultItem,
+  StaffWork,
   SubjectCharacter,
   SubjectDetail,
   SubjectPerson,
+  UserCharacterCollection,
+  UserProfile,
   UserSubjectCollection,
 } from '../types/bangumi'
 
@@ -61,6 +67,10 @@ const charactersCache = createTtlCache<SubjectCharacter[]>(SUB_RESOURCE_TTL)
 const personsCache = createTtlCache<SubjectPerson[]>(SUB_RESOURCE_TTL)
 const episodesCache = createTtlCache<Episode[]>(SUB_RESOURCE_TTL)
 const relatedCache = createTtlCache<RelatedSubject[]>(SUB_RESOURCE_TTL)
+const characterCache = createTtlCache<CharacterDetail>(SUBJECT_TTL)
+const personCache = createTtlCache<PersonDetail>(SUBJECT_TTL)
+const characterWorksCache = createTtlCache<StaffWork[]>(SUB_RESOURCE_TTL)
+const personWorksCache = createTtlCache<StaffWork[]>(SUB_RESOURCE_TTL)
 
 function baseUrl(): string {
   const s = useSettingsStore()
@@ -166,6 +176,74 @@ export const bangumiApi = {
       body: JSON.stringify({ episode_id: episodeIds, type }),
     })
   },
+  /** E1 单集增量标记（沉浸观剧）：type 2=看过 0=未看；条目未收藏时返回 400，由调用方先 upsert 再重试 */
+  putEpisodeMark(episodeId: number, type: EpisodeMarkType): Promise<void> {
+    return request<void>(`/v0/users/-/collections/-/episodes/${episodeId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type }),
+    })
+  },
+  /** E1 读取单集收藏状态 */
+  getEpisodeMark(episodeId: number): Promise<{ type?: EpisodeMarkType }> {
+    return request<{ type?: EpisodeMarkType }>(`/v0/users/-/collections/-/episodes/${episodeId}`)
+  },
+  /** E2 获取单个条目的云端收藏（冲突比对 / 推送后回读真实 updated_at） */
+  userCollection(username: string, subjectId: number): Promise<UserSubjectCollection> {
+    return request<UserSubjectCollection>(
+      `/v0/users/${encodeURIComponent(username)}/collections/${subjectId}`,
+    )
+  },
+  /** E3 角色详情 */
+  async characterDetail(id: number): Promise<CharacterDetail> {
+    const cached = characterCache.get(String(id))
+    if (cached) return cached
+    const data = await request<CharacterDetail>(`/v0/characters/${id}`)
+    characterCache.set(String(id), data)
+    return data
+  },
+  /** E3 人物详情 */
+  async personDetail(id: number): Promise<PersonDetail> {
+    const cached = personCache.get(String(id))
+    if (cached) return cached
+    const data = await request<PersonDetail>(`/v0/persons/${id}`)
+    personCache.set(String(id), data)
+    return data
+  },
+  /** E3 角色参与的作品（image 为单个 URL 字符串） */
+  async characterSubjects(id: number): Promise<StaffWork[]> {
+    const cached = characterWorksCache.get(String(id))
+    if (cached) return cached
+    const data = await request<StaffWork[]>(`/v0/characters/${id}/subjects`)
+    characterWorksCache.set(String(id), data)
+    return data
+  },
+  /** E3/E4 人物参与的作品 */
+  async personSubjects(id: number): Promise<StaffWork[]> {
+    const cached = personWorksCache.get(String(id))
+    if (cached) return cached
+    const data = await request<StaffWork[]>(`/v0/persons/${id}/subjects`)
+    personWorksCache.set(String(id), data)
+    return data
+  },
+  /** E5 用户资料（含头像/签名） */
+  userProfile(username: string): Promise<UserProfile> {
+    return request<UserProfile>(`/v0/users/${encodeURIComponent(username)}`)
+  },
+  /** E6 收藏角色（需 write:collection 授权） */
+  collectCharacter(characterId: number): Promise<void> {
+    return request<void>(`/v0/characters/${characterId}/collect`, { method: 'POST' })
+  },
+  /** E6 取消收藏角色：规范已声明但服务端实测未实现（404 路由未注册），调用失败时须回滚本地状态 */
+  uncollectCharacter(characterId: number): Promise<void> {
+    return request<void>(`/v0/characters/${characterId}/collect`, { method: 'DELETE' })
+  },
+  /** E6 分页拉取当前用户收藏的角色列表（列表项自带名称与头像） */
+  myCharacterCollections(username: string, offset = 0, limit = 100): Promise<Paged<UserCharacterCollection>> {
+    return request<Paged<UserCharacterCollection>>(
+      `/v0/users/${encodeURIComponent(username)}/collections/-/characters?limit=${limit}&offset=${offset}`,
+    )
+  },
   search(keyword: string, tags: string[], sort: string, limit = 24, offset = 0, advanced?: SearchAdvanced): Promise<SearchResponse> {
     // R18 开关统一控制：隐藏时只返回非 R18；显示时不传该字段（返回全部，能否看到 R18 取决于 Bangumi 鉴权）
     const filter: Record<string, unknown> = { type: [2] }
@@ -257,4 +335,8 @@ export function clearApiCache() {
   personsCache.clear()
   episodesCache.clear()
   relatedCache.clear()
+  characterCache.clear()
+  personCache.clear()
+  characterWorksCache.clear()
+  personWorksCache.clear()
 }

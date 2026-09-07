@@ -1,18 +1,23 @@
 import type {
   CalendarDay,
   CalendarSubject,
+  CharacterDetail,
   CharacterSearchItem,
   Episode,
   IndexInfo,
   IndexSubjectItem,
   Paged,
+  PersonDetail,
   PersonSearchItem,
   RelatedSubject,
   SearchResponse,
   SearchResultItem,
+  StaffWork,
   SubjectCharacter,
   SubjectDetail,
   SubjectPerson,
+  UserCharacterCollection,
+  UserProfile,
 } from '../types/bangumi'
 import type { SearchAdvanced } from './bangumi'
 
@@ -329,4 +334,73 @@ export function demoSearchPersons(keyword: string, limit = 24, offset = 0): Page
     nsfw: false,
   }))
   return { data: items.slice(offset, offset + limit), total: items.length, limit, offset }
+}
+
+/* ── v0.6 演示兜底 ── */
+
+/** E3 角色详情：确定性映射到演示库条目名，便于演示模式串联跳转 */
+export function demoCharacterDetail(id: number): CharacterDetail {
+  const s = DEMO_SUBJECTS[Math.abs(id) % DEMO_SUBJECTS.length]
+  return {
+    id,
+    name: `Demo Character ${id % 100}`,
+    name_cn: `演示角色（${s.name_cn} 主演）`,
+    type: 1,
+    summary: `这是演示模式下生成的角色简介。角色出现在《${s.name_cn}》中，拥有独特的性格与故事线，其声优的代表作可在人物页中浏览。（在线模式此处展示 Bangumi 官方角色简介）`,
+    gender: id % 2 ? '女性' : '男性',
+    birth_mon: (id % 12) + 1,
+    birth_day: (id % 27) + 1,
+  }
+}
+
+export function demoPersonDetail(id: number): PersonDetail {
+  const careers = ['声优', '艺术家', '演员', '导演']
+  return {
+    id,
+    name: `Demo Person ${id % 100}`,
+    name_cn: `演示人物 ${id % 100}`,
+    type: 1,
+    career: careers.slice(0, (id % 3) + 1),
+    summary: `这是演示模式下生成的人物简介。演示人物参与过多部作品的配音与制作，点击下方作品卡片可继续跳转到对应条目详情。（在线模式此处展示 Bangumi 官方人物简介）`,
+  }
+}
+
+function demoStaffWorks(prefix: string): StaffWork[] {
+  return DEMO_SUBJECTS.slice(0, 6).map((s, i) => ({
+    id: s.id,
+    type: 2,
+    staff: i === 0 ? `${prefix}·主演` : i === 1 ? `${prefix}·客串` : prefix,
+    name: s.name,
+    name_cn: s.name_cn,
+    image: s.images?.common,
+  }))
+}
+
+export function demoCharacterSubjects(id: number): StaffWork[] {
+  void id
+  return demoStaffWorks('出演')
+}
+
+export function demoPersonSubjects(id: number): StaffWork[] {
+  void id
+  return demoStaffWorks('参与')
+}
+
+export function demoUserProfile(username: string): UserProfile {
+  return {
+    id: 250726,
+    username,
+    nickname: '演示用户',
+    sign: '这是演示模式下的签名（在线模式展示 Bangumi 个人签名）',
+  }
+}
+
+export function demoMyCharacters(): Paged<UserCharacterCollection> {
+  const items: UserCharacterCollection[] = Array.from({ length: 4 }, (_, i) => ({
+    id: 800001 + i,
+    name: `演示角色 ${i + 1}`,
+    type: 1,
+    images: null,
+  }))
+  return { data: items, total: items.length, limit: 100, offset: 0 }
 }

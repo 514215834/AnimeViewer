@@ -284,9 +284,13 @@ function open(id: number) {
   router.push({ name: 'subject', params: { id: String(id) } })
 }
 
-/** D6：角色/人物详情页为 v0.6 范围，当前跳转 Bangumi 原页面 */
-function openExternal(path: string, id: number) {
-  window.open(`https://bgm.tv/${path}/${id}`, '_blank', 'noopener')
+/** E3：角色/人物点击进入应用内详情页（v0.6 起） */
+function openCharacter(id: number) {
+  router.push({ name: 'character', params: { id: String(id) } })
+}
+
+function openPerson(id: number) {
+  router.push({ name: 'person', params: { id: String(id) } })
 }
 
 function characterAvatar(images: CharacterSearchItem['images']): string {
@@ -415,7 +419,6 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
       共 {{ total }} 条结果 · 第 {{ page }} 页 / 每页 {{ 24 }}
       <span v-if="target === 'subject' && settings.hideNsfw"> · 已排除 R18（R18 过滤会使数量少于站点总数）</span>
       <span v-if="target === 'subject' && advancedCount"> · 高级筛选 {{ advancedCount }} 项生效</span>
-      <span v-if="target !== 'subject'"> · 点击结果查看 Bangumi 原页面（角色/人物详情页 v0.6 提供）</span>
     </div>
 
     <NSpin :show="loading">
@@ -449,8 +452,8 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
             v-for="c in characterResults"
             :key="c.id"
             class="people-card"
-            :title="`${c.name_cn || c.name}（查看 Bangumi 页面）`"
-            @click="openExternal('character', c.id)"
+            :title="`查看角色「${c.name_cn || c.name}」`"
+            @click="openCharacter(c.id)"
           >
             <PosterImage :src="characterAvatar(c.images)" :title="c.name_cn || c.name" :subject-id="c.id" />
             <div class="people-name" :title="c.name_cn || c.name">{{ c.name_cn || c.name }}</div>
@@ -469,8 +472,8 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
             v-for="p in personResults"
             :key="p.id"
             class="people-card"
-            :title="`${p.name_cn || p.name}（查看 Bangumi 页面）`"
-            @click="openExternal('person', p.id)"
+            :title="`查看人物「${p.name_cn || p.name}」`"
+            @click="openPerson(p.id)"
           >
             <PosterImage :src="characterAvatar(p.images)" :title="p.name_cn || p.name" :subject-id="p.id" />
             <div class="people-name" :title="p.name_cn || p.name">{{ p.name_cn || p.name }}</div>
