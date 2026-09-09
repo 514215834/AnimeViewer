@@ -68,10 +68,15 @@ export const useSyncStore = defineStore('sync', {
   }),
   getters: {
     lastSyncText: (s) => (s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString('zh-CN') : '从未同步'),
-    /** 设置页「待推送」计数：条目级 dirty + 单集标记 + 角色收藏 */
+    /** 设置页「待推送」计数：条目级 dirty + 单集标记 + 角色收藏 + 人物收藏 */
     pendingPushCount(): number {
       const library = useLibraryStore()
-      return library.dirtyCount() + this.pendingEpisodeMarks.length + library.pendingCharacters.length
+      return (
+        library.dirtyCount() +
+        this.pendingEpisodeMarks.length +
+        library.pendingCharacters.length +
+        library.pendingPersons.length
+      )
     },
   },
   actions: {
@@ -257,6 +262,10 @@ export const useSyncStore = defineStore('sync', {
             progress: item.ep_status ?? 0,
             epsTotal,
             tags,
+            // F6：评分/笔记/私密标记随列表项带入（非 dirty 条目跟随云端）
+            rate: item.rate,
+            comment: item.comment,
+            isPrivate: item.private,
             serverUpdatedAt: item.updated_at,
           })
           if (r === 'created') created++
@@ -269,7 +278,22 @@ export const useSyncStore = defineStore('sync', {
         const dirtyItems = library.list.filter((e) => e.dirty)
         const pushOne = async (entry: (typeof dirtyItems)[number]) => {
           try {
-            await bangumiApi.upsertCollection(entry.subjectId, LOCAL_TO_SERVER[entry.status])
+            // F6：私有评分与笔记随 upsert 推送（rate=0 删除云端评分，空串清除评价；未设置的字段不动云端现状）
+            const review =
+              entry.myRate !== undefined || entry.myComment !== undefined || entry.privateFlag !== undefined
+                ? { rate: entry.myRate, comment: entry.myComment, isPrivate: entry.privateFlag }
+                : undefined
+            await bangumiApi.upsertCollection(entry.subjectId, LOCAL_TO_SERVER[entry.status], review)
+            // F4 防线：本地零进度（新加追/重新加追）时先回读云端单集状态并入，避免整表 PATCH 清空另一设备的进度
+            if (entry.epsTotal > 0 && !(entry.watchedEps?.length ?? 0)) {
+              try {
+                const items = await bangumiApi.userSubjectEpisodes(entry.subjectId)
+                const sorts = items.filter((x) => x.type === 2).map((x) => x.episode.sort)
+                if (sorts.length) library.applyCloudEpisodes(entry.subjectId, sorts)
+              } catch {
+                /* 回读失败按本地空进度继续推送 */
+              }
+            }
             // 同步单集进度：sort → Bangumi episode id，看过标记 2 / 未看清除 0
             if (entry.epsTotal > 0) {
               const eps = await dataSource.episodes(entry.subjectId)
@@ -300,6 +324,23 @@ export const useSyncStore = defineStore('sync', {
         // 5. E1 重放单集增量标记队列
         const epMarks = await this.flushPendingEpisodeMarks(username)
 
+        // 5.5 F1 云端单集进度拉取（同步闭环）：仅处理「非 dirty 且无待推单集标记」的条目，
+        // 云端存在已看记录时覆盖本地（换机/多设备恢复）；云端无记录时保留本地（防止误清 ep_status 推导的进度）
+        let epPulled = 0
+        const pullable = library.list.filter(
+          (e) => !e.dirty && e.epsTotal > 0 && !this.pendingEpisodeMarks.some((m) => m.subjectId === e.subjectId),
+        )
+        await pool(pullable, 2, async (entry) => {
+          try {
+            const items = await bangumiApi.userSubjectEpisodes(entry.subjectId)
+            const sorts = items.filter((x) => x.type === 2).map((x) => x.episode.sort)
+            if (sorts.length && library.applyCloudEpisodes(entry.subjectId, sorts)) epPulled++
+          } catch {
+            /* 单集拉取失败不阻塞主流程 */
+          }
+        })
+        if (epPulled) this.log(`单集进度拉取合并 ${epPulled} 条（云端覆盖本地）`)
+
         // 6. E6 角色收藏：推送本地待收藏 + 拉取云端列表
         const pendingChars = library.pendingCharacters
         let charPushed = 0
@@ -327,10 +368,38 @@ export const useSyncStore = defineStore('sync', {
           /* 角色收藏拉取失败不影响主流程 */
         }
 
+        // 7. F2 人物收藏：推送本地待收藏 + 拉取云端列表（与角色收藏对称）
+        const pendingPersons = library.pendingPersons
+        let personPushed = 0
+        await pool(pendingPersons, PUSH_CONCURRENCY, async (p) => {
+          try {
+            await bangumiApi.collectPerson(p.personId)
+            library.markPersonSynced(p.personId)
+            personPushed++
+          } catch (e) {
+            const reason = e instanceof ApiError ? `HTTP ${e.status}` : e instanceof Error ? e.message : String(e)
+            this.log(`人物收藏推送失败（保留待重试）：${p.nameCn || p.name} —— ${reason}`)
+          }
+        })
+        if (pendingPersons.length) this.log(`推送人物收藏 ${pendingPersons.length} 个：成功 ${personPushed}`)
+        try {
+          const remotePersons = await dataSource.myPersonCollections(username)
+          for (const p of remotePersons.data ?? []) {
+            library.upsertPersonFromServer({
+              personId: p.id,
+              name: p.name,
+              image: p.images?.medium || p.images?.large || undefined,
+              career: p.career,
+            })
+          }
+        } catch {
+          /* 人物收藏拉取失败不影响主流程 */
+        }
+
         this.lastSyncAt = Date.now()
         saveJson(LAST_SYNC_KEY, this.lastSyncAt)
         clearApiCache()
-        const message = `同步完成：云端 ${valid.length} 条，本地新增 ${created} / 更新 ${updated}，推送 ${pushed}${failed ? `（失败 ${failed}，已保留待重试）` : ''}${epMarks ? `，单集标记 ${epMarks}` : ''}${charPushed ? `，角色收藏 ${charPushed}` : ''}`
+        const message = `同步完成：云端 ${valid.length} 条，本地新增 ${created} / 更新 ${updated}，推送 ${pushed}${failed ? `（失败 ${failed}，已保留待重试）` : ''}${epMarks ? `，单集标记 ${epMarks}` : ''}${charPushed ? `，角色收藏 ${charPushed}` : ''}${personPushed ? `，人物收藏 ${personPushed}` : ''}${epPulled ? `，单集拉取 ${epPulled}` : ''}`
         this.log(message)
         return { ok: true, message, created, updated, pushed, failed }
       } catch (e) {

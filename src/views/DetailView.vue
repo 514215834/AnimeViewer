@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import {
@@ -8,11 +8,15 @@ import {
   NCheckbox,
   NDescriptions,
   NDescriptionsItem,
+  NDrawer,
+  NDrawerContent,
+  NInput,
   NInputNumber,
   NRate,
   NResult,
   NSelect,
   NSpin,
+  NSwitch,
   NTabPane,
   NTabs,
   NTag,
@@ -63,6 +67,49 @@ const statusOptions = [
 /** 主篇剧集（type 0），SP/OP/ED 不参与进度 */
 const mainEpisodes = computed(() => (episodes.value ?? []).filter((e) => e.type === 0))
 
+/* ── G1 章节类型分组展示 ── */
+
+const EP_TYPE_LABELS: Record<number, string> = { 0: '本篇', 1: 'SP', 2: 'OP', 3: 'ED', 4: '预告' }
+/** 默认展示本篇；条目无本篇章节时回退到首个存在的类型 */
+const epTypeFilter = ref(0)
+/** 章节类型分组（仅展示实际存在的类型） */
+const epTypeGroups = computed(() => {
+  const counts = new Map<number, number>()
+  for (const e of episodes.value ?? []) counts.set(e.type, (counts.get(e.type) ?? 0) + 1)
+  return [0, 1, 2, 3, 4]
+    .filter((t) => counts.has(t))
+    .map((t) => ({ type: t, label: EP_TYPE_LABELS[t] ?? '其他', count: counts.get(t) as number }))
+})
+const visibleEpisodes = computed(() => (episodes.value ?? []).filter((e) => e.type === epTypeFilter.value))
+
+/* ── G2 单集详情抽屉（含 G3 吐槽入口）── */
+
+/** 2026-09-09 实测：列表响应已携带 comment/duration/desc 等全字段，抽屉直接读列表数据，无需单独请求 */
+const drawerEp = ref<Episode | null>(null)
+const showEpDrawer = ref(false)
+
+function openEpDetail(ep: Episode) {
+  drawerEp.value = ep
+  showEpDrawer.value = true
+}
+
+/** 时长展示：优先 duration 文本，回退 duration_seconds 换算 */
+const epDuration = computed(() => {
+  const ep = drawerEp.value
+  if (!ep) return ''
+  if (ep.duration) return ep.duration
+  const sec = ep.duration_seconds ?? 0
+  if (!sec) return ''
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return s ? `${m}m${s}s` : `${m}m`
+})
+
+/** G3：吐槽区在 bgm.tv 网页端（官方 v0 API 无评论端点），新窗口导航不受 CORS 限制 */
+function openEpCommentPage() {
+  if (drawerEp.value) window.open(`https://bgm.tv/ep/${drawerEp.value.id}`, '_blank', 'noopener')
+}
+
 onMounted(load)
 watch(id, load)
 
@@ -77,8 +124,13 @@ async function load() {
   activeTab.value = 'info'
   tabError.value = ''
   revealed.value = false
+  epTypeFilter.value = 0
+  showEpDrawer.value = false
+  drawerEp.value = null
   try {
     subject.value = await dataSource.subject(id.value)
+    // 修复懒加载竞态：加载期间用户已切到其他 Tab 时（activeTab 已变但 loadTabData 因 subject 未就绪提前返回），完成后补触发
+    void loadTabData(activeTab.value)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -101,6 +153,8 @@ async function loadTabData(tab: string) {
       persons.value = await dataSource.persons(subject.value.id)
     } else if (tab === 'eps' && episodes.value === null) {
       episodes.value = await dataSource.episodes(subject.value.id)
+      // G1：无本篇章节的条目回退展示首个存在的类型
+      epTypeFilter.value = episodes.value.some((e) => e.type === 0) ? 0 : (episodes.value[0]?.type ?? 0)
     } else if (tab === 'related' && related.value === null) {
       related.value = await dataSource.relatedSubjects(subject.value.id)
     }
@@ -242,6 +296,31 @@ function markAllEps(watched: boolean) {
 function charAvatar(images?: SubjectCharacter['images']): string {
   return charAvatarUrl(images, settings.imageQuality)
 }
+
+/* ── F6 我的评分与笔记 ── */
+
+/** 评分/私密开关即时保存；笔记输入 400ms 防抖，离开页面前兜底提交 */
+function setReview(patch: { rate?: number; comment?: string; isPrivate?: boolean }) {
+  if (!entry.value) return
+  library.setMyReview(entry.value.subjectId, patch)
+}
+
+let commentTimer: ReturnType<typeof setTimeout> | undefined
+let pendingComment: string | undefined
+function onCommentInput(v: string) {
+  pendingComment = v
+  if (commentTimer) clearTimeout(commentTimer)
+  commentTimer = setTimeout(() => {
+    if (pendingComment !== undefined && entry.value) setReview({ comment: pendingComment })
+    pendingComment = undefined
+  }, 400)
+}
+
+onBeforeUnmount(() => {
+  if (pendingComment !== undefined && entry.value) setReview({ comment: pendingComment })
+  pendingComment = undefined
+  if (commentTimer) clearTimeout(commentTimer)
+})
 </script>
 
 <template>
@@ -332,6 +411,40 @@ function charAvatar(images?: SubjectCharacter['images']): string {
                 <span class="progress-text">/ {{ entry.epsTotal > 0 ? entry.epsTotal : '?' }} 话</span>
                 <NButton size="small" quaternary type="error" @click="remove">移除</NButton>
               </template>
+            </div>
+
+            <!-- F6 我的评分与笔记（追番库内条目）：本地即时保存，随同步推送 Bangumi 收藏评价 -->
+            <div v-if="entry" class="my-review">
+              <div class="my-review-head">
+                <span class="my-review-title">✍️ 我的评分与笔记</span>
+                <label class="my-review-private">
+                  <NSwitch
+                    size="small"
+                    :value="entry.privateFlag ?? false"
+                    @update:value="(v: boolean) => setReview({ isPrivate: v })"
+                  />
+                  私密（仅自己可见）
+                </label>
+              </div>
+              <div class="my-review-rate">
+                <NRate
+                  allow-half
+                  :value="(entry.myRate ?? 0) / 2"
+                  size="medium"
+                  color="#ffd75e"
+                  @update:value="(v: number) => setReview({ rate: Math.round(v * 2) })"
+                />
+                <span v-if="entry.myRate" class="my-review-num">{{ entry.myRate }}/10</span>
+                <span v-else class="my-review-hint">点击评分</span>
+                <NButton v-if="entry.myRate" size="tiny" quaternary @click="setReview({ rate: 0 })">清除</NButton>
+              </div>
+              <NInput
+                type="textarea"
+                :value="entry.myComment ?? ''"
+                placeholder="写点笔记/短评（同步到 Bangumi 收藏评价，勾选私密后仅自己可见）"
+                :autosize="{ minRows: 2, maxRows: 6 }"
+                @update:value="onCommentInput"
+              />
             </div>
           </div>
         </div>
@@ -475,17 +588,37 @@ function charAvatar(images?: SubjectCharacter['images']): string {
                   已看 {{ entry?.watchedEps?.length ?? 0 }} / {{ mainEpisodes.length }} 话
                 </span>
               </div>
+              <!-- G1 章节类型分组：进度统计仅本篇；非本篇章节为纯展示（本地进度按 sort 存储且与正篇重叠，勾选会误清正篇进度） -->
+              <div v-if="epTypeGroups.length > 1" class="ep-type-tabs">
+                <button
+                  v-for="g in epTypeGroups"
+                  :key="g.type"
+                  type="button"
+                  class="ep-type-chip"
+                  :class="{ active: epTypeFilter === g.type }"
+                  @click="epTypeFilter = g.type"
+                >
+                  {{ g.label }} {{ g.count }}
+                </button>
+              </div>
               <NSpin :show="episodes === null && activeTab === 'eps'">
-                <div v-if="episodes && !mainEpisodes.length" class="empty-hint">暂无剧集数据</div>
+                <div v-if="episodes && !episodes.length" class="empty-hint">暂无剧集数据</div>
                 <div v-else class="ep-list">
                   <div
-                    v-for="ep in mainEpisodes"
+                    v-for="ep in visibleEpisodes"
                     :key="ep.id"
                     class="ep-row"
-                    :class="{ watched: isEpWatched(ep) }"
+                    :class="{ watched: ep.type === 0 && isEpWatched(ep) }"
+                    title="查看章节详情与吐槽"
+                    @click="openEpDetail(ep)"
                   >
-                    <NCheckbox :checked="isEpWatched(ep)" @update:checked="(v: boolean) => toggleEp(ep, v)" />
-                    <span class="ep-sort">第 {{ ep.sort }} 话</span>
+                    <NCheckbox
+                      v-if="ep.type === 0"
+                      :checked="isEpWatched(ep)"
+                      @update:checked="(v: boolean) => toggleEp(ep, v)"
+                      @click.stop
+                    />
+                    <span class="ep-sort">{{ ep.type === 0 ? `第 ${ep.sort} 话` : `${EP_TYPE_LABELS[ep.type] ?? '其他'} ${ep.sort}` }}</span>
                     <span class="ep-name" :title="ep.name_cn || ep.name">{{ ep.name_cn || ep.name }}</span>
                     <span v-if="ep.airdate" class="ep-date">{{ ep.airdate }}</span>
                   </div>
@@ -497,6 +630,30 @@ function charAvatar(images?: SubjectCharacter['images']): string {
         </template>
       </div>
     </NSpin>
+
+    <!-- G2 单集详情抽屉：列表数据直读（实测已含全字段）；G3 吐槽入口走 bgm.tv 官网页面 -->
+    <NDrawer v-model:show="showEpDrawer" :width="360" placement="right">
+      <NDrawerContent :title="drawerEp ? drawerEp.name_cn || drawerEp.name : ''" closable>
+        <template v-if="drawerEp">
+          <div v-if="drawerEp.name_cn && drawerEp.name !== drawerEp.name_cn" class="epd-sub">{{ drawerEp.name }}</div>
+          <NDescriptions :column="1" size="small" label-placement="left" bordered class="epd-facts">
+            <NDescriptionsItem label="类型">
+              {{ EP_TYPE_LABELS[drawerEp.type] ?? '其他' }}
+              <NTag v-if="drawerEp.type !== 0" size="tiny" :bordered="false" round style="margin-left: 6px">不参与进度统计</NTag>
+            </NDescriptionsItem>
+            <NDescriptionsItem v-if="drawerEp.airdate" label="播出日期">{{ drawerEp.airdate }}</NDescriptionsItem>
+            <NDescriptionsItem v-if="epDuration" label="时长">{{ epDuration }}</NDescriptionsItem>
+            <NDescriptionsItem label="吐槽">{{ drawerEp.comment ?? 0 }} 条</NDescriptionsItem>
+          </NDescriptions>
+          <div class="epd-label">章节简介</div>
+          <p v-if="drawerEp.desc" class="epd-desc">{{ drawerEp.desc }}</p>
+          <div v-else class="empty-hint">暂无章节简介</div>
+          <NButton type="primary" secondary block @click="openEpCommentPage">
+            去 bgm.tv 查看 {{ drawerEp.comment ?? 0 }} 条吐槽 ↗
+          </NButton>
+        </template>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>
 
@@ -568,6 +725,58 @@ function charAvatar(images?: SubjectCharacter['images']): string {
   gap: 10px;
   margin-top: 6px;
   flex-wrap: wrap;
+}
+
+.my-review {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  background: rgba(128, 128, 128, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 560px;
+}
+
+.my-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.my-review-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.my-review-private {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.7;
+  cursor: pointer;
+  user-select: none;
+}
+
+.my-review-rate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.my-review-num {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffd75e;
+}
+
+.my-review-hint {
+  font-size: 12px;
+  opacity: 0.45;
 }
 
 .progress-text {
@@ -828,5 +1037,66 @@ function charAvatar(images?: SubjectCharacter['images']): string {
   font-size: 12px;
   opacity: 0.5;
   flex-shrink: 0;
+}
+
+/* G1 章节类型分组 chips */
+.ep-type-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ep-type-chip {
+  cursor: pointer;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+.ep-type-chip:hover {
+  border-color: #8a7bff;
+}
+
+.ep-type-chip.active {
+  border-color: #8a7bff;
+  color: #8a7bff;
+}
+
+/* G2/G3 章节行可点击进抽屉 */
+.ep-row {
+  cursor: pointer;
+}
+
+.ep-row:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+/* 单集详情抽屉 */
+.epd-sub {
+  font-size: 12px;
+  opacity: 0.55;
+  margin-bottom: 10px;
+  word-break: break-all;
+}
+
+.epd-facts {
+  margin-bottom: 14px;
+}
+
+.epd-label {
+  font-size: 12px;
+  opacity: 0.6;
+  margin-bottom: 4px;
+}
+
+.epd-desc {
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0 0 14px;
+  white-space: pre-wrap;
 }
 </style>

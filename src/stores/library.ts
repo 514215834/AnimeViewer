@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { loadJson, saveJson } from '../utils/storage'
+import { useSettingsStore } from './settings'
+import { demoLibrary, isDemoSubjectId } from '../api/demo'
 
 export type WatchStatus = 'wish' | 'doing' | 'done'
 
@@ -15,6 +17,12 @@ export interface LibraryEntry {
   watchedEps?: number[]
   /** 条目评分，加追时从详情带入 */
   score?: number
+  /** F6 我的评分（0-10 整数；0=用户主动清除，推送 0 删除云端评分；undefined=从未评过，推送时忽略） */
+  myRate?: number
+  /** F6 我的笔记/短评（同步到云端收藏评价；空串=清除，undefined=从未写过） */
+  myComment?: string
+  /** F6 私密收藏（仅自己可见；undefined=跟随云端现状） */
+  privateFlag?: boolean
   /** 条目标签（加追/同步时取 Top5），用于库内标签筛选 */
   tags?: string[]
   addedAt: number
@@ -37,30 +45,86 @@ export interface CollectedCharacter {
   dirty?: boolean
 }
 
+/** F2 我收藏的人物（与角色收藏对称；personId 为键） */
+export interface CollectedPerson {
+  personId: number
+  name: string
+  nameCn?: string
+  image?: string
+  career?: string[]
+  addedAt: number
+  /** 本地收藏尚未推送到云端（collectPerson 失败时保留重试） */
+  dirty?: boolean
+}
+
 interface LibraryState {
+  /** 在线收藏（云同步唯一作用域） */
   items: Record<string, LibraryEntry>
+  /** 演示收藏（离线模式专用，由 demo.js 播种，与在线数据完全隔离） */
+  demoItems: Record<string, LibraryEntry>
   characters: Record<string, CollectedCharacter>
+  persons: Record<string, CollectedPerson>
   /** 移除墓碑（subjectId → 移除时间）：云端无删除收藏端点，同步拉取时跳过这些条目防止复活；显式重新加追会解除 */
   removedSubjects: Record<string, number>
 }
 
 const STORAGE_KEY = 'animeviewer:library'
+/** 演示模式「我的追番」独立存储：与在线收藏（STORAGE_KEY）互不可见、互不影响 */
+const DEMO_STORAGE_KEY = 'animeviewer:library:demo'
 const CHARACTERS_KEY = 'animeviewer:characters'
+const PERSONS_KEY = 'animeviewer:persons'
 const REMOVED_KEY = 'animeviewer:removedSubjects'
 
 const STATUS_VALUES: readonly string[] = ['wish', 'doing', 'done']
 
+/** 演示/在线追番库分库装载：演示库首次进入时由 demo.js 播种；
+ *  历史版本曾共用一个存储，混入在线库的演示条目在此一次性迁出演示库（演示条目不参与云同步，dirty 无意义故清除） */
+function loadNamespacedItems(): { online: Record<string, LibraryEntry>; demo: Record<string, LibraryEntry> } {
+  const online = loadJson<Record<string, LibraryEntry>>(STORAGE_KEY, {})
+  const storedDemo = loadJson<Record<string, LibraryEntry> | null>(DEMO_STORAGE_KEY, null)
+  const demo: Record<string, LibraryEntry> = storedDemo ?? {}
+  let demoDirty = false
+  if (!storedDemo) {
+    for (const e of demoLibrary()) demo[String(e.subjectId)] = e
+    demoDirty = true
+  }
+  let migrated = false
+  for (const key of Object.keys(online)) {
+    if (isDemoSubjectId(Number(key))) {
+      if (!demo[key]) demo[key] = { ...online[key], dirty: false }
+      delete online[key]
+      migrated = true
+    }
+  }
+  if (demoDirty || migrated) saveJson(DEMO_STORAGE_KEY, demo)
+  if (migrated) saveJson(STORAGE_KEY, online)
+  return { online, demo }
+}
+
 // 注意：state 必须用具名键包裹 Record，直接把 Record 作为 state 根对象
 // 会导致 getter 收到混入 actions 的 store 实例
 export const useLibraryStore = defineStore('library', {
-  state: (): LibraryState => ({
-    items: loadJson<Record<string, LibraryEntry>>(STORAGE_KEY, {}),
-    characters: loadJson<Record<string, CollectedCharacter>>(CHARACTERS_KEY, {}),
-    removedSubjects: loadJson<Record<string, number>>(REMOVED_KEY, {}),
-  }),
+  state: (): LibraryState => {
+    const { online, demo } = loadNamespacedItems()
+    return {
+      items: online,
+      demoItems: demo,
+      characters: loadJson<Record<string, CollectedCharacter>>(CHARACTERS_KEY, {}),
+      persons: loadJson<Record<string, CollectedPerson>>(PERSONS_KEY, {}),
+      removedSubjects: loadJson<Record<string, number>>(REMOVED_KEY, {}),
+    }
+  },
   getters: {
-    list: (s): LibraryEntry[] => Object.values(s.items).sort((a, b) => b.addedAt - a.addedAt),
-    count: (s) => Object.keys(s.items).length,
+    /** 当前模式的收藏记录：演示/在线双库隔离，全部读写经由该入口路由 */
+    activeItems(): Record<string, LibraryEntry> {
+      return useSettingsStore().isDemo ? this.demoItems : this.items
+    },
+    list(): LibraryEntry[] {
+      return Object.values(this.activeItems).sort((a, b) => b.addedAt - a.addedAt)
+    },
+    count(): number {
+      return Object.keys(this.activeItems).length
+    },
     /** E6 我的角色列表（按收藏时间倒序） */
     characterList: (s): CollectedCharacter[] =>
       Object.values(s.characters).sort((a, b) => b.addedAt - a.addedAt),
@@ -69,13 +133,21 @@ export const useLibraryStore = defineStore('library', {
     pendingCharacters(): CollectedCharacter[] {
       return this.characterList.filter((c) => c.dirty)
     },
+    /* ── F2 我的人物 ── */
+    personList: (s): CollectedPerson[] =>
+      Object.values(s.persons).sort((a, b) => b.addedAt - a.addedAt),
+    personCount: (s) => Object.keys(s.persons).length,
+    /** 待推送的人物收藏 */
+    pendingPersons(): CollectedPerson[] {
+      return this.personList.filter((p) => p.dirty)
+    },
   },
   actions: {
     has(id: number): boolean {
-      return !!this.items[String(id)]
+      return !!this.activeItems[String(id)]
     },
     entry(id: number): LibraryEntry | undefined {
-      return this.items[String(id)]
+      return this.activeItems[String(id)]
     },
     add(payload: {
       subjectId: number
@@ -86,7 +158,7 @@ export const useLibraryStore = defineStore('library', {
       score?: number
       tags?: string[]
     }) {
-      this.items[String(payload.subjectId)] = {
+      this.activeItems[String(payload.subjectId)] = {
         subjectId: payload.subjectId,
         name: payload.name,
         nameCn: payload.nameCn,
@@ -105,13 +177,13 @@ export const useLibraryStore = defineStore('library', {
       this.persist()
     },
     remove(id: number) {
-      delete this.items[String(id)]
+      delete this.activeItems[String(id)]
       // 移除墓碑：云端无删除收藏端点，不记墓碑的话下次同步拉取会复活该条目
       this.removedSubjects[String(id)] = Date.now()
       this.persist()
     },
     setStatus(id: number, status: WatchStatus) {
-      const e = this.items[String(id)]
+      const e = this.activeItems[String(id)]
       if (!e) return
       e.status = status
       if (status === 'done' && e.epsTotal > 0) this.setProgress(id, e.epsTotal)
@@ -120,7 +192,7 @@ export const useLibraryStore = defineStore('library', {
       this.persist()
     },
     setProgress(id: number, progress: number) {
-      const e = this.items[String(id)]
+      const e = this.activeItems[String(id)]
       if (!e) return
       e.progress = progress
       // 数字进度与单集勾选双向同步：视为已看第 1~N 话
@@ -131,7 +203,7 @@ export const useLibraryStore = defineStore('library', {
     },
     /** 整表标记（v0.3 路径）：条目级 dirty，同步时整表 PATCH */
     setEpisodeWatched(id: number, sort: number, watched: boolean) {
-      const e = this.items[String(id)]
+      const e = this.activeItems[String(id)]
       if (!e) return
       const set = new Set(e.watchedEps ?? [])
       if (watched) set.add(sort)
@@ -147,7 +219,7 @@ export const useLibraryStore = defineStore('library', {
      * 云端推送走 sync store 的 pendingEpisodeMarks 队列（单集 PUT），避免整表 PATCH 覆盖云端并发改动
      */
     markEpisodeLocal(id: number, sort: number, watched: boolean) {
-      const e = this.items[String(id)]
+      const e = this.activeItems[String(id)]
       if (!e) return
       const set = new Set(e.watchedEps ?? [])
       if (watched) set.add(sort)
@@ -158,7 +230,7 @@ export const useLibraryStore = defineStore('library', {
       this.persist()
     },
     setWatchedAll(id: number, watched: boolean, sorts: number[]) {
-      const e = this.items[String(id)]
+      const e = this.activeItems[String(id)]
       if (!e) return
       if (watched) {
         const set = new Set([...(e.watchedEps ?? []), ...sorts])
@@ -171,7 +243,38 @@ export const useLibraryStore = defineStore('library', {
       e.dirtyAt = Date.now()
       this.persist()
     },
-    /** 合并云端收藏：本地无则创建；本地有未推送改动时按 dirtyAt 与远端 updated_at 做条目级新者合并（E2），否则服务端较新时覆盖 */
+    /**
+     * F6 我的评分与笔记：本地即时保存并打条目级 dirty（沿用 E2 三态推送）。
+     * rate=0 表示用户主动清除评分（推送 0 删除云端评分）；comment 空串表示清除笔记
+     */
+    setMyReview(id: number, patch: { rate?: number; comment?: string; isPrivate?: boolean }) {
+      const e = this.activeItems[String(id)]
+      if (!e) return
+      if (patch.rate !== undefined && e.myRate !== patch.rate) e.myRate = patch.rate
+      if (patch.comment !== undefined && e.myComment !== patch.comment) e.myComment = patch.comment
+      if (patch.isPrivate !== undefined && e.privateFlag !== patch.isPrivate) e.privateFlag = patch.isPrivate
+      e.dirty = true
+      e.dirtyAt = Date.now()
+      this.persist()
+    },
+    /**
+     * F1 云端单集状态合并（云端覆盖本地）。调用方保证仅在「云端存在单集记录」时调用，
+     * 避免把 ep_status 推导出的本地进度误清；返回是否有变化
+     */
+    applyCloudEpisodes(id: number, sorts: number[]): boolean {
+      const e = this.activeItems[String(id)]
+      if (!e) return false
+      const next = [...new Set(sorts)].sort((a, b) => a - b)
+      const prev = e.watchedEps ?? []
+      if (prev.length === next.length && prev.every((v, i) => v === next[i])) return false
+      e.watchedEps = next
+      e.progress = next.length
+      this.persist()
+      return true
+    },
+    /** 合并云端收藏：本地无则创建；本地有未推送改动时按 dirtyAt 与远端 updated_at 做条目级新者合并（E2），否则服务端较新时覆盖。
+     *  F6：rate/comment/private 属「轻量字段」——规范明示修改评分/评价时 updated_at 不刷新（官方 bug），
+     *  条目级新旧比对不可靠，故对非 dirty 条目无条件跟随云端（dirty 条目保留本地值待推送） */
     upsertFromServer(payload: {
       subjectId: number
       name: string
@@ -181,14 +284,21 @@ export const useLibraryStore = defineStore('library', {
       progress: number
       epsTotal: number
       tags?: string[]
+      rate?: number
+      comment?: string
+      isPrivate?: boolean
       serverUpdatedAt?: string
     }): 'created' | 'updated' | 'skipped' | 'conflict-local-win' | 'conflict-remote-win' {
       const key = String(payload.subjectId)
-      const local = this.items[key]
+      const items = this.activeItems
+      const local = items[key]
+      const cloudRate = typeof payload.rate === 'number' && payload.rate > 0 ? payload.rate : undefined
+      const cloudComment = typeof payload.comment === 'string' ? payload.comment : undefined
+      const cloudPrivate = typeof payload.isPrivate === 'boolean' ? payload.isPrivate : undefined
       if (!local) {
         // 移除墓碑：用户已明确移除该条目，云同步拉取不得复活（显式加追时墓碑已被解除）
         if (this.removedSubjects[key]) return 'skipped'
-        this.items[key] = {
+        items[key] = {
           subjectId: payload.subjectId,
           name: payload.name,
           nameCn: payload.nameCn,
@@ -198,12 +308,21 @@ export const useLibraryStore = defineStore('library', {
           epsTotal: payload.epsTotal,
           watchedEps: Array.from({ length: payload.progress }, (_, i) => i + 1),
           tags: payload.tags,
+          myRate: cloudRate,
+          myComment: cloudComment,
+          privateFlag: cloudPrivate,
           addedAt: Date.now(),
           dirty: false,
           serverUpdatedAt: payload.serverUpdatedAt,
         }
         this.persist()
         return 'created'
+      }
+      // F6：非 dirty 条目的评分/笔记/私密标记无条件跟随云端（见函数头注释）
+      if (!local.dirty) {
+        local.myRate = cloudRate
+        local.myComment = cloudComment
+        local.privateFlag = cloudPrivate
       }
       if (
         payload.serverUpdatedAt &&
@@ -220,6 +339,9 @@ export const useLibraryStore = defineStore('library', {
           local.status = payload.status
           local.progress = payload.progress
           local.watchedEps = Array.from({ length: payload.progress }, (_, i) => i + 1)
+          local.myRate = cloudRate
+          local.myComment = cloudComment
+          local.privateFlag = cloudPrivate
           local.dirty = false
           local.serverUpdatedAt = payload.serverUpdatedAt
           this.persist()
@@ -236,7 +358,7 @@ export const useLibraryStore = defineStore('library', {
     },
     /** 推送成功后清除脏标记 */
     markSynced(id: number, serverUpdatedAt: string) {
-      const e = this.items[String(id)]
+      const e = this.activeItems[String(id)]
       if (!e) return
       e.dirty = false
       e.serverUpdatedAt = serverUpdatedAt
@@ -244,7 +366,7 @@ export const useLibraryStore = defineStore('library', {
     },
     /** 本地待推送的条目数 */
     dirtyCount(): number {
-      return Object.values(this.items).filter((e) => e.dirty).length
+      return Object.values(this.activeItems).filter((e) => e.dirty).length
     },
     /* ── E6 我的角色 ── */
     hasCharacter(characterId: number): boolean {
@@ -291,21 +413,69 @@ export const useLibraryStore = defineStore('library', {
       c.dirty = false
       this.persist()
     },
-    /** 导入收藏：校验并合并（已存在的条目跳过），返回统计 */
+    /* ── F2 我的人物 ── */
+    hasPerson(personId: number): boolean {
+      return !!this.persons[String(personId)]
+    },
+    /** 本地点击收藏人物（在线推送失败时保留 dirty，由同步队列重放） */
+    addPerson(payload: { personId: number; name: string; nameCn?: string; image?: string; career?: string[] }) {
+      const key = String(payload.personId)
+      if (this.persons[key]) return
+      this.persons[key] = {
+        personId: payload.personId,
+        name: payload.name,
+        nameCn: payload.nameCn,
+        image: payload.image,
+        career: payload.career,
+        addedAt: Date.now(),
+        dirty: true,
+      }
+      this.persist()
+    },
+    /** 云端收藏列表合并到本地（F2 同步拉取） */
+    upsertPersonFromServer(payload: { personId: number; name: string; nameCn?: string; image?: string; career?: string[] }) {
+      const key = String(payload.personId)
+      const existing = this.persons[key]
+      if (existing) {
+        if (existing.dirty) return 'skipped'
+        existing.name = payload.name
+        existing.nameCn = payload.nameCn ?? existing.nameCn
+        existing.image = payload.image ?? existing.image
+        existing.career = payload.career ?? existing.career
+        this.persist()
+        return
+      }
+      this.persons[key] = { ...payload, addedAt: Date.now(), dirty: false }
+      this.persist()
+    },
+    /** 本地移除人物收藏（云端取消依赖 DELETE /persons/{id}/collect，服务端实测未实现） */
+    removePerson(personId: number) {
+      delete this.persons[String(personId)]
+      this.persist()
+    },
+    /** 推送成功后清除人物收藏的脏标记 */
+    markPersonSynced(personId: number) {
+      const p = this.persons[String(personId)]
+      if (!p) return
+      p.dirty = false
+      this.persist()
+    },
+    /** 导入收藏：校验并合并（已存在的条目跳过），返回统计。写入当前模式的收藏库 */
     importEntries(raw: unknown[]): { added: number; skipped: number } {
       let added = 0
       let skipped = 0
+      const items = this.activeItems
       for (const item of raw) {
         const e = item as Partial<LibraryEntry>
         if (typeof e?.subjectId !== 'number' || typeof e?.name !== 'string' || !e.name) {
           skipped++
           continue
         }
-        if (this.items[String(e.subjectId)]) {
+        if (items[String(e.subjectId)]) {
           skipped++
           continue
         }
-      this.items[String(e.subjectId)] = {
+      items[String(e.subjectId)] = {
         subjectId: e.subjectId,
         name: e.name,
         nameCn: typeof e.nameCn === 'string' && e.nameCn ? e.nameCn : e.name,
@@ -315,6 +485,9 @@ export const useLibraryStore = defineStore('library', {
         epsTotal: Number(e.epsTotal) || 0,
         watchedEps: Array.isArray(e.watchedEps) ? e.watchedEps.filter((n) => typeof n === 'number') : [],
         score: typeof e.score === 'number' ? e.score : undefined,
+        myRate: typeof e.myRate === 'number' ? e.myRate : undefined,
+        myComment: typeof e.myComment === 'string' ? e.myComment : undefined,
+        privateFlag: typeof e.privateFlag === 'boolean' ? e.privateFlag : undefined,
         tags: Array.isArray(e.tags) ? e.tags.filter((t) => typeof t === 'string') : undefined,
         addedAt: Number(e.addedAt) || Date.now(),
         dirty: true,
@@ -328,7 +501,9 @@ export const useLibraryStore = defineStore('library', {
     },
     persist() {
       saveJson(STORAGE_KEY, JSON.parse(JSON.stringify(this.items)))
+      saveJson(DEMO_STORAGE_KEY, JSON.parse(JSON.stringify(this.demoItems)))
       saveJson(CHARACTERS_KEY, JSON.parse(JSON.stringify(this.characters)))
+      saveJson(PERSONS_KEY, JSON.parse(JSON.stringify(this.persons)))
       saveJson(REMOVED_KEY, JSON.parse(JSON.stringify(this.removedSubjects)))
     },
   },

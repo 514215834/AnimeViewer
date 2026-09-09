@@ -5,7 +5,7 @@ import { useMessage } from 'naive-ui'
 import { NAlert, NButton, NEmpty, NResult, NSpin, NTag } from 'naive-ui'
 import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from '../stores/library'
-import type { CharacterDetail, StaffWork } from '../types/bangumi'
+import type { CharacterDetail, CharacterPerson, StaffWork } from '../types/bangumi'
 import PosterImage from '../components/PosterImage.vue'
 
 const route = useRoute()
@@ -15,6 +15,7 @@ const library = useLibraryStore()
 
 const character = ref<CharacterDetail | null>(null)
 const works = ref<StaffWork[] | null>(null)
+const actors = ref<CharacterPerson[] | null>(null)
 const loading = ref(true)
 const error = ref('')
 
@@ -35,6 +36,7 @@ async function load() {
   error.value = ''
   character.value = null
   works.value = null
+  actors.value = null
   try {
     character.value = await dataSource.characterDetail(id.value)
     works.value = await dataSource.characterSubjects(id.value)
@@ -42,6 +44,12 @@ async function load() {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
+  }
+  // F3 演绎声优：独立加载，失败不影响主页面
+  try {
+    actors.value = await dataSource.characterPersons(id.value)
+  } catch {
+    actors.value = []
   }
 }
 
@@ -73,6 +81,11 @@ function toggleCollect() {
 
 function openSubject(subjectId: number) {
   router.push({ name: 'subject', params: { id: String(subjectId) } })
+}
+
+/** F3 声优头像 URL（images 可能为 null，交给 PosterImage 占位） */
+function actorImg(images?: CharacterPerson['images']): string {
+  return images?.medium || images?.large || images?.small || ''
 }
 </script>
 
@@ -114,6 +127,32 @@ function openSubject(subjectId: number) {
           <p>{{ character.summary }}</p>
         </section>
         <div v-else class="empty-hint">暂无角色简介</div>
+
+        <!-- F3 演绎声优：该角色在各作品中的配音演员，点击跳人物页 -->
+        <h3 class="cpage-works-title">🎙 演绎声优</h3>
+        <NSpin :show="actors === null">
+          <div v-if="actors && !actors.length" class="empty-hint">
+            <NEmpty description="暂无声优关联数据" />
+          </div>
+          <div v-else class="actor-grid">
+            <div
+              v-for="a in actors ?? []"
+              :key="`${a.id}-${a.subject_id}`"
+              class="actor-card"
+              :title="`查看人物「${a.name}」`"
+              @click="router.push({ name: 'person', params: { id: String(a.id) } })"
+            >
+              <div class="actor-avatar">
+                <PosterImage :src="actorImg(a.images)" :title="a.name" :subject-id="a.id" />
+                <span v-if="a.staff" class="actor-staff">{{ a.staff }}</span>
+              </div>
+              <div class="actor-name" :title="a.name">{{ a.name }}</div>
+              <div class="actor-subject" :title="a.subject_name_cn || a.subject_name">
+                {{ a.subject_name_cn || a.subject_name }}
+              </div>
+            </div>
+          </div>
+        </NSpin>
 
         <h3 class="cpage-works-title">🎬 出演作品</h3>
         <NSpin :show="works === null">
@@ -194,6 +233,60 @@ function openSubject(subjectId: number) {
 .cpage-works-title {
   margin: 8px 0 12px;
   font-size: 16px;
+}
+
+.actor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 14px 10px;
+  margin-bottom: 22px;
+}
+
+.actor-card {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+.actor-card:hover {
+  transform: translateY(-3px);
+}
+
+.actor-card:hover .actor-name {
+  color: #8a7bff;
+}
+
+.actor-avatar {
+  position: relative;
+}
+
+.actor-staff {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
+.actor-name {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actor-subject {
+  font-size: 12px;
+  opacity: 0.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .works-grid {

@@ -111,6 +111,16 @@ export interface Episode {
   sort: number
   ep?: number | string
   airdate?: string
+  /** 吐槽数（2026-09-09 实测：列表响应已携带，与单集详情端点字段一致） */
+  comment?: number
+  /** 时长描述（老条目常为空串） */
+  duration?: string
+  /** 时长（秒） */
+  duration_seconds?: number
+  /** 章节简介（老条目常为空串，抽屉需空态） */
+  desc?: string
+  /** 所属光盘卷（仅 DVD/BD 章节有意义） */
+  disc?: number
 }
 
 export interface Paged<T> {
@@ -234,6 +244,38 @@ export interface UserCharacterCollection {
   type?: number
   images?: BangumiImage | null
   created_at?: string
+}
+
+/** GET /v0/users/{username}/collections/-/persons 列表项（自带名称/头像/career） */
+export interface UserPersonCollection {
+  id: number
+  name: string
+  type?: number
+  career?: string[]
+  images?: BangumiImage | null
+  created_at?: string
+}
+
+/** GET /v0/characters/{id}/persons 角色关联声优（每项含所属作品与 staff 身份） */
+export interface CharacterPerson {
+  id: number
+  name: string
+  type?: number
+  images?: BangumiImage | null
+  subject_id: number
+  subject_type?: number
+  subject_name: string
+  subject_name_cn?: string
+  staff?: string
+}
+
+/** GET /v0/users/-/collections/{subject_id}/episodes 列表项（F1 云端单集状态） */
+export interface UserEpisodeCollection {
+  episode: Episode
+  /** 0=未收藏 1=想看 2=看过 3=抛弃 */
+  type: EpisodeMarkType
+  /** unix 秒；0=未知（官方注明可能不更新，仅参考） */
+  updated_at?: number
 }
 
 /** GET /v0/users/{username}/collections 列表项 */

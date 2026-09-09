@@ -6,8 +6,10 @@ import { NButton, NEmpty, NInputNumber, NPagination, NPopconfirm, NRadioButton, 
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
-import type { WatchStatus } from '../stores/library'
+import type { CollectedCharacter, CollectedPerson, WatchStatus } from '../stores/library'
+import { isDemoCharacterId, isDemoPersonId } from '../api/demo'
 import { upgradeStoredCover } from '../utils/image'
+import { careerLabel } from '../utils/career'
 import PosterImage from '../components/PosterImage.vue'
 
 const router = useRouter()
@@ -16,14 +18,15 @@ const library = useLibraryStore()
 const settings = useSettingsStore()
 const sync = useSyncStore()
 
-const view = ref<'anime' | 'character'>('anime')
+const view = ref<'anime' | 'character' | 'person'>('anime')
 const filter = ref<'all' | WatchStatus>('all')
 const sortBy = ref<'added' | 'score' | 'name'>('added')
 const tagFilter = ref<string | null>(null)
 
-/** E6 我的角色分页（每页 24） */
-const CHAR_PAGE_SIZE = 24
+/** E6/F2 角色与人物收藏分页（每页 24） */
+const LIB_PAGE_SIZE = 24
 const charPage = ref(1)
+const personPage = ref(1)
 
 const statusOptions = [
   { label: '想看', value: 'wish' },
@@ -80,19 +83,44 @@ function removeEntry(id: number, title: string) {
   message.success(`已将「${title}」移出本地追番列表（Bangumi 暂不支持删除云端收藏，同步不会恢复）`)
 }
 
-/** E6 角色头像 URL（存的是 URL 字符串，http→https 升级交给 PosterImage 统一处理） */
-function characterImg(img: string | undefined): string {
+/** E6/F2 收藏头像 URL（存的是 URL 字符串，http→https 升级交给 PosterImage 统一处理） */
+function collectImg(img: string | undefined): string {
   return img ?? ''
 }
 
-const charTotal = computed(() => library.characterCount)
+const scopedCharacters = computed<CollectedCharacter[]>(() =>
+  settings.isDemo ? library.characterList.filter((c) => isDemoCharacterId(c.characterId)) : library.characterList,
+)
+const scopedPersons = computed<CollectedPerson[]>(() =>
+  settings.isDemo ? library.personList.filter((p) => isDemoPersonId(p.personId)) : library.personList,
+)
+const characterTotal = computed(() => scopedCharacters.value.length)
+const hiddenCharacterCount = computed(() => (settings.isDemo ? library.characterCount - characterTotal.value : 0))
+const hiddenPersonCount = computed(() => (settings.isDemo ? library.personCount - scopedPersons.value.length : 0))
+
+const charTotal = computed(() => characterTotal.value)
 const charShown = computed(() =>
-  library.characterList.slice((charPage.value - 1) * CHAR_PAGE_SIZE, charPage.value * CHAR_PAGE_SIZE),
+  scopedCharacters.value.slice((charPage.value - 1) * LIB_PAGE_SIZE, charPage.value * LIB_PAGE_SIZE),
 )
 
 function removeCharacter(id: number, title: string) {
   library.removeCharacter(id)
   message.info(`已将「${title}」移出本地角色收藏（云端取消收藏功能 Bangumi API 暂未开放）`)
+}
+
+/* ── F2 我的人物 ── */
+function openPerson(id: number) {
+  router.push({ name: 'person', params: { id: String(id) } })
+}
+
+const personTotal = computed(() => scopedPersons.value.length)
+const personShown = computed(() =>
+  scopedPersons.value.slice((personPage.value - 1) * LIB_PAGE_SIZE, personPage.value * LIB_PAGE_SIZE),
+)
+
+function removePerson(id: number, title: string) {
+  library.removePerson(id)
+  message.info(`已将「${title}」移出本地人物收藏（云端取消收藏功能 Bangumi API 暂未开放）`)
 }
 </script>
 
@@ -103,11 +131,12 @@ function removeCharacter(id: number, title: string) {
       <span class="page-sub">共 {{ library.count }} 部 · 数据保存在本地浏览器</span>
     </div>
 
-    <!-- E6 分区切换：追番 / 我的角色 -->
+    <!-- E6/F2 分区切换：追番 / 我的角色 / 我的人物 -->
     <div class="view-switch">
       <NRadioGroup v-model:value="view" size="small">
         <NRadioButton value="anime">📺 追番 ({{ library.count }})</NRadioButton>
-        <NRadioButton value="character">👤 我的角色 ({{ library.characterCount }})</NRadioButton>
+        <NRadioButton value="character">👤 我的角色 ({{ characterTotal }})</NRadioButton>
+        <NRadioButton value="person">👥 我的人物 ({{ scopedPersons.length }})</NRadioButton>
       </NRadioGroup>
     </div>
 
@@ -167,6 +196,7 @@ function removeCharacter(id: number, title: string) {
               {{ e.nameCn || e.name }}
             </span>
             <span v-if="e.score" class="lib-score">★ {{ e.score.toFixed(1) }}</span>
+            <span v-if="e.myRate" class="lib-mine" title="我的评分">我的 ★{{ e.myRate }}</span>
           </div>
           <div class="lib-controls">
             <NSelect
@@ -202,15 +232,18 @@ function removeCharacter(id: number, title: string) {
     </template>
 
     <!-- E6 我的角色 -->
-    <template v-else>
-      <div v-if="!library.characterCount" class="empty-hint">
+    <template v-else-if="view === 'character'">
+      <div v-if="hiddenCharacterCount" class="demo-filter-hint">
+        演示（离线）模式：已隐藏 {{ hiddenCharacterCount }} 个在线收藏的角色，切换到在线模式可继续查看
+      </div>
+      <div v-if="!characterTotal" class="empty-hint">
         <NEmpty description="还没有收藏角色——去条目详情的「角色」页或搜索角色页点「收藏角色」吧" />
       </div>
       <template v-else>
         <div class="char-lib-grid">
           <div v-for="c in charShown" :key="c.characterId" class="char-lib-card">
             <div class="char-lib-poster" @click="openCharacter(c.characterId)">
-              <PosterImage :src="characterImg(c.image)" :title="c.nameCn || c.name" :subject-id="c.characterId" />
+              <PosterImage :src="collectImg(c.image)" :title="c.nameCn || c.name" :subject-id="c.characterId" />
             </div>
             <div class="char-lib-info">
               <span class="char-lib-name" :title="c.nameCn || c.name" @click="openCharacter(c.characterId)">
@@ -226,12 +259,54 @@ function removeCharacter(id: number, title: string) {
             </div>
           </div>
         </div>
-        <div v-if="charTotal > CHAR_PAGE_SIZE" class="char-pager">
+        <div v-if="charTotal > LIB_PAGE_SIZE" class="char-pager">
           <NPagination
             :page="charPage"
             :item-count="charTotal"
-            :page-size="CHAR_PAGE_SIZE"
+            :page-size="LIB_PAGE_SIZE"
             @update:page="(p: number) => (charPage = p)"
+          />
+        </div>
+      </template>
+    </template>
+
+    <!-- F2 我的声优 -->
+    <template v-else>
+      <div v-if="hiddenPersonCount" class="demo-filter-hint">
+        演示（离线）模式：已隐藏 {{ hiddenPersonCount }} 位在线收藏的人物，切换到在线模式可继续查看
+      </div>
+      <div v-if="!personTotal" class="empty-hint">
+        <NEmpty description="还没有收藏人物——去条目详情的「制作人员」页或搜索人物页点「收藏人物」吧" />
+      </div>
+      <template v-else>
+        <div class="char-lib-grid">
+          <div v-for="p in personShown" :key="p.personId" class="char-lib-card">
+            <div class="char-lib-poster" @click="openPerson(p.personId)">
+              <PosterImage :src="collectImg(p.image)" :title="p.nameCn || p.name" :subject-id="p.personId" />
+            </div>
+            <div class="char-lib-info">
+              <span class="char-lib-name" :title="p.nameCn || p.name" @click="openPerson(p.personId)">
+                {{ p.nameCn || p.name }}
+              </span>
+              <span v-if="p.dirty" class="char-lib-pending">待推送</span>
+              <div v-if="p.career?.length" class="person-career">
+                <NTag v-for="c in p.career.slice(0, 3)" :key="c" size="tiny" :bordered="false" type="info">{{ careerLabel(c) }}</NTag>
+              </div>
+              <NPopconfirm @positive-click="removePerson(p.personId, p.nameCn || p.name)">
+                <template #trigger>
+                  <NButton size="tiny" quaternary type="error" style="align-self: flex-start">移出本地</NButton>
+                </template>
+                仅移出本地记录（云端取消收藏暂不受支持），确定移出「{{ p.nameCn || p.name }}」？
+              </NPopconfirm>
+            </div>
+          </div>
+        </div>
+        <div v-if="personTotal > LIB_PAGE_SIZE" class="char-pager">
+          <NPagination
+            :page="personPage"
+            :item-count="personTotal"
+            :page-size="LIB_PAGE_SIZE"
+            @update:page="(p: number) => (personPage = p)"
           />
         </div>
       </template>
@@ -294,10 +369,24 @@ function removeCharacter(id: number, title: string) {
   color: #e6a23c;
 }
 
+.person-career {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 .char-pager {
   display: flex;
   justify-content: center;
   padding: 18px 0 8px;
+}
+
+.lib-mine {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8a7bff;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .toolbar {
@@ -320,6 +409,15 @@ function removeCharacter(id: number, title: string) {
 .lib-tag-label {
   font-size: 12px;
   opacity: 0.5;
+}
+
+.demo-filter-hint {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #d99a2b;
+  background: rgba(217, 154, 43, 0.12);
 }
 
 .lib-tag-chip {

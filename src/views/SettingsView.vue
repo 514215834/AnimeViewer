@@ -9,6 +9,7 @@ import {
   NInput,
   NRadioButton,
   NRadioGroup,
+  NSelect,
   NSwitch,
 } from 'naive-ui'
 import { DEFAULT_SETTINGS, useSettingsStore } from '../stores/settings'
@@ -22,6 +23,13 @@ const message = useMessage()
 const settings = useSettingsStore()
 const library = useLibraryStore()
 const sync = useSyncStore()
+
+/** 预置反代选项（可下拉选择，也可直接输入自定义地址——NSelect tag 模式支持创建） */
+const API_BASE_OPTIONS = [
+  { label: 'https://api.bgm.tv（官方）', value: 'https://api.bgm.tv' },
+  { label: 'https://bgmapi.anibt.net', value: 'https://bgmapi.anibt.net' },
+]
+const IMAGE_BASE_OPTIONS = [{ label: 'https://bgmimg.anibt.net', value: 'https://bgmimg.anibt.net' }]
 
 const draft = reactive<SettingsState>({ ...settings.$state })
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -194,14 +202,25 @@ async function onImportFile(ev: Event) {
           或自建反向代理并将下方 API 地址指向它。切换到演示模式可离线体验全部界面功能。
         </NAlert>
 
-        <NFormItem label="API Base URL（可配置化：支持自建反向代理 / 镜像）">
-          <NInput v-model:value="draft.apiBaseUrl" placeholder="https://api.bgm.tv" />
+        <NFormItem label="API Base URL（可配置化：支持自建反向代理 / 镜像，可下拉选择或直接输入）">
+          <NSelect
+            v-model:value="draft.apiBaseUrl"
+            :options="API_BASE_OPTIONS"
+            tag
+            filterable
+            placeholder="https://api.bgm.tv"
+          />
         </NFormItem>
 
-        <NFormItem label="图片镜像地址（可选：lain.bgm.tv 图片反代，填反代域名或含子路径的前缀）">
-          <NInput
-            v-model:value="draft.mirrorImageUrl"
-            placeholder="如 https://img.example.com/lain，留空使用官方图片源"
+        <NFormItem label="Image Base URL（可选：lain.bgm.tv 图片反代，填反代域名或含子路径的前缀）">
+          <NSelect
+            :value="draft.mirrorImageUrl || null"
+            :options="IMAGE_BASE_OPTIONS"
+            tag
+            filterable
+            clearable
+            placeholder="留空使用官方图片源，可下拉选择或直接输入"
+            @update:value="(v: string | null) => (draft.mirrorImageUrl = v ?? '')"
           />
         </NFormItem>
 

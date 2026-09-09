@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useMessage } from 'naive-ui'
 import { NAlert, NButton, NEmpty, NResult, NSpin, NTag } from 'naive-ui'
 import { dataSource } from '../api/dataSource'
+import { useLibraryStore } from '../stores/library'
 import type { PersonDetail, StaffWork } from '../types/bangumi'
+import { careerLabel } from '../utils/career'
 import PosterImage from '../components/PosterImage.vue'
 
 const route = useRoute()
 const router = useRouter()
+const message = useMessage()
+const library = useLibraryStore()
 
 const person = ref<PersonDetail | null>(null)
 const works = ref<StaffWork[] | null>(null)
@@ -15,25 +20,11 @@ const loading = ref(true)
 const error = ref('')
 
 const id = computed(() => Number(route.params.id))
+const collected = computed(() => library.hasPerson(id.value))
 const avatarUrl = computed(() => {
   const img = person.value?.images
   return img?.large || img?.medium || img?.small || ''
 })
-
-const CAREER_LABELS: Record<string, string> = {
-  声优: '🎙 声优',
-  艺术家: '🎵 艺术家',
-  演员: '🎭 演员',
-  导演: '🎬 导演',
-  制片人: '💼 制片人',
-  写手: '✍️ 写手',
-  漫画家: '📝 漫画家',
-  插画家: '🎨 插画家',
-}
-
-function careerLabel(c: string): string {
-  return CAREER_LABELS[c] ?? c
-}
 
 onMounted(load)
 watch(id, load)
@@ -51,6 +42,34 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+/** F2 收藏人物：本地即时收藏 + 云端推送（失败保留 dirty 随同步重放） */
+function toggleCollect() {
+  const p = person.value
+  if (!p) return
+  if (collected.value) {
+    // 云端取消收藏依赖 DELETE /persons/{id}/collect，服务端实测未实现（404 路由未注册），仅移除本地记录
+    library.removePerson(p.id)
+    message.info('已从本地「我的人物」移除（云端取消收藏功能 Bangumi API 暂未开放）')
+    return
+  }
+  library.addPerson({
+    personId: p.id,
+    name: p.name,
+    nameCn: p.name_cn || p.name,
+    image: p.images?.medium || p.images?.large,
+    career: p.career,
+  })
+  void dataSource
+    .collectPerson(p.id)
+    .then(() => {
+      library.markPersonSynced(p.id)
+      message.success('已收藏人物，可在「我的追番 → 我的人物」查看')
+    })
+    .catch((e: unknown) => {
+      message.warning(e instanceof Error ? `云端收藏失败，已保留待下次同步重试：${e.message}` : '云端收藏失败，已保留待重试')
+    })
 }
 
 function openSubject(subjectId: number) {
@@ -80,6 +99,13 @@ function openSubject(subjectId: number) {
               <NTag v-for="c in person.career" :key="c" size="small" :bordered="false" type="info">
                 {{ careerLabel(c) }}
               </NTag>
+            </div>
+            <div class="cpage-actions">
+              <NButton v-if="!collected" type="primary" size="small" @click="toggleCollect">☆ 收藏人物</NButton>
+              <template v-else>
+                <NButton size="small" secondary>★ 已收藏</NButton>
+                <NButton size="tiny" quaternary type="error" @click="toggleCollect">移出本地</NButton>
+              </template>
             </div>
           </div>
         </div>
@@ -150,6 +176,12 @@ function openSubject(subjectId: number) {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.cpage-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .cpage-summary p {

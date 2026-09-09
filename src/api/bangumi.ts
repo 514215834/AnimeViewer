@@ -3,6 +3,7 @@ import type {
   BangumiMe,
   CalendarDay,
   CharacterDetail,
+  CharacterPerson,
   CharacterSearchItem,
   Episode,
   EpisodeMarkType,
@@ -19,7 +20,9 @@ import type {
   SubjectDetail,
   SubjectPerson,
   UserCharacterCollection,
+  UserEpisodeCollection,
   UserProfile,
+  UserPersonCollection,
   UserSubjectCollection,
 } from '../types/bangumi'
 
@@ -71,6 +74,7 @@ const characterCache = createTtlCache<CharacterDetail>(SUBJECT_TTL)
 const personCache = createTtlCache<PersonDetail>(SUBJECT_TTL)
 const characterWorksCache = createTtlCache<StaffWork[]>(SUB_RESOURCE_TTL)
 const personWorksCache = createTtlCache<StaffWork[]>(SUB_RESOURCE_TTL)
+const characterPersonsCache = createTtlCache<CharacterPerson[]>(SUB_RESOURCE_TTL)
 
 function baseUrl(): string {
   const s = useSettingsStore()
@@ -160,12 +164,21 @@ export const bangumiApi = {
       `/v0/users/${encodeURIComponent(username)}/collections?subject_type=2&limit=${limit}&offset=${offset}`,
     )
   },
-  /** 新增或修改收藏状态（upsert）：type 1=想看 2=看过 3=在看 */
-  upsertCollection(subjectId: number, type: 1 | 2 | 3): Promise<void> {
+  /** 新增或修改收藏状态（upsert）：type 1=想看 2=看过 3=在看；
+   *  F6 私有评分与笔记：rate（0-10，0=删除评分）/comment/private（仅自己可见）均可选，未定义字段不动云端现状 */
+  upsertCollection(
+    subjectId: number,
+    type: 1 | 2 | 3,
+    review?: { rate?: number; comment?: string; isPrivate?: boolean },
+  ): Promise<void> {
+    const body: Record<string, unknown> = { type }
+    if (review?.rate !== undefined) body.rate = review.rate
+    if (review?.comment !== undefined) body.comment = review.comment
+    if (review?.isPrivate !== undefined) body.private = review.isPrivate
     return request<void>(`/v0/users/-/collections/${subjectId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type }),
+      body: JSON.stringify(body),
     })
   },
   /** 批量标记单集收藏状态：type 2=看过 0=未看；服务端会重算条目完成度 */
@@ -187,6 +200,13 @@ export const bangumiApi = {
   /** E1 读取单集收藏状态 */
   getEpisodeMark(episodeId: number): Promise<{ type?: EpisodeMarkType }> {
     return request<{ type?: EpisodeMarkType }>(`/v0/users/-/collections/-/episodes/${episodeId}`)
+  },
+  /** F1 拉取条目的云端单集收藏状态（正篇 type=0；limit≤1000 一页覆盖常规正篇集数） */
+  async userSubjectEpisodes(subjectId: number): Promise<UserEpisodeCollection[]> {
+    const res = await request<Paged<UserEpisodeCollection>>(
+      `/v0/users/-/collections/${subjectId}/episodes?episode_type=0&limit=1000&offset=0`,
+    )
+    return res.data ?? []
   },
   /** E2 获取单个条目的云端收藏（冲突比对 / 推送后回读真实 updated_at） */
   userCollection(username: string, subjectId: number): Promise<UserSubjectCollection> {
@@ -226,6 +246,14 @@ export const bangumiApi = {
     personWorksCache.set(String(id), data)
     return data
   },
+  /** F3 角色关联声优（每项含所属作品与 staff 身份，点击可跳人物页） */
+  async characterPersons(id: number): Promise<CharacterPerson[]> {
+    const cached = characterPersonsCache.get(String(id))
+    if (cached) return cached
+    const data = await request<CharacterPerson[]>(`/v0/characters/${id}/persons`)
+    characterPersonsCache.set(String(id), data)
+    return data
+  },
   /** E5 用户资料（含头像/签名） */
   userProfile(username: string): Promise<UserProfile> {
     return request<UserProfile>(`/v0/users/${encodeURIComponent(username)}`)
@@ -242,6 +270,16 @@ export const bangumiApi = {
   myCharacterCollections(username: string, offset = 0, limit = 100): Promise<Paged<UserCharacterCollection>> {
     return request<Paged<UserCharacterCollection>>(
       `/v0/users/${encodeURIComponent(username)}/collections/-/characters?limit=${limit}&offset=${offset}`,
+    )
+  },
+  /** F2 收藏人物（需 write:collection 授权；取消收藏端点 DELETE 实测未实现，仅支持收藏） */
+  collectPerson(personId: number): Promise<void> {
+    return request<void>(`/v0/persons/${personId}/collect`, { method: 'POST' })
+  },
+  /** F2 分页拉取当前用户收藏的人物列表（列表项自带名称/头像/career） */
+  myPersonCollections(username: string, offset = 0, limit = 100): Promise<Paged<UserPersonCollection>> {
+    return request<Paged<UserPersonCollection>>(
+      `/v0/users/${encodeURIComponent(username)}/collections/-/persons?limit=${limit}&offset=${offset}`,
     )
   },
   search(keyword: string, tags: string[], sort: string, limit = 24, offset = 0, advanced?: SearchAdvanced): Promise<SearchResponse> {
@@ -339,4 +377,5 @@ export function clearApiCache() {
   personCache.clear()
   characterWorksCache.clear()
   personWorksCache.clear()
+  characterPersonsCache.clear()
 }

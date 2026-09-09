@@ -2,6 +2,7 @@ import type {
   CalendarDay,
   CalendarSubject,
   CharacterDetail,
+  CharacterPerson,
   CharacterSearchItem,
   Episode,
   IndexInfo,
@@ -18,8 +19,10 @@ import type {
   SubjectPerson,
   UserCharacterCollection,
   UserProfile,
+  UserPersonCollection,
 } from '../types/bangumi'
 import type { SearchAdvanced } from './bangumi'
+import type { LibraryEntry } from '../stores/library'
 
 interface DemoSubject extends CalendarSubject {
   tags: { name: string; count: number }[]
@@ -191,7 +194,7 @@ export function demoPersons(id: number): SubjectPerson[] {
 export function demoEpisodes(id: number): Episode[] {
   const s = DEMO_SUBJECTS.find((x) => x.id === id)
   const total = s?.eps ?? 12
-  return Array.from({ length: total }, (_, i) => ({
+  const eps: Episode[] = Array.from({ length: total }, (_, i) => ({
     id: id * 10000 + i + 1,
     type: 0,
     name: `Episode ${i + 1}`,
@@ -199,7 +202,71 @@ export function demoEpisodes(id: number): Episode[] {
     sort: i + 1,
     ep: i + 1,
     airdate: '',
+    // G4：章节详情字段（在线列表实测已携带同构字段，演示数据保持一致结构）
+    comment: 3 + ((i * 7) % 17),
+    duration: '24m',
+    duration_seconds: 1440,
+    desc: i === 0 ? '第 1 话剧情简介（演示数据）：用于验证单集详情抽屉的完整态展示。' : '',
   }))
+  // G4：SP/OP/ED 样例（EpType 1/2/3），保证章节类型分组在演示模式可演示
+  const extra = id * 10000 + total + 900
+  eps.push(
+    {
+      id: extra + 1,
+      type: 1,
+      name: 'SP',
+      name_cn: '特别篇 · 演示',
+      sort: 1,
+      ep: 0,
+      airdate: '',
+      comment: 5,
+      duration: '24m',
+      duration_seconds: 1440,
+      desc: '演示特别篇章节简介。',
+    },
+    {
+      id: extra + 2,
+      type: 2,
+      name: 'OP',
+      name_cn: '片头曲 · 演示',
+      sort: 1,
+      ep: 0,
+      airdate: '',
+      comment: 0,
+      duration: '1m30s',
+      duration_seconds: 90,
+      desc: '',
+    },
+    {
+      id: extra + 3,
+      type: 3,
+      name: 'ED',
+      name_cn: '片尾曲 · 演示',
+      sort: 1,
+      ep: 0,
+      airdate: '',
+      comment: 0,
+      duration: '1m30s',
+      duration_seconds: 90,
+      desc: '',
+    },
+  )
+  return eps
+}
+
+/** 判断 ID 是否为内置演示条目（演示模式下追番库仅显示这些条目，隐藏在线同步的残留数据） */
+export function isDemoSubjectId(id: number): boolean {
+  return id >= 900001 && id <= 900014
+}
+
+/** 判断 ID 是否为内置演示角色：搜索/收藏列表固定段 800001~800006，条目角色为演示条目 ID×10+序号 */
+export function isDemoCharacterId(id: number): boolean {
+  return (id >= 800001 && id <= 800006) || (id >= 9000010 && id <= 9000149)
+}
+
+/** 判断 ID 是否为内置演示人物：搜索/收藏列表段 900001~900005，条目人物为演示条目 ID×1000+序号 */
+export function isDemoPersonId(id: number): boolean {
+  return (id >= 900001 && id <= 900005) || (id >= 900001000 && id <= 900014999)
 }
 
 export function demoDetail(id: number): SubjectDetail {
@@ -403,4 +470,80 @@ export function demoMyCharacters(): Paged<UserCharacterCollection> {
     images: null,
   }))
   return { data: items, total: items.length, limit: 100, offset: 0 }
+}
+
+/* ── v0.7 演示兜底 ── */
+
+/** F2 演示：收藏的人物列表（与演示声优 ID 段一致，便于演示模式串联） */
+export function demoMyPersons(): Paged<UserPersonCollection> {
+  const items: UserPersonCollection[] = Array.from({ length: 3 }, (_, i) => ({
+    id: 900001 + i,
+    name: `演示声优 ${String.fromCharCode(65 + i)}`,
+    type: 1,
+    career: ['声优'],
+    images: null,
+  }))
+  return { data: items, total: items.length, limit: 100, offset: 0 }
+}
+
+/** F3 演示：角色关联声优（确定性映射到演示库条目，保证可跳转）。
+ *  id 落在演示人物合法区间（isDemoPersonId：条目 ID×1000+序号），否则收藏后会在追番库「我的人物」被演示过滤隐藏 */
+export function demoCharacterPersons(id: number): CharacterPerson[] {
+  const idx = Math.abs(id)
+  const a = DEMO_SUBJECTS[idx % DEMO_SUBJECTS.length]
+  const b = DEMO_SUBJECTS[(idx + 1) % DEMO_SUBJECTS.length]
+  return [
+    {
+      id: a.id * 1000 + 100,
+      name: `演示声优 A`,
+      type: 1,
+      images: null,
+      subject_id: a.id,
+      subject_type: 2,
+      subject_name: a.name,
+      subject_name_cn: a.name_cn,
+      staff: '主角 CV',
+    },
+    {
+      id: b.id * 1000 + 200,
+      name: `演示声优 B`,
+      type: 1,
+      images: null,
+      subject_id: b.id,
+      subject_type: 2,
+      subject_name: b.name,
+      subject_name_cn: b.name_cn,
+      staff: '配角 CV',
+    },
+  ]
+}
+
+/** 演示库种子：离线模式下「我的追番」的内置演示收藏。
+ *  与在线收藏完全隔离（独立存储 animeviewer:library:demo），首次进入演示模式时播种到本地 */
+export function demoLibrary(): LibraryEntry[] {
+  const seed = [
+    { id: 900001, status: 'doing' as const, progress: 2, myRate: 8, myComment: '演示收藏：评分与笔记示例' },
+    { id: 900003, status: 'wish' as const, progress: 0, myRate: undefined, myComment: undefined },
+    { id: 900013, status: 'doing' as const, progress: 2, myRate: undefined, myComment: undefined },
+    { id: 900014, status: 'done' as const, progress: 12, myRate: undefined, myComment: undefined },
+  ]
+  return seed.map((x, i) => {
+    const s = DEMO_SUBJECTS.find((d) => d.id === x.id)
+    if (!s) throw new Error(`演示库种子引用了不存在的条目 ${x.id}`)
+    return {
+      subjectId: s.id,
+      name: s.name,
+      nameCn: s.name_cn,
+      image: s.images?.common || s.images?.large,
+      status: x.status,
+      progress: x.progress,
+      epsTotal: s.eps ?? 0,
+      watchedEps: Array.from({ length: x.progress }, (_, k) => k + 1),
+      score: s.rating?.score,
+      tags: (s.tags ?? []).slice(0, 5).map((t) => t.name),
+      myRate: x.myRate,
+      myComment: x.myComment,
+      addedAt: 1757376000000 + i,
+    }
+  })
 }

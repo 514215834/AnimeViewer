@@ -5,6 +5,7 @@ import {
   demoBrowseSubjects,
   demoCalendar,
   demoCharacterDetail,
+  demoCharacterPersons,
   demoCharacterSubjects,
   demoCharacters,
   demoDetail,
@@ -12,6 +13,7 @@ import {
   demoIndex,
   demoIndexSubjects,
   demoMyCharacters,
+  demoMyPersons,
   demoPersonDetail,
   demoPersonSubjects,
   demoPersons,
@@ -24,6 +26,7 @@ import {
 import type {
   CalendarDay,
   CharacterDetail,
+  CharacterPerson,
   CharacterSearchItem,
   Episode,
   IndexInfo,
@@ -40,6 +43,7 @@ import type {
   SubjectPerson,
   UserCharacterCollection,
   UserProfile,
+  UserPersonCollection,
 } from '../types/bangumi'
 
 /** 统一数据入口：根据设置在「在线 Bangumi API」与「内置演示数据」间切换 */
@@ -143,5 +147,24 @@ export const dataSource = {
     return useSettingsStore().isDemo
       ? Promise.resolve()
       : bangumiApi.collectCharacter(characterId)
+  },
+  /* ── v0.7 ── */
+  /** F3 角色关联声优 */
+  characterPersons(id: number): Promise<CharacterPerson[]> {
+    return useSettingsStore().isDemo
+      ? Promise.resolve(demoCharacterPersons(id))
+      : bangumiApi.characterPersons(id)
+  },
+  /** F2 我的人物收藏列表 */
+  myPersonCollections(username: string): Promise<Paged<UserPersonCollection>> {
+    return useSettingsStore().isDemo
+      ? Promise.resolve(demoMyPersons())
+      : bangumiApi.myPersonCollections(username)
+  },
+  /** F2 收藏人物（演示模式 no-op） */
+  collectPerson(personId: number): Promise<void> {
+    return useSettingsStore().isDemo
+      ? Promise.resolve()
+      : bangumiApi.collectPerson(personId)
   },
 }
