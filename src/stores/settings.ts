@@ -23,8 +23,9 @@ export interface SettingsState {
 
 const STORAGE_KEY = 'animeviewer:settings'
 
-// 用户提供的 Bangumi Access Token，用于提升接口访问限额（仅保存在本地）
-export const DEFAULT_ACCESS_TOKEN = 'GC3GCbnjU0edzqtwNe8nw5A8h35iw35Omrp3hXaz'
+// Access Token 默认留空（匿名访问）：提升限额的 Token 由使用者在设置页自填（仅存本地）。
+// 历史版本曾将真实 Token 硬编码为默认值，v0.10 起清除——已入库的本地配置不受影响，新装用户需自填
+export const DEFAULT_ACCESS_TOKEN = ''
 
 export const DEFAULT_SETTINGS: SettingsState = {
   theme: 'dark',

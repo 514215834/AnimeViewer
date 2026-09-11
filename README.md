@@ -98,7 +98,7 @@ npm run build   # 类型检查 + 生产构建
 - **数据源模式**：`在线 Bangumi API` / `内置演示数据`（离线演示数据，用于无网络环境体验与开发）
 - **API Base URL**：默认 `https://api.bgm.tv`（官方），预置 `https://bgmapi.anibt.net` 反代选项；也可直接输入任意自建反代/镜像地址
 - **Image Base URL**（图片反代）：默认留空使用官方源，预置 `https://bgmimg.anibt.net` 反代选项；也可直接输入反代域名或含子路径的前缀
-- **Access Token**：可选，用于提升接口限额；在 [next.bgm.tv/demo/access-token](https://next.bgm.tv/demo/access-token) 生成，设置页可一键验证有效性
+- **Access Token**：可选，默认留空（匿名访问）；用于提升接口限额，在 [next.bgm.tv/demo/access-token](https://next.bgm.tv/demo/access-token) 生成后填入，设置页可一键验证有效性（仅保存在本地浏览器，v0.10 起不再内置任何默认 Token）
 
 > 注：浏览器安全策略禁止自定义 `User-Agent` 请求头，如需自定义请在反向代理层注入。
 
