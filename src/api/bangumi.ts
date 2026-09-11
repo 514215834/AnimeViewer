@@ -1,4 +1,6 @@
 import { useSettingsStore } from '../stores/settings'
+import { createTtlCache } from '../utils/cache'
+import { idbGet, idbSet, idbClear } from '../utils/idbCache'
 import type {
   BangumiMe,
   CalendarDay,
@@ -38,31 +40,36 @@ export class ApiError extends Error {
   }
 }
 
-interface CacheEntry<T> {
-  at: number
-  data: T
-}
-
-function createTtlCache<T>(ttlMs: number) {
-  const map = new Map<string, CacheEntry<T>>()
-  return {
-    get(key: string): T | undefined {
-      const hit = map.get(key)
-      if (hit && Date.now() - hit.at < ttlMs) return hit.data
-      return undefined
-    },
-    set(key: string, data: T) {
-      map.set(key, { at: Date.now(), data })
-    },
-    clear() {
-      map.clear()
-    },
-  }
-}
-
 const CALENDAR_TTL = 5 * 60 * 1000
 const SUBJECT_TTL = 10 * 60 * 1000
 const SUB_RESOURCE_TTL = 30 * 60 * 1000
+
+/** v0.10 P3 双层缓存取数：内存 TTL（会话内新鲜度）→ IndexedDB 持久层（跨会话，24h 兜底）→ 网络。
+ *  持久层读命中时回填内存；网络取数后同时写两层（写持久层为 fire-and-forget）。
+ *  idbKey 传 null 表示不持久化（如时间敏感的周历）。 */
+async function cached<T>(
+  memCache: { get(key: string): T | undefined; set(key: string, data: T): void },
+  memKey: string,
+  idbKey: string | null,
+  fetcher: () => Promise<T>,
+): Promise<T> {
+  const mem = memCache.get(memKey)
+  if (mem !== undefined) return mem
+  if (idbKey) {
+    const persisted = await idbGet<T>(idbKey)
+    if (persisted !== undefined) {
+      memCache.set(memKey, persisted)
+      return persisted
+    }
+  }
+  const data = await fetcher()
+  memCache.set(memKey, data)
+  if (idbKey) void idbSet(idbKey, data)
+  return data
+}
+
+/** 持久缓存键统一前缀（格式变更时升版本号隔离旧数据） */
+const c1 = (name: string, id: string | number) => `c1:${name}:${id}`
 
 const calendarCache = createTtlCache<CalendarDay[]>(CALENDAR_TTL)
 const subjectCache = createTtlCache<SubjectDetail>(SUBJECT_TTL)
@@ -117,6 +124,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const bangumiApi = {
+  /** 周历时间敏感（「今日更新」语义），仅内存 5min 缓存、不进持久层 */
   async calendar(force = false): Promise<CalendarDay[]> {
     if (!force) {
       const cached = calendarCache.get('all')
@@ -127,33 +135,25 @@ export const bangumiApi = {
     return data
   },
   async subject(id: number): Promise<SubjectDetail> {
-    const cached = subjectCache.get(String(id))
-    if (cached) return cached
-    const data = await request<SubjectDetail>(`/v0/subjects/${id}`)
-    subjectCache.set(String(id), data)
-    return data
+    return cached(subjectCache, String(id), c1('subject', id), () =>
+      request<SubjectDetail>(`/v0/subjects/${id}`),
+    )
   },
   async characters(id: number): Promise<SubjectCharacter[]> {
-    const cached = charactersCache.get(String(id))
-    if (cached) return cached
-    const data = await request<SubjectCharacter[]>(`/v0/subjects/${id}/characters`)
-    charactersCache.set(String(id), data)
-    return data
+    return cached(charactersCache, String(id), c1('characters', id), () =>
+      request<SubjectCharacter[]>(`/v0/subjects/${id}/characters`),
+    )
   },
   async persons(id: number): Promise<SubjectPerson[]> {
-    const cached = personsCache.get(String(id))
-    if (cached) return cached
-    const data = await request<SubjectPerson[]>(`/v0/subjects/${id}/persons`)
-    personsCache.set(String(id), data)
-    return data
+    return cached(personsCache, String(id), c1('persons', id), () =>
+      request<SubjectPerson[]>(`/v0/subjects/${id}/persons`),
+    )
   },
   async episodes(subjectId: number): Promise<Episode[]> {
-    const cached = episodesCache.get(String(subjectId))
-    if (cached) return cached
-    const res = await request<Paged<Episode> | Episode[]>(`/v0/episodes?subject_id=${subjectId}`)
-    const data = Array.isArray(res) ? res : (res.data ?? [])
-    episodesCache.set(String(subjectId), data)
-    return data
+    return cached(episodesCache, String(subjectId), c1('episodes', subjectId), async () => {
+      const res = await request<Paged<Episode> | Episode[]>(`/v0/episodes?subject_id=${subjectId}`)
+      return Array.isArray(res) ? res : (res.data ?? [])
+    })
   },
   me(): Promise<BangumiMe> {
     return request<BangumiMe>('/v0/me')
@@ -216,43 +216,33 @@ export const bangumiApi = {
   },
   /** E3 角色详情 */
   async characterDetail(id: number): Promise<CharacterDetail> {
-    const cached = characterCache.get(String(id))
-    if (cached) return cached
-    const data = await request<CharacterDetail>(`/v0/characters/${id}`)
-    characterCache.set(String(id), data)
-    return data
+    return cached(characterCache, String(id), c1('character', id), () =>
+      request<CharacterDetail>(`/v0/characters/${id}`),
+    )
   },
   /** E3 人物详情 */
   async personDetail(id: number): Promise<PersonDetail> {
-    const cached = personCache.get(String(id))
-    if (cached) return cached
-    const data = await request<PersonDetail>(`/v0/persons/${id}`)
-    personCache.set(String(id), data)
-    return data
+    return cached(personCache, String(id), c1('person', id), () =>
+      request<PersonDetail>(`/v0/persons/${id}`),
+    )
   },
   /** E3 角色参与的作品（image 为单个 URL 字符串） */
   async characterSubjects(id: number): Promise<StaffWork[]> {
-    const cached = characterWorksCache.get(String(id))
-    if (cached) return cached
-    const data = await request<StaffWork[]>(`/v0/characters/${id}/subjects`)
-    characterWorksCache.set(String(id), data)
-    return data
+    return cached(characterWorksCache, String(id), c1('char-works', id), () =>
+      request<StaffWork[]>(`/v0/characters/${id}/subjects`),
+    )
   },
   /** E3/E4 人物参与的作品 */
   async personSubjects(id: number): Promise<StaffWork[]> {
-    const cached = personWorksCache.get(String(id))
-    if (cached) return cached
-    const data = await request<StaffWork[]>(`/v0/persons/${id}/subjects`)
-    personWorksCache.set(String(id), data)
-    return data
+    return cached(personWorksCache, String(id), c1('person-works', id), () =>
+      request<StaffWork[]>(`/v0/persons/${id}/subjects`),
+    )
   },
   /** F3 角色关联声优（每项含所属作品与 staff 身份，点击可跳人物页） */
   async characterPersons(id: number): Promise<CharacterPerson[]> {
-    const cached = characterPersonsCache.get(String(id))
-    if (cached) return cached
-    const data = await request<CharacterPerson[]>(`/v0/characters/${id}/persons`)
-    characterPersonsCache.set(String(id), data)
-    return data
+    return cached(characterPersonsCache, String(id), c1('char-persons', id), () =>
+      request<CharacterPerson[]>(`/v0/characters/${id}/persons`),
+    )
   },
   /** E5 用户资料（含头像/签名） */
   userProfile(username: string): Promise<UserProfile> {
@@ -323,11 +313,9 @@ export const bangumiApi = {
   },
   /** D2 关联条目（前传/续集/主线/番外等，relation 为开放式中文名） */
   async relatedSubjects(id: number): Promise<RelatedSubject[]> {
-    const cached = relatedCache.get(String(id))
-    if (cached) return cached
-    const data = await request<RelatedSubject[]>(`/v0/subjects/${id}/subjects`)
-    relatedCache.set(String(id), data)
-    return data
+    return cached(relatedCache, String(id), c1('related', id), () =>
+      request<RelatedSubject[]>(`/v0/subjects/${id}/subjects`),
+    )
   },
   /** D5 按 ID 查看目录（官方 v0 无目录列表端点，仅支持按 ID 查看） */
   index(id: number): Promise<IndexInfo> {
@@ -378,4 +366,6 @@ export function clearApiCache() {
   characterWorksCache.clear()
   personWorksCache.clear()
   characterPersonsCache.clear()
+  // P3：连带清空 IndexedDB 持久层（含 nsfw 探测缓存）
+  void idbClear()
 }

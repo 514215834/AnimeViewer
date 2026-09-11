@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NPagination, NResult, NSpin, NTag } from 'naive-ui'
+import { NAlert, NButton, NIcon, NPagination, NResult, NSpin, NTag } from 'naive-ui'
+import { ListOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useSettingsStore } from '../stores/settings'
 import { coverCardUrl } from '../utils/image'
 import type { IndexInfo, IndexSubjectItem } from '../types/bangumi'
 import AnimeCard from '../components/AnimeCard.vue'
+import EmptyHint from '../components/EmptyHint.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -88,7 +90,7 @@ function open(id: number) {
 
       <template v-else-if="info">
         <div class="index-head">
-          <h2 class="index-title">📑 {{ info.title }}</h2>
+          <h2 class="index-title"><NIcon :component="ListOutline" />{{ info.title }}</h2>
           <p v-if="info.desc" class="index-desc">{{ info.desc }}</p>
           <div class="index-meta">
             <NTag size="small" :bordered="false">收录 {{ info.total ?? total }} 条</NTag>
@@ -107,7 +109,7 @@ function open(id: number) {
         <NAlert v-if="listError" type="error" closable style="margin-bottom: 12px">{{ listError }}</NAlert>
 
         <NSpin :show="listLoading">
-          <div v-if="items && !items.length" class="empty-hint">目录暂无条目</div>
+          <EmptyHint v-if="items && !items.length" text="目录暂无条目" />
           <div v-else class="card-grid">
             <AnimeCard
               v-for="it in items ?? []"
@@ -138,6 +140,15 @@ function open(id: number) {
 .index-title {
   margin: 0 0 8px;
   font-size: 22px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.index-title .n-icon {
+  color: var(--av-primary);
+  font-size: 24px;
+  flex: none;
 }
 
 .index-desc {

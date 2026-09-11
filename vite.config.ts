@@ -9,6 +9,17 @@ export default defineConfig({
     // H4 诊断面板展示用：注入 package.json 版本号
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // v0.10 P2：框架与组件库拆独立 chunk，业务代码迭代时浏览器缓存不受影响
+        manualChunks: {
+          'vendor-vue': ['vue', 'vue-router', 'pinia'],
+          'vendor-naive': ['naive-ui'],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     host: true,

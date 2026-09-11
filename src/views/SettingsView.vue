@@ -6,12 +6,14 @@ import {
   NButton,
   NForm,
   NFormItem,
+  NIcon,
   NInput,
   NRadioButton,
   NRadioGroup,
   NSelect,
   NSwitch,
 } from 'naive-ui'
+import { SettingsOutline } from '@vicons/ionicons5'
 import { DEFAULT_SETTINGS, useSettingsStore } from '../stores/settings'
 import type { ImageQuality, SettingsState } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
@@ -217,7 +219,7 @@ async function onImportFile(ev: Event) {
 <template>
   <div>
     <div class="page-head">
-      <h2>⚙️ 设置</h2>
+      <h2><NIcon :component="SettingsOutline" />设置</h2>
       <span class="page-sub">所有配置仅保存在本地浏览器 localStorage</span>
     </div>
 

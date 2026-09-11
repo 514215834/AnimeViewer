@@ -113,9 +113,9 @@ onBeforeUnmount(() => {
   position: relative;
   width: 100%;
   aspect-ratio: 3 / 4;
-  border-radius: 8px;
+  border-radius: var(--av-radius);
   overflow: hidden;
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--av-img-placeholder);
 }
 
 .poster-frame img {

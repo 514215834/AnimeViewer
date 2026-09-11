@@ -10,6 +10,7 @@ import {
   NDescriptionsItem,
   NDrawer,
   NDrawerContent,
+  NIcon,
   NInput,
   NInputNumber,
   NRate,
@@ -21,6 +22,11 @@ import {
   NTabs,
   NTag,
 } from 'naive-ui'
+import {
+  AddOutline,
+  CreateOutline,
+  MicOutline,
+} from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
@@ -29,6 +35,7 @@ import type { WatchStatus } from '../stores/library'
 import { charAvatarUrl, coverCardUrl, upgradeStoredCover } from '../utils/image'
 import type { Episode, RelatedSubject, SubjectCharacter, SubjectDetail, SubjectPerson } from '../types/bangumi'
 import PosterImage from '../components/PosterImage.vue'
+import EmptyHint from '../components/EmptyHint.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -408,7 +415,7 @@ onBeforeUnmount(() => {
 
             <div class="action-box">
               <template v-if="!inLibrary">
-                <NButton type="primary" @click="add">➕ 加入追番</NButton>
+                <NButton type="primary" @click="add"><span class="btn-icon-row"><NIcon :component="AddOutline" size="15" />加入追番</span></NButton>
               </template>
               <template v-else-if="entry">
                 <NSelect
@@ -434,7 +441,7 @@ onBeforeUnmount(() => {
             <!-- F6 我的评分与笔记（追番库内条目）：本地即时保存，随同步推送 Bangumi 收藏评价 -->
             <div v-if="entry" class="my-review">
               <div class="my-review-head">
-                <span class="my-review-title">✍️ 我的评分与笔记</span>
+                <span class="my-review-title"><NIcon :component="CreateOutline" size="15" />我的评分与笔记</span>
                 <label class="my-review-private">
                   <NSwitch
                     size="small"
@@ -477,13 +484,13 @@ onBeforeUnmount(() => {
             <section v-if="subject.summary" class="summary">
               <p>{{ subject.summary }}</p>
             </section>
-            <div v-else class="empty-hint">暂无简介</div>
+            <EmptyHint v-else text="暂无简介" />
           </NTabPane>
 
           <NTabPane name="chars" tab="角色">
             <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
             <NSpin :show="characters === null" v-if="activeTab === 'chars'">
-              <div v-if="characters && !characters.length" class="empty-hint">暂无角色数据</div>
+              <EmptyHint v-if="characters && !characters.length" text="暂无角色数据" />
               <div v-else-if="characters" class="char-grid">
                 <div
                   v-for="c in characters"
@@ -500,7 +507,7 @@ onBeforeUnmount(() => {
                     class="char-actor"
                     :title="`查看声优 ${c.actors.map((a) => a.name).join(' / ')}`"
                   >
-                    🎙 <span
+                    <NIcon :component="MicOutline" size="13" /> <span
                       v-for="a in c.actors"
                       :key="a.name"
                       class="person-link"
@@ -515,7 +522,7 @@ onBeforeUnmount(() => {
           <NTabPane name="staff" tab="制作人员">
             <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
             <NSpin :show="persons === null" v-if="activeTab === 'staff'">
-              <div v-if="persons && !persons.length" class="empty-hint">暂无制作人员数据</div>
+              <EmptyHint v-if="persons && !persons.length" text="暂无制作人员数据" />
               <div v-else-if="persons" class="staff-grid">
                 <div
                   v-for="p in persons"
@@ -534,7 +541,7 @@ onBeforeUnmount(() => {
           <NTabPane name="related" tab="系列作品">
             <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
             <NSpin :show="related === null" v-if="activeTab === 'related'">
-              <div v-if="related && !related.length" class="empty-hint">暂无关联条目</div>
+              <EmptyHint v-if="related && !related.length" text="暂无关联条目" />
               <template v-else-if="related">
                 <p class="related-hint">同一系列 / 企划下的关联作品，点击封面跳转（适合确认「该从哪部看起」）</p>
                 <section v-for="g in relatedGroups" :key="g.relation" class="related-group">
@@ -569,7 +576,7 @@ onBeforeUnmount(() => {
 
           <NTabPane name="eps" tab="剧集">
             <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
-            <div v-if="!inLibrary" class="empty-hint">加入追番后，可在这里勾选单集记录进度</div>
+            <EmptyHint v-if="!inLibrary" text="加入追番后，可在这里勾选单集记录进度" />
             <!-- E1 沉浸观剧模式：逐集「标记并下一集」，单集增量同步 -->
             <template v-else-if="immersive && immersiveEp">
               <div class="immersive-head">
@@ -627,10 +634,8 @@ onBeforeUnmount(() => {
                 </button>
               </div>
               <NSpin :show="episodes === null && activeTab === 'eps'">
-                <div v-if="episodes && !episodes.length" class="empty-hint">暂无剧集数据</div>
-                <div v-else-if="episodes && !visibleEpisodes.length" class="empty-hint">
-                  没有匹配「{{ epKeyword.trim() }}」的章节
-                </div>
+                <EmptyHint v-if="episodes && !episodes.length" text="暂无剧集数据" />
+                <EmptyHint v-else-if="episodes && !visibleEpisodes.length" :text="`没有匹配「${epKeyword.trim()}」的章节`" />
                 <div v-else class="ep-list">
                   <div
                     v-for="ep in visibleEpisodes"
@@ -675,7 +680,7 @@ onBeforeUnmount(() => {
           </NDescriptions>
           <div class="epd-label">章节简介</div>
           <p v-if="drawerEp.desc" class="epd-desc">{{ drawerEp.desc }}</p>
-          <div v-else class="empty-hint">暂无章节简介</div>
+          <EmptyHint v-else text="暂无章节简介" />
           <NButton type="primary" secondary block @click="openEpCommentPage">
             去 bgm.tv 查看 {{ drawerEp.comment ?? 0 }} 条吐槽 ↗
           </NButton>
@@ -775,11 +780,6 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.my-review-title {
-  font-size: 13px;
-  font-weight: 700;
-}
-
 .my-review-private {
   display: flex;
   align-items: center;
@@ -851,6 +851,27 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.char-actor .n-icon {
+  flex: none;
+}
+
+.btn-icon-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.my-review-title {
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .char-card-link,
@@ -1020,6 +1041,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
+  /* v0.10 P4：小屏允许换行 */
+  flex-wrap: wrap;
 }
 
 .eps-count {
@@ -1132,5 +1155,21 @@ onBeforeUnmount(() => {
   line-height: 1.7;
   margin: 0 0 14px;
   white-space: pre-wrap;
+}
+
+/* v0.10 P4：小屏详情头部纵排（海报上、信息下），标题缩号 */
+@media (max-width: 768px) {
+  .detail-head {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .detail-poster {
+    width: 150px;
+  }
+
+  .detail-title {
+    font-size: 20px;
+  }
 }
 </style>

@@ -2,11 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { NAlert, NButton, NEmpty, NResult, NSpin, NTag } from 'naive-ui'
+import { NAlert, NButton, NIcon, NResult, NSpin, NTag } from 'naive-ui'
+import { MicOutline, FilmOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from '../stores/library'
 import type { CharacterDetail, CharacterPerson, StaffWork } from '../types/bangumi'
 import PosterImage from '../components/PosterImage.vue'
+import EmptyHint from '../components/EmptyHint.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -126,14 +128,12 @@ function actorImg(images?: CharacterPerson['images']): string {
         <section v-if="character.summary" class="cpage-summary">
           <p>{{ character.summary }}</p>
         </section>
-        <div v-else class="empty-hint">暂无角色简介</div>
+        <EmptyHint v-else text="暂无角色简介" />
 
         <!-- F3 演绎声优：该角色在各作品中的配音演员，点击跳人物页 -->
-        <h3 class="cpage-works-title">🎙 演绎声优</h3>
+        <h3 class="cpage-works-title"><NIcon :component="MicOutline" />演绎声优</h3>
         <NSpin :show="actors === null">
-          <div v-if="actors && !actors.length" class="empty-hint">
-            <NEmpty description="暂无声优关联数据" />
-          </div>
+          <EmptyHint v-if="actors && !actors.length" text="暂无声优关联数据" />
           <div v-else class="actor-grid">
             <div
               v-for="a in actors ?? []"
@@ -154,11 +154,9 @@ function actorImg(images?: CharacterPerson['images']): string {
           </div>
         </NSpin>
 
-        <h3 class="cpage-works-title">🎬 出演作品</h3>
+        <h3 class="cpage-works-title"><NIcon :component="FilmOutline" />出演作品</h3>
         <NSpin :show="works === null">
-          <div v-if="works && !works.length" class="empty-hint">
-            <NEmpty description="暂无出演作品数据" />
-          </div>
+          <EmptyHint v-if="works && !works.length" text="暂无出演作品数据" />
           <div v-else class="works-grid">
             <div
               v-for="w in works ?? []"
@@ -233,6 +231,14 @@ function actorImg(images?: CharacterPerson['images']): string {
 .cpage-works-title {
   margin: 8px 0 12px;
   font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cpage-works-title .n-icon {
+  color: var(--av-primary);
+  font-size: 18px;
 }
 
 .actor-grid {

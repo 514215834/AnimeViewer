@@ -1,28 +1,6 @@
 import { useSettingsStore } from '../stores/settings'
 import { bangumiApi } from './bangumi'
 import type { SearchAdvanced } from './bangumi'
-import {
-  demoBrowseSubjects,
-  demoCalendar,
-  demoCharacterDetail,
-  demoCharacterPersons,
-  demoCharacterSubjects,
-  demoCharacters,
-  demoDetail,
-  demoEpisodes,
-  demoIndex,
-  demoIndexSubjects,
-  demoMyCharacters,
-  demoMyPersons,
-  demoPersonDetail,
-  demoPersonSubjects,
-  demoPersons,
-  demoRelatedSubjects,
-  demoSearch,
-  demoSearchCharacters,
-  demoSearchPersons,
-  demoUserProfile,
-} from './demo'
 import type {
   CalendarDay,
   CharacterDetail,
@@ -46,22 +24,33 @@ import type {
   UserPersonCollection,
 } from '../types/bangumi'
 
+/** v0.10 P1：演示数据模块类型（仅动态加载） */
+type DemoModule = typeof import('./demo')
+
+let demoPromise: Promise<DemoModule> | null = null
+
+/** 演示数据按需加载：仅演示模式才拉取 demo chunk，在线模式主包不含内置数据 */
+function loadDemo(): Promise<DemoModule> {
+  demoPromise ??= import('./demo')
+  return demoPromise
+}
+
 /** 统一数据入口：根据设置在「在线 Bangumi API」与「内置演示数据」间切换 */
 export const dataSource = {
   calendar(force = false): Promise<CalendarDay[]> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoCalendar()) : bangumiApi.calendar(force)
+    return useSettingsStore().isDemo ? loadDemo().then((m) => m.demoCalendar()) : bangumiApi.calendar(force)
   },
   subject(id: number): Promise<SubjectDetail> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoDetail(id)) : bangumiApi.subject(id)
+    return useSettingsStore().isDemo ? loadDemo().then((m) => m.demoDetail(id)) : bangumiApi.subject(id)
   },
   characters(id: number): Promise<SubjectCharacter[]> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoCharacters(id)) : bangumiApi.characters(id)
+    return useSettingsStore().isDemo ? loadDemo().then((m) => m.demoCharacters(id)) : bangumiApi.characters(id)
   },
   persons(id: number): Promise<SubjectPerson[]> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoPersons(id)) : bangumiApi.persons(id)
+    return useSettingsStore().isDemo ? loadDemo().then((m) => m.demoPersons(id)) : bangumiApi.persons(id)
   },
   episodes(subjectId: number): Promise<Episode[]> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoEpisodes(subjectId)) : bangumiApi.episodes(subjectId)
+    return useSettingsStore().isDemo ? loadDemo().then((m) => m.demoEpisodes(subjectId)) : bangumiApi.episodes(subjectId)
   },
   search(
     keyword: string,
@@ -72,7 +61,7 @@ export const dataSource = {
     advanced?: SearchAdvanced,
   ): Promise<SearchResponse> {
     if (useSettingsStore().isDemo) {
-      return Promise.resolve(demoSearch(keyword, tags, sort, limit, offset, advanced))
+      return loadDemo().then((m) => m.demoSearch(keyword, tags, sort, limit, offset, advanced))
     }
     return bangumiApi.search(keyword, tags, sort, limit, offset, advanced)
   },
@@ -85,61 +74,69 @@ export const dataSource = {
     offset?: number
   }): Promise<Paged<SearchResultItem>> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoBrowseSubjects(opts))
+      ? loadDemo().then((m) => m.demoBrowseSubjects(opts))
       : bangumiApi.browseSubjects(opts)
   },
   /** v0.5 D2：关联条目（系列作品导航） */
   relatedSubjects(id: number): Promise<RelatedSubject[]> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoRelatedSubjects(id)) : bangumiApi.relatedSubjects(id)
+    return useSettingsStore().isDemo
+      ? loadDemo().then((m) => m.demoRelatedSubjects(id))
+      : bangumiApi.relatedSubjects(id)
   },
   /** v0.5 D5：按 ID 查看目录 */
   index(id: number): Promise<IndexInfo> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoIndex(id)) : bangumiApi.index(id)
+    return useSettingsStore().isDemo ? loadDemo().then((m) => m.demoIndex(id)) : bangumiApi.index(id)
   },
   indexSubjects(id: number, limit = 30, offset = 0): Promise<Paged<IndexSubjectItem>> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoIndexSubjects(id, limit, offset))
+      ? loadDemo().then((m) => m.demoIndexSubjects(id, limit, offset))
       : bangumiApi.indexSubjects(id, limit, offset)
   },
   /** v0.5 D6：角色/人物搜索 */
   searchCharacters(keyword: string, limit = 24, offset = 0): Promise<Paged<CharacterSearchItem>> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoSearchCharacters(keyword, limit, offset))
+      ? loadDemo().then((m) => m.demoSearchCharacters(keyword, limit, offset))
       : bangumiApi.searchCharacters(keyword, limit, offset)
   },
   searchPersons(keyword: string, limit = 24, offset = 0): Promise<Paged<PersonSearchItem>> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoSearchPersons(keyword, limit, offset))
+      ? loadDemo().then((m) => m.demoSearchPersons(keyword, limit, offset))
       : bangumiApi.searchPersons(keyword, limit, offset)
   },
   /* ── v0.6 ── */
   /** E3 角色详情 */
   characterDetail(id: number): Promise<CharacterDetail> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoCharacterDetail(id)) : bangumiApi.characterDetail(id)
+    return useSettingsStore().isDemo
+      ? loadDemo().then((m) => m.demoCharacterDetail(id))
+      : bangumiApi.characterDetail(id)
   },
   /** E3 人物详情 */
   personDetail(id: number): Promise<PersonDetail> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoPersonDetail(id)) : bangumiApi.personDetail(id)
+    return useSettingsStore().isDemo
+      ? loadDemo().then((m) => m.demoPersonDetail(id))
+      : bangumiApi.personDetail(id)
   },
   /** E3 角色/人物参与作品 */
   characterSubjects(id: number): Promise<StaffWork[]> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoCharacterSubjects(id))
+      ? loadDemo().then((m) => m.demoCharacterSubjects(id))
       : bangumiApi.characterSubjects(id)
   },
   personSubjects(id: number): Promise<StaffWork[]> {
-    return useSettingsStore().isDemo ? Promise.resolve(demoPersonSubjects(id)) : bangumiApi.personSubjects(id)
+    return useSettingsStore().isDemo
+      ? loadDemo().then((m) => m.demoPersonSubjects(id))
+      : bangumiApi.personSubjects(id)
   },
   /** E5 用户资料 */
   userProfile(username: string): Promise<UserProfile> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoUserProfile(username))
+      ? loadDemo().then((m) => m.demoUserProfile(username))
       : bangumiApi.userProfile(username)
   },
   /** E6 我的角色收藏列表 */
   myCharacterCollections(username: string): Promise<Paged<UserCharacterCollection>> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoMyCharacters())
+      ? loadDemo().then((m) => m.demoMyCharacters())
       : bangumiApi.myCharacterCollections(username)
   },
   /** E6 收藏角色（演示模式 no-op） */
@@ -152,13 +149,13 @@ export const dataSource = {
   /** F3 角色关联声优 */
   characterPersons(id: number): Promise<CharacterPerson[]> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoCharacterPersons(id))
+      ? loadDemo().then((m) => m.demoCharacterPersons(id))
       : bangumiApi.characterPersons(id)
   },
   /** F2 我的人物收藏列表 */
   myPersonCollections(username: string): Promise<Paged<UserPersonCollection>> {
     return useSettingsStore().isDemo
-      ? Promise.resolve(demoMyPersons())
+      ? loadDemo().then((m) => m.demoMyPersons())
       : bangumiApi.myPersonCollections(username)
   },
   /** F2 收藏人物（演示模式 no-op） */

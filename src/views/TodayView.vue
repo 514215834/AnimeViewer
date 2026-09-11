@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NTag } from 'naive-ui'
+import { NAlert, NButton, NIcon, NTag } from 'naive-ui'
+import { HomeOutline, PlayOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useNsfwStore } from '../stores/nsfw'
 import { useSettingsStore } from '../stores/settings'
@@ -10,6 +11,7 @@ import type { WatchStatus } from '../stores/library'
 import type { CalendarDay, CalendarSubject } from '../types/bangumi'
 import { coverCardUrl } from '../utils/image'
 import PosterImage from '../components/PosterImage.vue'
+import EmptyHint from '../components/EmptyHint.vue'
 
 /**
  * H1 今日仪表盘（v0.9，新默认首页）：
@@ -159,7 +161,7 @@ function continueWatch(id: number) {
 <template>
   <div>
     <div class="page-head">
-      <h2>🏠 今日</h2>
+      <h2><NIcon :component="HomeOutline" />今日</h2>
       <div class="head-row">
         <span class="page-sub">{{ todayText }} · 你的追番更新与观看进度</span>
         <NButton quaternary size="small" :disabled="loading" @click="load">↻ 刷新</NButton>
@@ -206,7 +208,7 @@ function continueWatch(id: number) {
           <span class="row-arrow">›</span>
         </div>
       </template>
-      <div v-else-if="!loading" class="empty-hint">今天没有追番更新，看看本周其他日子 ↓</div>
+      <EmptyHint v-else-if="!loading" text="今天没有追番更新" sub="看看本周其他日子 ↓" />
 
       <!-- 今日为空时展开本周分组 -->
       <template v-if="!todayItems.length && weekGroups.length">
@@ -235,23 +237,31 @@ function continueWatch(id: number) {
               {{ e.progress > 0 ? `上次看到第 ${e.progress}${e.epsTotal > 0 ? ` / ${e.epsTotal}` : ''} 话` : '尚未开始观看' }}
             </div>
           </div>
-          <NButton size="tiny" type="primary" secondary @click.stop="continueWatch(e.subjectId)">▶ 继续</NButton>
+          <NButton size="tiny" type="primary" secondary @click.stop="continueWatch(e.subjectId)"><span class="btn-icon-row"><NIcon :component="PlayOutline" size="12" />继续</span></NButton>
         </div>
     </section>
 
-    <div v-if="!library.count && !loading" class="empty-hint">
-      追番库还是空的——去 <a @click="router.push({ name: 'search' })">搜索</a> 或
+    <EmptyHint v-if="!library.count && !loading" text="追番库还是空的">
+      去 <a @click="router.push({ name: 'search' })">搜索</a> 或
       <a @click="router.push({ name: 'discover' })">发现</a> 页把感兴趣的番加进来吧。
-    </div>
+    </EmptyHint>
   </div>
 </template>
 
 <style scoped>
+.btn-icon-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .head-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  /* v0.10 P4：小屏允许换行 */
+  flex-wrap: wrap;
 }
 
 /* 追番概览统计 */

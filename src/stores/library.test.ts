@@ -245,10 +245,14 @@ describe('H3 非本篇单集标记（watchedSpecial 复合桶）', () => {
 })
 
 describe('演示/在线双库隔离与迁移', () => {
-  it('演示库首次装载自动播种 4 条种子，且种子全部命中演示周历', () => {
+  it('演示库首次装载自动播种 4 条种子，且种子全部命中演示周历', async () => {
     freshEnv()
     useSettingsStore().$patch({ dataSource: 'demo' })
     const lib = useLibraryStore()
+    // v0.10 P1：播种改为异步（demo 模块按需加载），ensureDemoSeed 完成后库内可见
+    expect(lib.needsDemoSeed).toBe(true)
+    await lib.ensureDemoSeed()
+    expect(lib.needsDemoSeed).toBe(false)
     const seedIds = lib.list.map((e) => e.subjectId).sort((a, b) => a - b)
     expect(seedIds).toEqual([900001, 900003, 900013, 900014])
     const calIds = new Set(demoCalendar().flatMap((d) => d.items.map((i) => i.id)))

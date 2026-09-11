@@ -24,7 +24,7 @@ function scoreText(score?: number): string {
   <div class="anime-card" @click="emit('open', id)">
     <div class="poster-wrap">
       <PosterImage :src="poster" :title="title" :subject-id="id" />
-      <span class="score-badge">★ {{ scoreText(score) }}</span>
+      <span class="score-badge num">★ {{ scoreText(score) }}</span>
       <span v-if="inLibrary" class="lib-badge">已追</span>
     </div>
     <div class="card-info">
@@ -38,29 +38,45 @@ function scoreText(score?: number): string {
 <style scoped>
 .anime-card {
   cursor: pointer;
-  transition: transform 0.15s ease;
+  transition: transform 0.18s ease, filter 0.18s ease;
   /* 长列表优化：跳过屏外卡片的渲染与布局，高度占位按卡片实际高度估算 */
   content-visibility: auto;
   contain-intrinsic-size: auto 260px;
+  border-radius: var(--av-radius);
 }
 
 .anime-card:hover {
   transform: translateY(-3px);
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.35));
+}
+
+.anime-card:hover :deep(.poster-frame) {
+  transform: scale(1.03);
+}
+
+.anime-card:hover .card-title {
+  color: var(--av-primary-hover);
 }
 
 .poster-wrap {
   position: relative;
+  border-radius: var(--av-radius);
+}
+
+/* 海报轻微缩放：作用于图片容器（徽章在容器外不受影响），PosterImage 自带溢出裁剪 */
+.anime-card :deep(.poster-frame) {
+  transition: transform 0.25s ease;
 }
 
 .score-badge {
   position: absolute;
   right: 6px;
   top: 6px;
-  background: rgba(0, 0, 0, 0.65);
-  color: #ffd75e;
+  background: var(--av-badge-overlay);
+  color: var(--av-gold);
   font-size: 12px;
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--av-radius-sm);
   font-weight: 600;
 }
 
@@ -69,29 +85,32 @@ function scoreText(score?: number): string {
   position: absolute;
   left: 6px;
   top: 6px;
-  background: rgba(138, 123, 255, 0.92);
+  background: var(--av-primary);
   color: #fff;
   font-size: 11px;
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--av-radius-sm);
   font-weight: 600;
 }
 
 .card-info {
   margin-top: 8px;
+  padding: 0 2px;
 }
 
 .card-title {
   font-size: 14px;
   font-weight: 600;
+  color: var(--av-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 0.18s ease;
 }
 
 .card-sub {
   font-size: 12px;
-  opacity: 0.55;
+  color: var(--av-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -100,7 +119,7 @@ function scoreText(score?: number): string {
 
 .card-extra {
   font-size: 12px;
-  opacity: 0.45;
+  color: var(--av-text-tertiary);
   margin-top: 2px;
 }
 </style>

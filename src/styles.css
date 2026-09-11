@@ -1,3 +1,51 @@
+/* ═══ v0.10 U1 设计令牌 ═══
+   命名约定：--av-*。暗色为默认（:root），亮色经 html.light 覆盖；
+   App.vue 监听 settings.theme 同步切换 class，与 naive-ui themeOverrides 同源对齐 */
+:root {
+  /* 主色（与 App.vue themeOverrides 一致，改动需两处同步） */
+  --av-primary: #8a7bff;
+  --av-primary-hover: #a092ff;
+  --av-primary-pressed: #6f61e0;
+  --av-primary-soft: rgba(138, 123, 255, 0.16);
+  --av-primary-soft-strong: rgba(138, 123, 255, 0.3);
+
+  /* 表面 / 边框 / 文字层级 */
+  --av-surface: rgba(255, 255, 255, 0.045);
+  --av-surface-hover: rgba(255, 255, 255, 0.09);
+  --av-border: rgba(255, 255, 255, 0.09);
+  --av-text: rgba(255, 255, 255, 0.9);
+  --av-text-secondary: rgba(255, 255, 255, 0.62);
+  --av-text-tertiary: rgba(255, 255, 255, 0.4);
+
+  /* 语义色 */
+  --av-gold: #ffd75e;
+  --av-badge-overlay: rgba(0, 0, 0, 0.65);
+  --av-img-placeholder: rgba(128, 128, 128, 0.12);
+  --av-scrollbar: rgba(128, 128, 128, 0.4);
+
+  /* 阴影 / 圆角 */
+  --av-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28);
+  --av-shadow-md: 0 8px 20px rgba(0, 0, 0, 0.36);
+  --av-shadow-primary: 0 8px 20px rgba(138, 123, 255, 0.28);
+  --av-radius-sm: 6px;
+  --av-radius: 10px;
+  --av-radius-lg: 14px;
+}
+
+html.light {
+  --av-surface: rgba(255, 255, 255, 0.72);
+  --av-surface-hover: #ffffff;
+  --av-border: rgba(0, 0, 0, 0.1);
+  --av-text: rgba(0, 0, 0, 0.9);
+  --av-text-secondary: rgba(0, 0, 0, 0.6);
+  --av-text-tertiary: rgba(0, 0, 0, 0.42);
+  --av-img-placeholder: rgba(0, 0, 0, 0.06);
+  --av-scrollbar: rgba(0, 0, 0, 0.25);
+  --av-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --av-shadow-md: 0 8px 20px rgba(0, 0, 0, 0.12);
+  --av-shadow-primary: 0 8px 20px rgba(138, 123, 255, 0.2);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -10,8 +58,15 @@ body,
 }
 
 body {
-  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 系统字体栈：不引入 webfont（体积/离线考虑），中文回退补全 */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
   overflow: hidden;
+}
+
+/* 数字场景（评分/计数/进度）等宽数字，避免跳动 */
+.num,
+.num * {
+  font-variant-numeric: tabular-nums;
 }
 
 ::-webkit-scrollbar {
@@ -21,7 +76,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   border-radius: 5px;
-  background: rgba(128, 128, 128, 0.4);
+  background: var(--av-scrollbar);
 }
 
 ::-webkit-scrollbar-track {
@@ -37,9 +92,21 @@ body {
   font-size: 20px;
 }
 
+/* v0.10 U2：页面标题图标与文字对齐（各视图 h2 前的 NIcon） */
+.page-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-head h2 .n-icon {
+  color: var(--av-primary);
+  font-size: 22px;
+}
+
 .page-sub {
   font-size: 13px;
-  opacity: 0.65;
+  color: var(--av-text-secondary);
 }
 
 .card-grid {
@@ -49,8 +116,89 @@ body {
   padding: 18px 2px 24px;
 }
 
-.empty-hint {
-  padding: 56px 0;
-  text-align: center;
-  opacity: 0.6;
+/* 空状态统一由 components/EmptyHint.vue 承担（v0.10 U3），全局样式不再保留 */
+
+/* ═══ v0.10 P4 移动端断点（全项目断点体系唯一入口：≤768 平板/手机横屏，≤480 手机竖屏） ═══ */
+@media (max-width: 768px) {
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+    gap: 14px 10px;
+    padding: 14px 0 20px;
+  }
+
+  .page-head h2 {
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 480px) {
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  }
+
+  .page-head h2 {
+    font-size: 17px;
+  }
+}
+
+/* ═══ v0.10 U4 动效体系 ═══ */
+/* 路由切换：fade + 轻微位移（MainLayout 的 <Transition name="page">） */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* 卡片网格入场 stagger：仅 .card-grid，延迟上限 12 个避免长列表拖尾 */
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.card-grid > * {
+  animation: card-in 0.28s ease backwards;
+}
+
+.card-grid > *:nth-child(2) { animation-delay: 0.025s; }
+.card-grid > *:nth-child(3) { animation-delay: 0.05s; }
+.card-grid > *:nth-child(4) { animation-delay: 0.075s; }
+.card-grid > *:nth-child(5) { animation-delay: 0.1s; }
+.card-grid > *:nth-child(6) { animation-delay: 0.125s; }
+.card-grid > *:nth-child(7) { animation-delay: 0.15s; }
+.card-grid > *:nth-child(8) { animation-delay: 0.175s; }
+.card-grid > *:nth-child(9) { animation-delay: 0.2s; }
+.card-grid > *:nth-child(10) { animation-delay: 0.22s; }
+.card-grid > *:nth-child(11) { animation-delay: 0.24s; }
+.card-grid > *:nth-child(n + 12) { animation-delay: 0.26s; }
+
+/* 动效降级：偏好减弱动态效果时全部关闭（覆盖组件内 scoped transition 需提升权重） */
+@media (prefers-reduced-motion: reduce) {
+  .page-enter-active,
+  .page-leave-active {
+    transition: none !important;
+  }
+
+  .card-grid > * {
+    animation: none !important;
+  }
+
+  .anime-card,
+  .anime-card .poster-frame {
+    transition: none !important;
+  }
 }

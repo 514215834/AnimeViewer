@@ -2,15 +2,17 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { NButton, NEmpty, NInputNumber, NPagination, NPopconfirm, NRadioButton, NRadioGroup, NSelect, NTag } from 'naive-ui'
+import { NButton, NIcon, NInputNumber, NPagination, NPopconfirm, NRadioButton, NRadioGroup, NSelect, NTag } from 'naive-ui'
+import { LibraryOutline, TvOutline, PersonOutline, PeopleOutline } from '@vicons/ionicons5'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
 import type { CollectedCharacter, CollectedPerson, WatchStatus } from '../stores/library'
-import { isDemoCharacterId, isDemoPersonId } from '../api/demo'
+import { isDemoCharacterId, isDemoPersonId } from '../api/demoIds'
 import { upgradeStoredCover } from '../utils/image'
 import { careerLabel } from '../utils/career'
 import PosterImage from '../components/PosterImage.vue'
+import EmptyHint from '../components/EmptyHint.vue'
 
 const router = useRouter()
 const message = useMessage()
@@ -127,16 +129,16 @@ function removePerson(id: number, title: string) {
 <template>
   <div>
     <div class="page-head">
-      <h2>📚 我的追番</h2>
+      <h2><NIcon :component="LibraryOutline" />我的追番</h2>
       <span class="page-sub">共 {{ library.count }} 部 · 数据保存在本地浏览器</span>
     </div>
 
     <!-- E6/F2 分区切换：追番 / 我的角色 / 我的人物 -->
     <div class="view-switch">
       <NRadioGroup v-model:value="view" size="small">
-        <NRadioButton value="anime">📺 追番 ({{ library.count }})</NRadioButton>
-        <NRadioButton value="character">👤 我的角色 ({{ characterTotal }})</NRadioButton>
-        <NRadioButton value="person">👥 我的人物 ({{ scopedPersons.length }})</NRadioButton>
+        <NRadioButton value="anime"><span class="radio-icon-row"><NIcon :component="TvOutline" size="14" />追番 ({{ library.count }})</span></NRadioButton>
+        <NRadioButton value="character"><span class="radio-icon-row"><NIcon :component="PersonOutline" size="14" />我的角色 ({{ characterTotal }})</span></NRadioButton>
+        <NRadioButton value="person"><span class="radio-icon-row"><NIcon :component="PeopleOutline" size="14" />我的人物 ({{ scopedPersons.length }})</span></NRadioButton>
       </NRadioGroup>
     </div>
 
@@ -177,9 +179,7 @@ function removePerson(id: number, title: string) {
       </NTag>
     </div>
 
-    <div v-if="!shown.length" class="empty-hint">
-      <NEmpty description="这里还是空的，去「每周新番」或「搜索」里添加吧" />
-    </div>
+    <EmptyHint v-if="!shown.length" text="这里还是空的" sub="去「每周新番」或「搜索」里添加吧" />
 
     <div v-else class="lib-grid">
       <div v-for="e in shown" :key="e.subjectId" class="lib-card">
@@ -236,9 +236,7 @@ function removePerson(id: number, title: string) {
       <div v-if="hiddenCharacterCount" class="demo-filter-hint">
         演示（离线）模式：已隐藏 {{ hiddenCharacterCount }} 个在线收藏的角色，切换到在线模式可继续查看
       </div>
-      <div v-if="!characterTotal" class="empty-hint">
-        <NEmpty description="还没有收藏角色——去条目详情的「角色」页或搜索角色页点「收藏角色」吧" />
-      </div>
+      <EmptyHint v-if="!characterTotal" text="还没有收藏角色" sub="去条目详情的「角色」页或搜索角色页点「收藏角色」吧" />
       <template v-else>
         <div class="char-lib-grid">
           <div v-for="c in charShown" :key="c.characterId" class="char-lib-card">
@@ -275,9 +273,7 @@ function removePerson(id: number, title: string) {
       <div v-if="hiddenPersonCount" class="demo-filter-hint">
         演示（离线）模式：已隐藏 {{ hiddenPersonCount }} 位在线收藏的人物，切换到在线模式可继续查看
       </div>
-      <div v-if="!personTotal" class="empty-hint">
-        <NEmpty description="还没有收藏人物——去条目详情的「制作人员」页或搜索人物页点「收藏人物」吧" />
-      </div>
+      <EmptyHint v-if="!personTotal" text="还没有收藏人物" sub="去条目详情的「制作人员」页或搜索人物页点「收藏人物」吧" />
       <template v-else>
         <div class="char-lib-grid">
           <div v-for="p in personShown" :key="p.personId" class="char-lib-card">
@@ -317,6 +313,12 @@ function removePerson(id: number, title: string) {
 <style scoped>
 .view-switch {
   margin-bottom: 12px;
+}
+
+.radio-icon-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .char-lib-grid {

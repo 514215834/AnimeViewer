@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NInput, NPagination, NSelect, NSpin, NTabPane, NTabs } from 'naive-ui'
+import { NAlert, NButton, NIcon, NInput, NPagination, NSelect, NSpin, NTabPane, NTabs } from 'naive-ui'
+import { CompassOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useNsfwStore } from '../stores/nsfw'
 import { useSettingsStore } from '../stores/settings'
 import { coverCardUrl } from '../utils/image'
 import type { CalendarDay, SearchResultItem } from '../types/bangumi'
 import AnimeCard from '../components/AnimeCard.vue'
+import EmptyHint from '../components/EmptyHint.vue'
 
 const router = useRouter()
 const settings = useSettingsStore()
@@ -150,7 +152,7 @@ function open(id: number) {
 <template>
   <div>
     <div class="page-head">
-      <h2>🧭 发现</h2>
+      <h2><NIcon :component="CompassOutline" />发现</h2>
       <span class="page-sub">热门在播 · 按年代回顾历史番剧 · 目录片单</span>
     </div>
 
@@ -168,7 +170,7 @@ function open(id: number) {
           <NAlert v-if="hotError" type="error" title="加载失败" closable style="margin-bottom: 12px">
             {{ hotError }} —— 请检查网络/代理，或在「设置」中修改 API 地址、切换演示数据模式。
           </NAlert>
-          <div v-else-if="!visibleTop.length" class="empty-hint">暂无在播数据</div>
+          <EmptyHint v-else-if="!visibleTop.length" text="暂无在播数据" />
           <div v-else class="card-grid">
             <AnimeCard
               v-for="it in visibleTop"
@@ -196,7 +198,7 @@ function open(id: number) {
           <NAlert v-if="browseError" type="error" title="加载失败" closable style="margin-bottom: 12px">
             {{ browseError }} —— 请检查网络/代理，或在「设置」中修改 API 地址、切换演示数据模式。
           </NAlert>
-          <div v-else-if="browseLoaded && !browseItems.length" class="empty-hint">该年代没有收录的动画条目</div>
+          <EmptyHint v-else-if="browseLoaded && !browseItems.length" text="该年代没有收录的动画条目" />
           <div v-else-if="browseItems.length" class="card-grid">
             <AnimeCard
               v-for="it in visibleBrowse"
@@ -256,6 +258,8 @@ function open(id: number) {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 4px;
+  /* v0.10 P4：小屏允许换行 */
+  flex-wrap: wrap;
 }
 
 .head-tools {
@@ -268,6 +272,8 @@ function open(id: number) {
   display: flex;
   gap: 10px;
   margin-bottom: 14px;
+  /* v0.10 P4：小屏允许换行 */
+  flex-wrap: wrap;
 }
 
 .pager {

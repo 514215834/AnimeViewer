@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import {
   NButton,
-  NEmpty,
+  NIcon,
   NInput,
   NInputNumber,
   NPagination,
@@ -12,7 +12,9 @@ import {
   NSpin,
   NTag,
 } from 'naive-ui'
+import { SearchOutline, FilterOutline, DiamondOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
+import EmptyHint from '../components/EmptyHint.vue'
 import type { SearchAdvanced } from '../api/bangumi'
 import { useSettingsStore } from '../stores/settings'
 import { charAvatarUrl, coverCardUrl } from '../utils/image'
@@ -301,7 +303,7 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
 <template>
   <div>
     <div class="page-head">
-      <h2>🔍 搜索</h2>
+      <h2><NIcon :component="SearchOutline" />搜索</h2>
       <span class="page-sub">条目（关键词 + 标签 + 高级筛选）／ 角色 ／ 人物</span>
     </div>
 
@@ -321,10 +323,10 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
     <template v-if="target === 'subject'">
       <div class="advanced-head">
         <NButton size="small" secondary :type="showAdvanced ? 'primary' : 'default'" @click="showAdvanced = !showAdvanced">
-          ⚙ 高级筛选<template v-if="advancedCount">（{{ advancedCount }}）</template>
+          <span class="btn-icon-row"><NIcon :component="FilterOutline" size="14" />高级筛选<template v-if="advancedCount">（{{ advancedCount }}）</template></span>
         </NButton>
         <NButton size="small" quaternary type="primary" title="评分人数 200~3000 且 排名前 800" @click="applyNichePreset">
-          💎 小众佳作
+          <span class="btn-icon-row"><NIcon :component="DiamondOutline" size="14" />小众佳作</span>
         </NButton>
         <NButton v-if="advancedCount" size="small" quaternary @click="clearAdvanced">清空筛选</NButton>
       </div>
@@ -424,9 +426,7 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
     <NSpin :show="loading">
       <!-- 条目结果 -->
       <template v-if="target === 'subject'">
-        <div v-if="searched && !results.length && !loading" class="empty-hint">
-          <NEmpty description="没有找到匹配的动漫" />
-        </div>
+        <EmptyHint v-if="searched && !results.length && !loading" text="没有找到匹配的动漫" />
         <div v-else-if="results.length" class="card-grid">
           <AnimeCard
             v-for="it in results"
@@ -444,9 +444,7 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
 
       <!-- 角色结果 -->
       <template v-else-if="target === 'character'">
-        <div v-if="searched && !characterResults.length && !loading" class="empty-hint">
-          <NEmpty description="没有找到匹配的角色" />
-        </div>
+        <EmptyHint v-if="searched && !characterResults.length && !loading" text="没有找到匹配的角色" />
         <div v-else class="people-grid">
           <div
             v-for="c in characterResults"
@@ -464,9 +462,7 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
 
       <!-- 人物结果 -->
       <template v-else>
-        <div v-if="searched && !personResults.length && !loading" class="empty-hint">
-          <NEmpty description="没有找到匹配的人物" />
-        </div>
+        <EmptyHint v-if="searched && !personResults.length && !loading" text="没有找到匹配的人物" />
         <div v-else class="people-grid">
           <div
             v-for="p in personResults"
@@ -490,10 +486,26 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
 </template>
 
 <style scoped>
+.btn-icon-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .search-bar {
   display: flex;
   gap: 10px;
   margin-bottom: 12px;
+  /* v0.10 P4：小屏允许换行 */
+  flex-wrap: wrap;
+}
+
+/* NInput 默认 width:100%，在 wrap 容器中会把每个控件挤成独立一行——
+   改为弹性伸缩占满同行剩余空间，小屏放不下时才自然换行 */
+.search-bar > .n-input {
+  flex: 1 1 180px;
+  width: auto;
+  min-width: 0;
 }
 
 .advanced-head {
@@ -501,6 +513,8 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+  /* v0.10 P4：小屏允许换行 */
+  flex-wrap: wrap;
 }
 
 .advanced-panel {

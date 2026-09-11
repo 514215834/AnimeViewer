@@ -23,6 +23,10 @@ import type {
 } from '../types/bangumi'
 import type { SearchAdvanced } from './bangumi'
 import type { LibraryEntry } from '../stores/library'
+import { isDemoCharacterId, isDemoPersonId, isDemoSubjectId } from './demoIds'
+
+// ID 段判断已拆至 demoIds.ts（纯函数零数据依赖）；此处转发导出维持既有引用路径与测试兼容
+export { isDemoCharacterId, isDemoPersonId, isDemoSubjectId }
 
 interface DemoSubject extends CalendarSubject {
   tags: { name: string; count: number }[]
@@ -252,21 +256,6 @@ export function demoEpisodes(id: number): Episode[] {
     },
   )
   return eps
-}
-
-/** 判断 ID 是否为内置演示条目（演示模式下追番库仅显示这些条目，隐藏在线同步的残留数据） */
-export function isDemoSubjectId(id: number): boolean {
-  return id >= 900001 && id <= 900014
-}
-
-/** 判断 ID 是否为内置演示角色：搜索/收藏列表固定段 800001~800006，条目角色为演示条目 ID×10+序号 */
-export function isDemoCharacterId(id: number): boolean {
-  return (id >= 800001 && id <= 800006) || (id >= 9000010 && id <= 9000149)
-}
-
-/** 判断 ID 是否为内置演示人物：搜索/收藏列表段 900001~900005，条目人物为演示条目 ID×1000+序号 */
-export function isDemoPersonId(id: number): boolean {
-  return (id >= 900001 && id <= 900005) || (id >= 900001000 && id <= 900014999)
 }
 
 export function demoDetail(id: number): SubjectDetail {

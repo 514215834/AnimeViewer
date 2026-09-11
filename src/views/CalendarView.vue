@@ -2,7 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NSpin, NTabPane, NTabs, NTag } from 'naive-ui'
+import { NAlert, NButton, NIcon, NSpin, NTabPane, NTabs, NTag } from 'naive-ui'
+import { CalendarOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useNsfwStore } from '../stores/nsfw'
 import { useSettingsStore } from '../stores/settings'
@@ -10,6 +11,7 @@ import { useLibraryStore } from '../stores/library'
 import { coverCardUrl } from '../utils/image'
 import type { CalendarDay } from '../types/bangumi'
 import AnimeCard from '../components/AnimeCard.vue'
+import EmptyHint from '../components/EmptyHint.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -81,7 +83,7 @@ function open(id: number) {
 <template>
   <div>
     <div class="page-head">
-      <h2>📅 每周新番时间表</h2>
+      <h2><NIcon :component="CalendarOutline" />每周新番时间表</h2>
       <div class="head-row">
         <span class="page-sub">按周一至周日列出本周更新内容，默认定位到今天</span>
         <div class="head-tools">
@@ -114,7 +116,7 @@ function open(id: number) {
             </NTag>
           </template>
 
-          <div v-if="!visibleItems.length" class="empty-hint">当天暂无更新</div>
+          <EmptyHint v-if="!visibleItems.length" text="当天暂无更新" />
           <div v-else class="card-grid">
             <AnimeCard
               v-for="it in visibleItems"

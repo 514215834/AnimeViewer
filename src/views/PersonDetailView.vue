@@ -2,12 +2,14 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { NAlert, NButton, NEmpty, NResult, NSpin, NTag } from 'naive-ui'
+import { NAlert, NButton, NIcon, NResult, NSpin, NTag } from 'naive-ui'
+import { FilmOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from '../stores/library'
 import type { PersonDetail, StaffWork } from '../types/bangumi'
 import { careerLabel } from '../utils/career'
 import PosterImage from '../components/PosterImage.vue'
+import EmptyHint from '../components/EmptyHint.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -113,13 +115,11 @@ function openSubject(subjectId: number) {
         <section v-if="person.summary" class="cpage-summary">
           <p>{{ person.summary }}</p>
         </section>
-        <div v-else class="empty-hint">暂无人物简介</div>
+        <EmptyHint v-else text="暂无人物简介" />
 
-        <h3 class="cpage-works-title">🎬 参与作品</h3>
+        <h3 class="cpage-works-title"><NIcon :component="FilmOutline" />参与作品</h3>
         <NSpin :show="works === null">
-          <div v-if="works && !works.length" class="empty-hint">
-            <NEmpty description="暂无参与作品数据" />
-          </div>
+          <EmptyHint v-if="works && !works.length" text="暂无参与作品数据" />
           <div v-else class="works-grid">
             <div
               v-for="w in works ?? []"
@@ -194,6 +194,14 @@ function openSubject(subjectId: number) {
 .cpage-works-title {
   margin: 8px 0 12px;
   font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cpage-works-title .n-icon {
+  color: var(--av-primary);
+  font-size: 18px;
 }
 
 .works-grid {

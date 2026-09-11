@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { loadJson, saveJson } from '../utils/storage'
 import { useSettingsStore } from './settings'
-import { demoLibrary, isDemoSubjectId } from '../api/demo'
+import { isDemoSubjectId } from '../api/demoIds'
 
 export type WatchStatus = 'wish' | 'doing' | 'done'
 
@@ -63,8 +63,10 @@ export interface CollectedPerson {
 interface LibraryState {
   /** 在线收藏（云同步唯一作用域） */
   items: Record<string, LibraryEntry>
-  /** 演示收藏（离线模式专用，由 demo.js 播种，与在线数据完全隔离） */
+  /** 演示收藏（离线模式专用，首次进入演示模式时由 ensureDemoSeed 播种，与在线数据完全隔离） */
   demoItems: Record<string, LibraryEntry>
+  /** v0.10 P1：演示库待播种标记（true=演示存储为空且尚未加载 demo 模块，App.vue 监听 isDemo 触发播种） */
+  needsDemoSeed?: boolean
   characters: Record<string, CollectedCharacter>
   persons: Record<string, CollectedPerson>
   /** 移除墓碑（subjectId → 移除时间）：云端无删除收藏端点，同步拉取时跳过这些条目防止复活；显式重新加追会解除 */
@@ -90,17 +92,12 @@ function normalizeSpecial(raw: unknown): Record<string, number[]> | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
-/** 演示/在线追番库分库装载：演示库首次进入时由 demo.js 播种；
+/** 演示/在线追番库分库装载：演示库首次进入时由 App.vue 触发 ensureDemoSeed 异步播种（v0.10 P1 起 demo 模块按需加载）；
  *  历史版本曾共用一个存储，混入在线库的演示条目在此一次性迁出演示库（演示条目不参与云同步，dirty 无意义故清除） */
-function loadNamespacedItems(): { online: Record<string, LibraryEntry>; demo: Record<string, LibraryEntry> } {
+function loadNamespacedItems(): { online: Record<string, LibraryEntry>; demo: Record<string, LibraryEntry>; needsSeed: boolean } {
   const online = loadJson<Record<string, LibraryEntry>>(STORAGE_KEY, {})
   const storedDemo = loadJson<Record<string, LibraryEntry> | null>(DEMO_STORAGE_KEY, null)
   const demo: Record<string, LibraryEntry> = storedDemo ?? {}
-  let demoDirty = false
-  if (!storedDemo) {
-    for (const e of demoLibrary()) demo[String(e.subjectId)] = e
-    demoDirty = true
-  }
   let migrated = false
   for (const key of Object.keys(online)) {
     if (isDemoSubjectId(Number(key))) {
@@ -109,19 +106,20 @@ function loadNamespacedItems(): { online: Record<string, LibraryEntry>; demo: Re
       migrated = true
     }
   }
-  if (demoDirty || migrated) saveJson(DEMO_STORAGE_KEY, demo)
+  if (migrated) saveJson(DEMO_STORAGE_KEY, demo)
   if (migrated) saveJson(STORAGE_KEY, online)
-  return { online, demo }
+  return { online, demo, needsSeed: !storedDemo }
 }
 
 // 注意：state 必须用具名键包裹 Record，直接把 Record 作为 state 根对象
 // 会导致 getter 收到混入 actions 的 store 实例
 export const useLibraryStore = defineStore('library', {
   state: (): LibraryState => {
-    const { online, demo } = loadNamespacedItems()
+    const { online, demo, needsSeed } = loadNamespacedItems()
     return {
       items: online,
       demoItems: demo,
+      needsDemoSeed: needsSeed,
       characters: loadJson<Record<string, CollectedCharacter>>(CHARACTERS_KEY, {}),
       persons: loadJson<Record<string, CollectedPerson>>(PERSONS_KEY, {}),
       removedSubjects: loadJson<Record<string, number>>(REMOVED_KEY, {}),
@@ -156,6 +154,19 @@ export const useLibraryStore = defineStore('library', {
     },
   },
   actions: {
+    /** v0.10 P1：演示库异步播种——demo 模块动态加载后写入演示库并持久化；
+     *  仅演示模式触发（在线模式不下载 demo chunk），仅首次（演示存储为空）执行一次 */
+    async ensureDemoSeed() {
+      if (!this.needsDemoSeed) return
+      this.needsDemoSeed = false
+      try {
+        const { demoLibrary } = await import('../api/demo')
+        for (const e of demoLibrary()) this.demoItems[String(e.subjectId)] = e
+        saveJson(DEMO_STORAGE_KEY, this.demoItems)
+      } catch {
+        // demo 模块加载失败：演示库保持为空，各视图已有空态兜底
+      }
+    },
     has(id: number): boolean {
       return !!this.activeItems[String(id)]
     },
