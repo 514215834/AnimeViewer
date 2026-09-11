@@ -14,6 +14,7 @@ const library = useLibraryStore()
 const collapsed = ref(false)
 
 const menuOptions = computed<MenuOption[]>(() => [
+  { label: '🏠 今日', key: 'today' },
   { label: '📅 每周新番', key: 'calendar' },
   { label: '🧭 发现', key: 'discover' },
   { label: '🔍 搜索', key: 'search' },
@@ -21,7 +22,7 @@ const menuOptions = computed<MenuOption[]>(() => [
   { label: '⚙️ 设置', key: 'settings' },
 ])
 
-const activeKey = computed(() => (route.name as string) || 'calendar')
+const activeKey = computed(() => (route.name as string) || 'today')
 
 function onMenuSelect(key: string) {
   router.push({ name: key })
@@ -40,7 +41,7 @@ function onMenuSelect(key: string) {
       @update:collapsed="(v: boolean) => (collapsed = v)"
     >
       <div class="sider-inner">
-        <div class="logo" @click="router.push({ name: 'calendar' })">
+        <div class="logo" @click="router.push({ name: 'today' })">
           <span class="logo-icon">📺</span>
           <span v-if="!collapsed" class="logo-text">AnimeViewer</span>
         </div>

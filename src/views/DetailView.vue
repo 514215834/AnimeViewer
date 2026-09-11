@@ -80,7 +80,20 @@ const epTypeGroups = computed(() => {
     .filter((t) => counts.has(t))
     .map((t) => ({ type: t, label: EP_TYPE_LABELS[t] ?? '其他', count: counts.get(t) as number }))
 })
-const visibleEpisodes = computed(() => (episodes.value ?? []).filter((e) => e.type === epTypeFilter.value))
+const visibleEpisodes = computed(() => {
+  const list = (episodes.value ?? []).filter((e) => e.type === epTypeFilter.value)
+  // H2（G5 转正）章节关键词过滤：与类型分组叠加，按名称/话数匹配
+  const kw = epKeyword.value.trim().toLowerCase()
+  if (!kw) return list
+  return list.filter(
+    (e) =>
+      e.name.toLowerCase().includes(kw) ||
+      (e.name_cn ?? '').toLowerCase().includes(kw) ||
+      String(e.sort) === kw ||
+      String(e.ep) === kw,
+  )
+})
+const epKeyword = ref('')
 
 /* ── G2 单集详情抽屉（含 G3 吐槽入口）── */
 
@@ -121,10 +134,13 @@ async function load() {
   persons.value = null
   episodes.value = null
   related.value = null
-  activeTab.value = 'info'
+  // H1 深链支持：/subject/:id?tab=eps 直达剧集 Tab（今日页「继续观看」入口）
+  const qtab = String(route.query.tab ?? '')
+  activeTab.value = ['eps', 'chars', 'staff', 'related'].includes(qtab) ? qtab : 'info'
   tabError.value = ''
   revealed.value = false
   epTypeFilter.value = 0
+  epKeyword.value = ''
   showEpDrawer.value = false
   drawerEp.value = null
   try {
@@ -224,13 +240,15 @@ const infoboxRows = computed(() => {
 })
 
 function isEpWatched(ep: Episode): boolean {
-  return entry.value?.watchedEps?.includes(ep.sort) ?? false
+  // H3：正篇读 watchedEps；SP/OP/ED/预告读 watchedSpecial 复合桶（sort 空间与正篇重叠，分开存储）
+  if (ep.type === 0) return entry.value?.watchedEps?.includes(ep.sort) ?? false
+  return library.hasSpecialEpisode(id.value, ep.type, ep.sort)
 }
 
 function toggleEp(ep: Episode, watched: boolean) {
   if (!entry.value) return
   // E1：单集变更走增量标记（本地更新 + 待推队列单集 PUT），不再整表 PATCH
-  void sync.markEpisodeWatched(entry.value.subjectId, ep.id, ep.sort, watched)
+  void sync.markEpisodeWatched(entry.value.subjectId, ep.id, ep.type, ep.sort, watched)
 }
 
 /* ── E1 沉浸观剧模式 ── */
@@ -269,7 +287,7 @@ function immersiveMarkAndNext() {
   const ep = immersiveEp.value
   if (!ep || !entry.value) return
   if (!immersiveWatched.value) {
-    void sync.markEpisodeWatched(entry.value.subjectId, ep.id, ep.sort, true)
+    void sync.markEpisodeWatched(entry.value.subjectId, ep.id, ep.type, ep.sort, true)
     message.success(`第 ${ep.sort} 话已标记看过`)
   }
   immersiveNext()
@@ -584,11 +602,18 @@ onBeforeUnmount(() => {
                 <NButton size="tiny" secondary @click="markAllEps(true)">全部看过</NButton>
                 <NButton size="tiny" secondary @click="markAllEps(false)">清空</NButton>
                 <NButton size="tiny" type="primary" secondary @click="enterImmersive">▶ 沉浸观剧</NButton>
+                <NInput
+                  v-model:value="epKeyword"
+                  size="tiny"
+                  clearable
+                  placeholder="过滤章节名 / 话数"
+                  class="ep-filter"
+                />
                 <span class="eps-count">
                   已看 {{ entry?.watchedEps?.length ?? 0 }} / {{ mainEpisodes.length }} 话
                 </span>
               </div>
-              <!-- G1 章节类型分组：进度统计仅本篇；非本篇章节为纯展示（本地进度按 sort 存储且与正篇重叠，勾选会误清正篇进度） -->
+              <!-- G1 章节类型分组：进度统计仅本篇（mainEpisodes 语义不变）；H3 起非本篇行支持勾选（watchedSpecial 复合桶，不影响正篇进度） -->
               <div v-if="epTypeGroups.length > 1" class="ep-type-tabs">
                 <button
                   v-for="g in epTypeGroups"
@@ -603,17 +628,20 @@ onBeforeUnmount(() => {
               </div>
               <NSpin :show="episodes === null && activeTab === 'eps'">
                 <div v-if="episodes && !episodes.length" class="empty-hint">暂无剧集数据</div>
+                <div v-else-if="episodes && !visibleEpisodes.length" class="empty-hint">
+                  没有匹配「{{ epKeyword.trim() }}」的章节
+                </div>
                 <div v-else class="ep-list">
                   <div
                     v-for="ep in visibleEpisodes"
                     :key="ep.id"
                     class="ep-row"
-                    :class="{ watched: ep.type === 0 && isEpWatched(ep) }"
+                    :class="{ watched: isEpWatched(ep) }"
                     title="查看章节详情与吐槽"
                     @click="openEpDetail(ep)"
                   >
+                    <!-- H3：非本篇行也可勾选（本地写 watchedSpecial 复合桶 + 单集 PUT 上云），不参与进度统计 -->
                     <NCheckbox
-                      v-if="ep.type === 0"
                       :checked="isEpWatched(ep)"
                       @update:checked="(v: boolean) => toggleEp(ep, v)"
                       @click.stop
@@ -997,6 +1025,12 @@ onBeforeUnmount(() => {
 .eps-count {
   font-size: 12px;
   opacity: 0.6;
+}
+
+/* H2 章节过滤框：固定宽度避免挤压计数 */
+.ep-filter {
+  width: 180px;
+  margin-left: auto;
 }
 
 .ep-list {

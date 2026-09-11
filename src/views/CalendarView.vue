@@ -6,6 +6,7 @@ import { NAlert, NButton, NSpin, NTabPane, NTabs, NTag } from 'naive-ui'
 import { dataSource } from '../api/dataSource'
 import { useNsfwStore } from '../stores/nsfw'
 import { useSettingsStore } from '../stores/settings'
+import { useLibraryStore } from '../stores/library'
 import { coverCardUrl } from '../utils/image'
 import type { CalendarDay } from '../types/bangumi'
 import AnimeCard from '../components/AnimeCard.vue'
@@ -14,6 +15,7 @@ const router = useRouter()
 const route = useRoute()
 const nsfw = useNsfwStore()
 const settings = useSettingsStore()
+const library = useLibraryStore()
 
 const days = ref<CalendarDay[]>([])
 const loading = ref(true)
@@ -123,6 +125,7 @@ function open(id: number) {
               :poster="coverCardUrl(it.images, settings.imageQuality)"
               :score="it.rating?.score"
               :extra="airText(it)"
+              :in-library="library.has(it.id)"
               @open="open"
             />
           </div>

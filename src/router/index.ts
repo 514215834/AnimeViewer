@@ -7,8 +7,9 @@ const router = createRouter({
     {
       path: '/',
       component: MainLayout,
-      redirect: '/calendar',
+      redirect: '/today',
       children: [
+        { path: 'today', name: 'today', component: () => import('../views/TodayView.vue'), meta: { title: '今日' } },
         { path: 'calendar', name: 'calendar', component: () => import('../views/CalendarView.vue'), meta: { title: '每周新番' } },
         { path: 'discover', name: 'discover', component: () => import('../views/DiscoverView.vue'), meta: { title: '发现' } },
         { path: 'search', name: 'search', component: () => import('../views/SearchView.vue'), meta: { title: '搜索' } },
@@ -21,7 +22,7 @@ const router = createRouter({
       ],
     },
     { path: '/oauth-callback', name: 'oauth-callback', component: () => import('../views/OAuthCallbackView.vue') },
-    { path: '/:pathMatch(.*)*', redirect: '/calendar' },
+    { path: '/:pathMatch(.*)*', redirect: '/today' },
   ],
 })
 

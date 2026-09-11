@@ -13,17 +13,18 @@ const PULL_PAGE_SIZE = 50
 const MAX_PULL_PAGES = 40
 const PUSH_CONCURRENCY = 2
 
-/** 本地状态 → Bangumi 收藏类型（1=想看 2=看过 3=在看） */
-const LOCAL_TO_SERVER: Record<WatchStatus, 1 | 2 | 3> = { wish: 1, done: 2, doing: 3 }
+/** 本地状态 → Bangumi 收藏类型（1=想看 2=看过 3=在看）。导出仅供单测（H5） */
+export const LOCAL_TO_SERVER: Record<WatchStatus, 1 | 2 | 3> = { wish: 1, done: 2, doing: 3 }
 
-function serverToLocal(t: number): WatchStatus | null {
+export function serverToLocal(t: number): WatchStatus | null {
   if (t === 1) return 'wish'
   if (t === 2) return 'done'
   if (t === 3) return 'doing'
   return null // 4=搁置 5=抛弃：不同步到本地
 }
 
-async function pool<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
+/** 有界并发执行器。导出仅供单测（H5） */
+export async function pool<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
   const queue = [...items]
   const runners = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
     while (queue.length) {
@@ -122,12 +123,14 @@ export const useSyncStore = defineStore('sync', {
       if (username && !this.profile) await this.loadProfile(username)
     },
     /**
-     * E1 沉浸观剧的单集标记入口：本地增量更新 + 入待推队列，
-     * 并尽力即时推送（失败静默留在队列，随下次同步重放）
+     * E1 沉浸观剧/剧集勾选的单集标记入口：本地增量更新 + 入待推队列，
+     * 并尽力即时推送（失败静默留在队列，随下次同步重放）。
+     * H3：epType≠0（SP/OP/ED/预告）写 watchedSpecial 复合桶，不影响正篇进度
      */
-    async markEpisodeWatched(subjectId: number, episodeId: number, sort: number, watched: boolean) {
+    async markEpisodeWatched(subjectId: number, episodeId: number, epType: number, sort: number, watched: boolean) {
       const library = useLibraryStore()
-      library.markEpisodeLocal(subjectId, sort, watched)
+      if (epType === 0) library.markEpisodeLocal(subjectId, sort, watched)
+      else library.markSpecialEpisodeLocal(subjectId, epType, sort, watched)
       const type: PendingEpisodeMark['type'] = watched ? 2 : 0
       this.pendingEpisodeMarks = [
         ...this.pendingEpisodeMarks.filter((m) => !(m.subjectId === subjectId && m.episodeId === episodeId)),
@@ -284,11 +287,14 @@ export const useSyncStore = defineStore('sync', {
                 ? { rate: entry.myRate, comment: entry.myComment, isPrivate: entry.privateFlag }
                 : undefined
             await bangumiApi.upsertCollection(entry.subjectId, LOCAL_TO_SERVER[entry.status], review)
-            // F4 防线：本地零进度（新加追/重新加追）时先回读云端单集状态并入，避免整表 PATCH 清空另一设备的进度
+            // F4 防线：本地零进度（新加追/重新加追）时先回读云端单集状态并入，避免整表 PATCH 清空另一设备的进度。
+            // H3 修复：仅取正篇（episode.type=0）——云端 SP 标记的 sort 与正篇重叠，并入会误标正篇进度
             if (entry.epsTotal > 0 && !(entry.watchedEps?.length ?? 0)) {
               try {
                 const items = await bangumiApi.userSubjectEpisodes(entry.subjectId)
-                const sorts = items.filter((x) => x.type === 2).map((x) => x.episode.sort)
+                const sorts = items
+                  .filter((x) => x.type === 2 && x.episode.type === 0)
+                  .map((x) => x.episode.sort)
                 if (sorts.length) library.applyCloudEpisodes(entry.subjectId, sorts)
               } catch {
                 /* 回读失败按本地空进度继续推送 */
@@ -333,7 +339,10 @@ export const useSyncStore = defineStore('sync', {
         await pool(pullable, 2, async (entry) => {
           try {
             const items = await bangumiApi.userSubjectEpisodes(entry.subjectId)
-            const sorts = items.filter((x) => x.type === 2).map((x) => x.episode.sort)
+            // H3 修复：仅合并正篇记录——云端 SP 标记的 sort 与正篇空间重叠，无过滤会误标正篇第 1 话
+            const sorts = items
+              .filter((x) => x.type === 2 && x.episode.type === 0)
+              .map((x) => x.episode.sort)
             if (sorts.length && library.applyCloudEpisodes(entry.subjectId, sorts)) epPulled++
           } catch {
             /* 单集拉取失败不阻塞主流程 */

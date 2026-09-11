@@ -18,6 +18,8 @@ import { useLibraryStore } from '../stores/library'
 import { useSyncStore } from '../stores/sync'
 import { applyImageMirror } from '../utils/image'
 import { bangumiApi, ApiError, clearApiCache } from '../api/bangumi'
+import { clearErrLog, formatDiagnostics, readErrLog } from '../utils/errlog'
+import type { ErrLogEntry } from '../utils/errlog'
 
 const message = useMessage()
 const settings = useSettingsStore()
@@ -105,6 +107,36 @@ function applyDraftBase() {
 }
 
 const libraryDirtyCount = computed(() => sync.pendingPushCount)
+
+/* ── H4 诊断信息：本地错误日志只读展示 + 一键复制，不做任何上报 ── */
+const appVersion = __APP_VERSION__
+const errLogs = ref<ErrLogEntry[]>(readErrLog())
+const diagnosticsText = computed(() =>
+  formatDiagnostics(
+    [
+      `AnimeViewer v${appVersion}`,
+      `数据源：${settings.isDemo ? '演示数据' : '在线 API'}（${settings.apiBaseUrl}）`,
+      `图片反代：${settings.mirrorImageUrl || '官方源'}`,
+      `上次同步：${sync.lastSyncText} · 待推送 ${libraryDirtyCount.value} 条 · 追番 ${library.count} 条`,
+    ],
+    errLogs.value,
+  ),
+)
+
+async function copyDiagnostics() {
+  try {
+    await navigator.clipboard.writeText(diagnosticsText.value)
+    message.success('诊断信息已复制到剪贴板')
+  } catch {
+    message.error('复制失败：浏览器未授权剪贴板访问')
+  }
+}
+
+function clearErrors() {
+  clearErrLog()
+  errLogs.value = []
+  message.info('已清空错误日志')
+}
 
 /** E5 资料卡：优先取云端资料，回退到同步缓存的 me */
 const profile = computed(() => {
@@ -316,6 +348,25 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
+        <NFormItem label="诊断信息（仅存本地，不含 Token；遇到异常可复制后反馈）">
+          <div class="diag-box">
+            <div class="diag-meta">
+              <span>AnimeViewer v{{ appVersion }}</span>
+              <span>{{ settings.isDemo ? '演示数据' : '在线 API' }} · {{ settings.apiBaseUrl }}</span>
+            </div>
+            <div v-if="errLogs.length" class="diag-logs">
+              <div v-for="(e, i) in errLogs.slice(0, 10)" :key="i" class="sync-log-line">
+                [{{ new Date(e.at).toLocaleString('zh-CN') }}] {{ e.source }}: {{ e.message }}
+              </div>
+            </div>
+            <div v-else class="diag-empty">未记录到运行时错误</div>
+            <div class="btn-row">
+              <NButton secondary size="small" @click="copyDiagnostics">复制诊断信息</NButton>
+              <NButton quaternary size="small" :disabled="!errLogs.length" @click="clearErrors">清空错误日志</NButton>
+            </div>
+          </div>
+        </NFormItem>
+
         <NAlert type="warning" :show-icon="false" style="margin-bottom: 20px">
           说明：Key / Token 只保存在本地浏览器，不会上传到任何服务器；浏览器安全策略不允许自定义
           User-Agent 请求头，如需自定义请在反向代理层注入。
@@ -471,5 +522,37 @@ async function onImportFile(ev: Event) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* H4 诊断面板 */
+.diag-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.diag-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.diag-logs {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.1);
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  opacity: 0.85;
+  word-break: break-all;
+}
+
+.diag-empty {
+  font-size: 12px;
+  opacity: 0.5;
 }
 </style>

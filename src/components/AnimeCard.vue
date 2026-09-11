@@ -8,6 +8,8 @@ defineProps<{
   poster?: string
   score?: number
   extra?: string
+  /** H1 已追标记：该条目在追番库中时于海报左上角显示徽章（由调用方传入，组件不感知 store） */
+  inLibrary?: boolean
 }>()
 
 const emit = defineEmits<{ (e: 'open', id: number): void }>()
@@ -23,6 +25,7 @@ function scoreText(score?: number): string {
     <div class="poster-wrap">
       <PosterImage :src="poster" :title="title" :subject-id="id" />
       <span class="score-badge">★ {{ scoreText(score) }}</span>
+      <span v-if="inLibrary" class="lib-badge">已追</span>
     </div>
     <div class="card-info">
       <div class="card-title" :title="title">{{ title }}</div>
@@ -56,6 +59,19 @@ function scoreText(score?: number): string {
   background: rgba(0, 0, 0, 0.65);
   color: #ffd75e;
   font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+/* H1 已追徽章 */
+.lib-badge {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  background: rgba(138, 123, 255, 0.92);
+  color: #fff;
+  font-size: 11px;
   padding: 1px 7px;
   border-radius: 6px;
   font-weight: 600;

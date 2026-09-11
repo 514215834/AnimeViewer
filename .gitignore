@@ -16,3 +16,7 @@ npm-debug.log*
 
 # TypeScript 增量构建缓存
 tsconfig.tsbuildinfo
+
+# 本地工具与调试临时文件
+.zcode/
+.tmp_*.json

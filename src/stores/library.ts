@@ -13,8 +13,11 @@ export interface LibraryEntry {
   status: WatchStatus
   progress: number
   epsTotal: number
-  /** 已看单集（对应 Bangumi episode.sort） */
+  /** 已看单集（对应 Bangumi episode.sort；仅正篇 type=0。SP/OP/ED 见 watchedSpecial） */
   watchedEps?: number[]
+  /** H3 非「本篇」单集已看标记：EpType（1=SP 2=OP 3=ED 4=预告）→ sorts 复合桶。
+   *  正篇 sort 空间与非本篇重叠（SP sort=1 与第 1 话冲突），故分开存储；进度/沉浸观剧仍只统计正篇 */
+  watchedSpecial?: Record<string, number[]>
   /** 条目评分，加追时从详情带入 */
   score?: number
   /** F6 我的评分（0-10 整数；0=用户主动清除，推送 0 删除云端评分；undefined=从未评过，推送时忽略） */
@@ -76,6 +79,16 @@ const PERSONS_KEY = 'animeviewer:persons'
 const REMOVED_KEY = 'animeviewer:removedSubjects'
 
 const STATUS_VALUES: readonly string[] = ['wish', 'doing', 'done']
+
+/** H3 导入时校验 watchedSpecial：仅保留「数值键 → 数值数组」形态的桶 */
+function normalizeSpecial(raw: unknown): Record<string, number[]> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out: Record<string, number[]> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (Array.isArray(v) && v.every((n) => typeof n === 'number')) out[k] = v as number[]
+  }
+  return Object.keys(out).length ? out : undefined
+}
 
 /** 演示/在线追番库分库装载：演示库首次进入时由 demo.js 播种；
  *  历史版本曾共用一个存储，混入在线库的演示条目在此一次性迁出演示库（演示条目不参与云同步，dirty 无意义故清除） */
@@ -228,6 +241,26 @@ export const useLibraryStore = defineStore('library', {
       e.progress = e.watchedEps.length
       e.dirtyAt = Date.now()
       this.persist()
+    },
+    /** H3 非本篇单集标记的本地部分：写 watchedSpecial 复合桶，不影响正篇 watchedEps/进度/完成度 */
+    markSpecialEpisodeLocal(id: number, epType: number, sort: number, watched: boolean) {
+      const e = this.activeItems[String(id)]
+      if (!e || epType === 0) return
+      const key = String(epType)
+      const bucket = new Set(e.watchedSpecial?.[key] ?? [])
+      if (watched) bucket.add(sort)
+      else bucket.delete(sort)
+      const nextSpecial: Record<string, number[]> = { ...(e.watchedSpecial ?? {}) }
+      if (bucket.size) nextSpecial[key] = [...bucket].sort((a, b) => a - b)
+      else delete nextSpecial[key]
+      if (Object.keys(nextSpecial).length) e.watchedSpecial = nextSpecial
+      else delete e.watchedSpecial
+      e.dirtyAt = Date.now()
+      this.persist()
+    },
+    /** H3 读取非本篇桶内 sort（供视图判定勾选态） */
+    hasSpecialEpisode(id: number, epType: number, sort: number): boolean {
+      return !!this.activeItems[String(id)]?.watchedSpecial?.[String(epType)]?.includes(sort)
     },
     setWatchedAll(id: number, watched: boolean, sorts: number[]) {
       const e = this.activeItems[String(id)]
@@ -484,6 +517,7 @@ export const useLibraryStore = defineStore('library', {
         progress: Number(e.progress) || 0,
         epsTotal: Number(e.epsTotal) || 0,
         watchedEps: Array.isArray(e.watchedEps) ? e.watchedEps.filter((n) => typeof n === 'number') : [],
+        watchedSpecial: normalizeSpecial(e.watchedSpecial),
         score: typeof e.score === 'number' ? e.score : undefined,
         myRate: typeof e.myRate === 'number' ? e.myRate : undefined,
         myComment: typeof e.myComment === 'string' ? e.myComment : undefined,
