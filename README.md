@@ -1,6 +1,6 @@
 # AnimeViewer - 动漫面板
 
-基于 Vue 3 的本地动漫追番面板，数据来源 [Bangumi API](https://github.com/bangumi/api)。当前版本 v0.10，迭代计划见 `docs/功能迭代文档.md`。
+基于 Vue 3 的本地动漫追番面板，数据来源 [Bangumi API](https://github.com/bangumi/api)。当前版本 v1.0（桌面化），迭代计划见 `docs/功能迭代文档.md`。
 
 ## 技术栈
 
@@ -8,13 +8,19 @@
 - **Naive UI** 组件库（暗色主题优先）
 - **Pinia** 状态管理（localStorage 持久化）
 - **Vue Router**（Hash 模式）
+- **Tauri 2** 桌面打包（Windows；自定义 User-Agent + 系统通知）
+- **Vitest** 单测 + **Playwright** E2E 冒烟
 
 ## 快速开始
 
 ```bash
 npm install
-npm run dev     # 开发：http://localhost:5173
-npm run build   # 类型检查 + 生产构建
+npm run dev        # 开发：http://localhost:5173
+npm run build      # 类型检查 + 生产构建（Web 版）
+npm run test       # Vitest 单测
+npm run e2e        # Playwright E2E 冒烟（演示模式主链路，走系统 Edge）
+npm run app:dev    # Tauri 桌面端开发（需 Rust 工具链）
+npm run app:build  # Tauri 桌面端构建：NSIS 安装包 + target/release 绿色版 exe
 ```
 
 ## 功能
@@ -81,6 +87,17 @@ npm run build   # 类型检查 + 生产构建
 | 全局错误兜底 + 诊断面板 | 全局错误捕获写入本地环形日志；设置页「诊断信息」面板展示版本/数据源/最近错误，一键复制、纯本地不上报 |
 | 测试基建 | Vitest 单测：追番库状态机（同步冲突三态/墓碑/评分跟随）、同步队列、演示数据同构过滤，39 用例 |
 
+### v1.0-S1 桌面化（已完成，验收中）
+
+| 功能 | 说明 |
+|------|------|
+| Tauri 2 桌面打包 | Windows 桌面端（复用全部 Web 代码与 Hash 路由，零改造）：NSIS 安装包 + 绿色版 exe 双形态；单实例（二次启动唤起既有窗口）、窗口尺寸/位置跨会话记忆；应用图标 |
+| 自定义 User-Agent | 桌面端请求经 `tauri-plugin-http` 从 Rust 侧发出，注入 `AnimeViewer/{版本} (仓库地址)` 可识别 UA（浏览器 Forbidden header 限制解除，符合 Bangumi 对可识别 UA 的要求）；顺带不受 CORS 限制（legacy 接口预检、OAuth 跨域隐患均消失）；Web 浏览器环境自动回退原生 fetch，行为与既往一致 |
+| 「今日更新」系统通知 | 桌面端按可配置间隔比对周历与追番库，仅对「今日新集」弹系统通知（按日期去重，同一天不重复提醒）；**默认关闭**，通知范围（在看/全部）与检查间隔（15 分钟~6 小时）均可配置；设置页可发送测试通知；Web 环境不启用 |
+| 云端非本篇单集回填 | 云端单集拉取按类型分流（正篇 → watchedEps，SP/OP/ED/预告 → 复合桶）：换设备后非本篇勾选状态可恢复（此前「只推不拉」，README 已知限制 6 销账） |
+| E2E 冒烟 | Playwright 4 用例走真实 Edge：今日仪表盘概览/继续观看、周历→详情→加追→剧集勾选→刷新持久化、搜索命中、追番库分区切换（演示模式零网络依赖） |
+| PWA 挂账关闭 | 挂账 8 版的「PWA 离线壳」正式关闭：桌面化已覆盖离线/安装形态，Web 部署非主场景 |
+
 ### v0.10 性能优化与界面美化（已完成）
 
 | 功能 | 说明 |
@@ -100,7 +117,14 @@ npm run build   # 类型检查 + 生产构建
 - **Image Base URL**（图片反代）：默认留空使用官方源，预置 `https://bgmimg.anibt.net` 反代选项；也可直接输入反代域名或含子路径的前缀
 - **Access Token**：可选，默认留空（匿名访问）；用于提升接口限额，在 [next.bgm.tv/demo/access-token](https://next.bgm.tv/demo/access-token) 生成后填入，设置页可一键验证有效性（仅保存在本地浏览器，v0.10 起不再内置任何默认 Token）
 
-> 注：浏览器安全策略禁止自定义 `User-Agent` 请求头，如需自定义请在反向代理层注入。
+> 注：浏览器安全策略禁止自定义 `User-Agent` 请求头；Tauri 桌面版已解除该限制（请求经 Rust 侧发出并注入可识别 UA），Web 版如需自定义请在反向代理层注入。
+
+## 桌面端（Tauri 2 · Windows）
+
+- **发布形态**：`npm run app:build` 同时产出 NSIS 安装包（`src-tauri/target/release/bundle/nsis/`，按当前用户安装无需管理员）与绿色版 exe（`src-tauri/target/release/anime-viewer.exe`，可直接运行，依赖系统 WebView2——Win10/11 通常已内置）
+- **单实例**：重复启动时唤起既有窗口；窗口尺寸/位置跨会话自动记忆
+- **请求通道**：桌面端所有 API 请求经 Rust 侧发出（自定义 User-Agent + 无 CORS 限制），Token 与反代配置与 Web 版完全一致；**Windows 系统代理自动桥接**（双击启动无需配置环境变量，与浏览器行为一致；显式设置的 `HTTP(S)_PROXY` 环境变量优先）
+- **今日更新通知**：默认关闭；设置页开启后可配置通知范围（在看/全部）与检查间隔（15 分钟~6 小时），仅对当日新集提醒、同一天不重复；可发送测试通知验证系统权限
 
 ## 性能机制
 
@@ -120,18 +144,20 @@ npm run build   # 类型检查 + 生产构建
 3. 直连 `api.bgm.tv` 在部分网络环境超时，需系统代理或自建反代（应用内偶发瞬时失败可直接点重试）
 4. 条目/角色/人物的云端「取消收藏」端点服务端均未实现（规范已声明，实测 404），取消只能通过 bgm.tv 网页端操作；应用内为「移出本地」语义
 5. Bangumi 官方注明：修改评分/评价时收藏 `updated_at` 不刷新（官方 bug）——同步对评分/笔记/私密标记采用「非 dirty 条目无条件跟随云端」策略绕开
-6. 非本篇（SP/OP/ED/预告）单集标记为「只推不拉」：换设备后该类勾选状态不从云端回填（云端拉取仅恢复正篇记录）
+6. 桌面通知仅在 Tauri 桌面版可用（Web 浏览器无系统能力入口）；通知默认关闭，需在设置页手动开启
 
 ## 目录结构
 
 ```
-src/
+src/             # 前端应用（Web 与 Tauri 共用）
 ├── api/          # Bangumi API 客户端（TTL 缓存）+ 演示数据 + 数据源门面
 ├── components/   # AnimeCard / PosterImage（重试 + 骨架屏）
 ├── layouts/      # 侧边栏主布局
 ├── router/       # 路由（Hash 模式）
-├── stores/       # settings / library / nsfw（Pinia + localStorage）
+├── stores/       # settings / library / nsfw / sync（Pinia + localStorage）
 ├── types/        # Bangumi 接口类型定义
-├── utils/        # storage 工具
+├── utils/        # storage / cache / tauri 检测 / 桌面通知
 └── views/        # Today / Calendar / Discover / Search / Library / Detail / Settings 等
+src-tauri/       # Tauri 2 桌面壳（Rust + 窗口/打包/插件配置）
+e2e/             # Playwright E2E 冒烟用例（演示模式主链路）
 ```

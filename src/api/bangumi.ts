@@ -1,6 +1,7 @@
 import { useSettingsStore } from '../stores/settings'
 import { createTtlCache } from '../utils/cache'
 import { idbGet, idbSet, idbClear } from '../utils/idbCache'
+import { desktopUserAgent, isTauri } from '../utils/tauri'
 import type {
   BangumiMe,
   CalendarDay,
@@ -88,13 +89,30 @@ function baseUrl(): string {
   return (s.apiBaseUrl || DEFAULT_BASE).replace(/\/+$/, '')
 }
 
+/** T2 桌面端请求通道：惰性加载 tauri-plugin-http（动态 import，Web 构建产物不含此模块）。
+ *  请求经 Rust 侧发出——可注入自定义 User-Agent（浏览器属 Forbidden header 不可设），
+ *  且不受 CORS 限制（legacy /calendar 预检限制、OAuth 跨域隐患均消失） */
+type TauriFetch = (input: string, init?: RequestInit) => Promise<Response>
+let tauriFetchImpl: TauriFetch | null = null
+async function ensureTauriFetch(): Promise<TauriFetch> {
+  tauriFetchImpl ??= (await import('@tauri-apps/plugin-http')).fetch as TauriFetch
+  return tauriFetchImpl
+}
+
 async function doFetch<T>(path: string, init: RequestInit | undefined, token: string | undefined): Promise<T> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
     ...(init?.headers as Record<string, string> | undefined),
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  const res = await fetch(baseUrl() + path, { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  const requestInit: RequestInit = { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) }
+  let res: Response
+  if (isTauri()) {
+    headers['User-Agent'] = desktopUserAgent()
+    res = await (await ensureTauriFetch())(baseUrl() + path, requestInit)
+  } else {
+    res = await fetch(baseUrl() + path, requestInit)
+  }
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status} ${res.statusText}`)
   // 204 或空响应体（部分写接口返回 200 + 空 body）均视为无内容
   const text = await res.text()
@@ -201,10 +219,11 @@ export const bangumiApi = {
   getEpisodeMark(episodeId: number): Promise<{ type?: EpisodeMarkType }> {
     return request<{ type?: EpisodeMarkType }>(`/v0/users/-/collections/-/episodes/${episodeId}`)
   },
-  /** F1 拉取条目的云端单集收藏状态（正篇 type=0；limit≤1000 一页覆盖常规正篇集数） */
+  /** F1 拉取条目的云端单集收藏状态。T5 起不再带 episode_type=0 过滤（一次取全类型），
+   *  正篇/非本篇的分流在客户端按 episode.type 完成（两段 sort 空间重叠，必须按类型分桶） */
   async userSubjectEpisodes(subjectId: number): Promise<UserEpisodeCollection[]> {
     const res = await request<Paged<UserEpisodeCollection>>(
-      `/v0/users/-/collections/${subjectId}/episodes?episode_type=0&limit=1000&offset=0`,
+      `/v0/users/-/collections/${subjectId}/episodes?limit=1000&offset=0`,
     )
     return res.data ?? []
   },

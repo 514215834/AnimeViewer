@@ -1,0 +1,4 @@
+# Rust 构建产物
+/target/
+# Tauri 生成目录（schema / 平台工程）
+/gen/

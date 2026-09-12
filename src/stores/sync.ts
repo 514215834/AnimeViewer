@@ -4,7 +4,7 @@ import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from './library'
 import type { WatchStatus } from './library'
 import { useSettingsStore } from './settings'
-import type { BangumiMe, EpisodeMarkType, UserProfile, UserSubjectCollection } from '../types/bangumi'
+import type { BangumiMe, EpisodeMarkType, UserProfile, UserEpisodeCollection, UserSubjectCollection } from '../types/bangumi'
 import { loadJson, saveJson } from '../utils/storage'
 
 const LAST_SYNC_KEY = 'animeviewer:sync:lastAt'
@@ -33,6 +33,28 @@ export async function pool<T>(items: T[], concurrency: number, worker: (item: T)
     }
   })
   await Promise.all(runners)
+}
+
+/** T5 云端单集记录分流合并：收藏 type=2 的记录里，正篇（episode.type=0）sort → watchedEps，
+ *  非本篇（1=SP 2=OP 3=ED 4=预告）按类型写 watchedSpecial 复合桶——两段 sort 空间重叠，
+ *  必须按类型分桶（H3 修复语义的延伸），换设备后非本篇勾选状态亦可恢复。返回是否有变化 */
+function applyCloudEpisodeRecords(
+  library: ReturnType<typeof useLibraryStore>,
+  subjectId: number,
+  items: UserEpisodeCollection[],
+): boolean {
+  const mainSorts: number[] = []
+  const special: Record<string, number[]> = {}
+  for (const x of items) {
+    if (x.type !== 2) continue
+    const t = x.episode.type
+    if (t === 0) mainSorts.push(x.episode.sort)
+    else if (t >= 1 && t <= 4) (special[t] ??= []).push(x.episode.sort)
+  }
+  let changed = false
+  if (mainSorts.length && library.applyCloudEpisodes(subjectId, mainSorts)) changed = true
+  if (Object.keys(special).length && library.applyCloudSpecialEpisodes(subjectId, special)) changed = true
+  return changed
 }
 
 export interface SyncResult {
@@ -288,14 +310,11 @@ export const useSyncStore = defineStore('sync', {
                 : undefined
             await bangumiApi.upsertCollection(entry.subjectId, LOCAL_TO_SERVER[entry.status], review)
             // F4 防线：本地零进度（新加追/重新加追）时先回读云端单集状态并入，避免整表 PATCH 清空另一设备的进度。
-            // H3 修复：仅取正篇（episode.type=0）——云端 SP 标记的 sort 与正篇重叠，并入会误标正篇进度
+            // T5：正篇/非本篇按类型分流（含 SP 等复合桶恢复）
             if (entry.epsTotal > 0 && !(entry.watchedEps?.length ?? 0)) {
               try {
                 const items = await bangumiApi.userSubjectEpisodes(entry.subjectId)
-                const sorts = items
-                  .filter((x) => x.type === 2 && x.episode.type === 0)
-                  .map((x) => x.episode.sort)
-                if (sorts.length) library.applyCloudEpisodes(entry.subjectId, sorts)
+                applyCloudEpisodeRecords(library, entry.subjectId, items)
               } catch {
                 /* 回读失败按本地空进度继续推送 */
               }
@@ -339,11 +358,8 @@ export const useSyncStore = defineStore('sync', {
         await pool(pullable, 2, async (entry) => {
           try {
             const items = await bangumiApi.userSubjectEpisodes(entry.subjectId)
-            // H3 修复：仅合并正篇记录——云端 SP 标记的 sort 与正篇空间重叠，无过滤会误标正篇第 1 话
-            const sorts = items
-              .filter((x) => x.type === 2 && x.episode.type === 0)
-              .map((x) => x.episode.sort)
-            if (sorts.length && library.applyCloudEpisodes(entry.subjectId, sorts)) epPulled++
+            // T5：正篇与非本篇（SP/OP/ED/预告）按类型分流合并——换设备后非本篇勾选状态亦可恢复
+            if (applyCloudEpisodeRecords(library, entry.subjectId, items)) epPulled++
           } catch {
             /* 单集拉取失败不阻塞主流程 */
           }

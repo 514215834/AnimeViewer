@@ -20,3 +20,10 @@ tsconfig.tsbuildinfo
 # 本地工具与调试临时文件
 .zcode/
 .tmp_*.json
+
+# T4 E2E 产物与报告
+test-results/
+playwright-report/
+
+# 桌面端构建产物留存目录（从 target/release 拷贝，target/ 为可重建的构建缓存）
+release/

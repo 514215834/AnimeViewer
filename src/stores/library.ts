@@ -316,6 +316,27 @@ export const useLibraryStore = defineStore('library', {
       this.persist()
       return true
     },
+    /** T5 云端非本篇单集状态合并：payload 中出现的类型桶（EpType→sorts）整体覆盖本地，
+     *  云端无记录的桶保留本地（与 applyCloudEpisodes 的「有记录才覆盖」语义一致）；返回是否有变化 */
+    applyCloudSpecialEpisodes(id: number, special: Record<string, number[]>): boolean {
+      const e = this.activeItems[String(id)]
+      if (!e) return false
+      const next: Record<string, number[]> = { ...(e.watchedSpecial ?? {}) }
+      let changed = false
+      for (const [k, sorts] of Object.entries(special)) {
+        const merged = [...new Set(sorts)].sort((a, b) => a - b)
+        const prev = next[k]
+        if (!prev || prev.length !== merged.length || prev.some((v, i) => v !== merged[i])) {
+          next[k] = merged
+          changed = true
+        }
+      }
+      if (!changed) return false
+      if (Object.keys(next).length) e.watchedSpecial = next
+      else delete e.watchedSpecial
+      this.persist()
+      return true
+    },
     /** 合并云端收藏：本地无则创建；本地有未推送改动时按 dirtyAt 与远端 updated_at 做条目级新者合并（E2），否则服务端较新时覆盖。
      *  F6：rate/comment/private 属「轻量字段」——规范明示修改评分/评价时 updated_at 不刷新（官方 bug），
      *  条目级新旧比对不可靠，故对非 dirty 条目无条件跟随云端（dirty 条目保留本地值待推送） */

@@ -186,6 +186,40 @@ describe('F1 云端单集合并 applyCloudEpisodes', () => {
   })
 })
 
+describe('T5 云端非本篇单集回填 applyCloudSpecialEpisodes', () => {
+  it('云端出现的类型桶整体覆盖本地，未提及的桶保留', () => {
+    const lib = useLibraryStore()
+    lib.add({ subjectId: 100, name: 'A', nameCn: '甲', epsTotal: 12 })
+    lib.markSpecialEpisodeLocal(100, 1, 1, true) // 本地 SP 1
+    lib.markSpecialEpisodeLocal(100, 3, 2, true) // 本地 ED 2
+    // 另一设备云端：SP 1/2 已看；payload 未提 ED 桶 → 保留本地
+    expect(lib.applyCloudSpecialEpisodes(100, { '1': [1, 2] })).toBe(true)
+    expect(lib.entry(100)?.watchedSpecial).toEqual({ '1': [1, 2], '3': [2] })
+  })
+
+  it('云端与本地一致时返回 false；正篇 watchedEps/进度不受影响', () => {
+    const lib = useLibraryStore()
+    lib.add({ subjectId: 100, name: 'A', nameCn: '甲', epsTotal: 12 })
+    lib.setProgress(100, 2)
+    lib.markSpecialEpisodeLocal(100, 1, 1, true)
+    expect(lib.applyCloudSpecialEpisodes(100, { '1': [1] })).toBe(false)
+    expect(lib.entry(100)?.watchedEps).toEqual([1, 2])
+    expect(lib.entry(100)?.progress).toBe(2)
+  })
+
+  it('乱序/重复的云端 sorts 去重排序后并入', () => {
+    const lib = useLibraryStore()
+    lib.add({ subjectId: 100, name: 'A', nameCn: '甲', epsTotal: 12 })
+    expect(lib.applyCloudSpecialEpisodes(100, { '2': [3, 1, 1] })).toBe(true)
+    expect(lib.entry(100)?.watchedSpecial).toEqual({ '2': [1, 3] })
+  })
+
+  it('缺失条目返回 false，不抛错', () => {
+    const lib = useLibraryStore()
+    expect(lib.applyCloudSpecialEpisodes(404, { '1': [1] })).toBe(false)
+  })
+})
+
 describe('导入兼容', () => {
   it('importEntries 校验、去重并解除墓碑', () => {
     const lib = useLibraryStore()

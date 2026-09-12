@@ -35,6 +35,10 @@ describe('settings 持久化', () => {
     expect(s.imageQuality).toBe('extreme')
     expect(s.oauthClientId).toBe('')
     expect(s.hideNsfw).toBe(true)
+    // T3 桌面通知默认关闭（2026-09-12 评审决议：默认不通知）
+    expect(s.desktopNotifyEnabled).toBe(false)
+    expect(s.desktopNotifyScope).toBe('doing')
+    expect(s.desktopNotifyIntervalMin).toBe(60)
   })
 
   it('applyPatch 写状态并落盘，重建 store 后读回（模拟刷新）', () => {

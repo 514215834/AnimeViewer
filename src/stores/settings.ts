@@ -5,6 +5,8 @@ export type DataSource = 'online' | 'demo'
 export type ThemeMode = 'dark' | 'light'
 /** 图片清晰度：极致=400px 高清=200px 省流=150px（lain 封面仅支持 200/400 两档缩放 + 150px common） */
 export type ImageQuality = 'extreme' | 'high' | 'saver'
+/** T3 桌面通知范围：doing=仅「在看」条目，all=全部追番库（评审决议：全可配置化） */
+export type NotifyScope = 'doing' | 'all'
 
 export interface SettingsState {
   theme: ThemeMode
@@ -19,6 +21,11 @@ export interface SettingsState {
   oauthClientId: string
   oauthClientSecret: string
   refreshToken: string
+  /** T3 桌面端「今日更新」系统通知（Tauri 打包版专属；默认关闭——2026-09-12 评审决议） */
+  desktopNotifyEnabled: boolean
+  desktopNotifyScope: NotifyScope
+  /** 通知检查间隔（分钟） */
+  desktopNotifyIntervalMin: number
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -38,6 +45,9 @@ export const DEFAULT_SETTINGS: SettingsState = {
   oauthClientId: '',
   oauthClientSecret: '',
   refreshToken: '',
+  desktopNotifyEnabled: false,
+  desktopNotifyScope: 'doing',
+  desktopNotifyIntervalMin: 60,
 }
 
 export const useSettingsStore = defineStore('settings', {
