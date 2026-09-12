@@ -1,4 +1,4 @@
-/* ═══ v0.10 U1 设计令牌 ═══
+/* ═══ 设计令牌 ═══
    命名约定：--av-*。暗色为默认（:root），亮色经 html.light 覆盖；
    App.vue 监听 settings.theme 同步切换 class，与 naive-ui themeOverrides 同源对齐 */
 :root {
@@ -26,10 +26,27 @@
   /* 阴影 / 圆角 */
   --av-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28);
   --av-shadow-md: 0 8px 20px rgba(0, 0, 0, 0.36);
+  --av-shadow-lg: 0 14px 30px rgba(0, 0, 0, 0.5);
   --av-shadow-primary: 0 8px 20px rgba(138, 123, 255, 0.28);
   --av-radius-sm: 6px;
   --av-radius: 10px;
   --av-radius-lg: 14px;
+
+  /* ═══ v0.12 B1/B4/B5/B6 氛围与质感 ═══ */
+  /* 环境光（body 氛围层两束光 + 点阵纹理色） */
+  --av-glow-1: rgba(138, 123, 255, 0.15);
+  --av-glow-2: rgba(96, 165, 250, 0.07);
+  --av-dot: rgba(255, 255, 255, 0.02);
+  /* hover 主色描边光环（卡片 / 信息行通用） */
+  --av-ring: rgba(138, 123, 255, 0.45);
+  /* 渐变表面 + 内侧高光（统计卡 / 信息行 / 面板盒） */
+  --av-surface-grad: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.022));
+  --av-card-shadow: 0 6px 18px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  /* 品牌徽章 / 进度线渐变 */
+  --av-badge-grad: linear-gradient(135deg, #9d8fff, #7466ea);
+  --av-progress-grad: linear-gradient(90deg, #a092ff, #7466ea);
+  /* 详情 Hero 背板压暗层（自透明渐入页面底色） */
+  --av-hero-shade: linear-gradient(180deg, rgba(16, 16, 20, 0.25), rgba(16, 16, 20, 0.62) 62%, rgba(16, 16, 20, 0.96));
 }
 
 html.light {
@@ -43,7 +60,16 @@ html.light {
   --av-scrollbar: rgba(0, 0, 0, 0.25);
   --av-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
   --av-shadow-md: 0 8px 20px rgba(0, 0, 0, 0.12);
+  --av-shadow-lg: 0 14px 30px rgba(30, 30, 80, 0.18);
   --av-shadow-primary: 0 8px 20px rgba(138, 123, 255, 0.2);
+  /* B8：亮色氛围（浅光晕 / 白卡浅投影 / Hero 提亮压暗层） */
+  --av-glow-1: rgba(138, 123, 255, 0.12);
+  --av-glow-2: rgba(96, 165, 250, 0.08);
+  --av-dot: rgba(20, 20, 50, 0.035);
+  --av-ring: rgba(138, 123, 255, 0.35);
+  --av-surface-grad: linear-gradient(180deg, #ffffff, #fdfdff);
+  --av-card-shadow: 0 2px 10px rgba(30, 30, 80, 0.06);
+  --av-hero-shade: linear-gradient(180deg, rgba(244, 244, 249, 0.3), rgba(244, 244, 249, 0.78) 62%, rgba(244, 244, 249, 0.98));
 }
 
 * {
@@ -61,6 +87,49 @@ body {
   /* 系统字体栈：不引入 webfont（体积/离线考虑），中文回退补全 */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
   overflow: hidden;
+  /* ═══ v0.12 B1 全局氛围层 ═══
+     左上主色环境光 + 右上淡蓝辅助光 + 极淡点阵纹理，全 CSS 合成零图片；
+     布局容器（.n-layout）透明化让基底透出（见下方布局透明规则）。
+     注意：不用 background-attachment: fixed——body 自身不滚动（滚动发生在内层容器），
+     fixed 在 Windows 显示缩放/浏览器缩放 ≠100% 时会触发 Chromium 固定背景错位/接缝 */
+  background-image:
+    radial-gradient(860px 440px at 14% -8%, var(--av-glow-1), transparent 62%),
+    radial-gradient(660px 380px at 86% -6%, var(--av-glow-2), transparent 60%),
+    radial-gradient(var(--av-dot) 1px, transparent 1.4px);
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-size: auto, auto, 26px 26px;
+}
+
+html.light body {
+  background-color: #f4f4f9;
+}
+
+/* 布局容器透明化：氛围层铺满全窗（侧边栏自身为半透明渐变，见下） */
+.n-layout,
+.n-layout-scroll-container {
+  background: transparent !important;
+}
+
+/* B2 侧边栏半透明渐变（暗色透出氛围光；亮色为白玻璃） */
+.n-layout-sider {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015)) !important;
+}
+
+html.light .n-layout-sider {
+  background: rgba(255, 255, 255, 0.75) !important;
+}
+
+/* ═══ v0.12 B7 细节一致性 ═══ */
+::selection {
+  background: rgba(138, 123, 255, 0.35);
+}
+
+/* 键盘焦点环：原生 button/a 补齐（naive 组件自带焦点态，排除 .n-button 避免双环） */
+a:focus-visible,
+button:not(.n-button):focus-visible {
+  outline: 2px solid var(--av-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* 数字场景（评分/计数/进度）等宽数字，避免跳动 */
@@ -83,22 +152,22 @@ body {
   background: transparent;
 }
 
+/* ═══ v0.12 B3 页面标题体系 ═══ */
 .page-head {
   margin-bottom: 14px;
 }
 
 .page-head h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
+  margin: 0 0 5px;
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* v0.10 U2：页面标题图标与文字对齐（各视图 h2 前的 NIcon） */
-.page-head h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .page-head h2 .n-icon {
   color: var(--av-primary);
   font-size: 22px;
@@ -186,6 +255,17 @@ body {
 .card-grid > *:nth-child(11) { animation-delay: 0.24s; }
 .card-grid > *:nth-child(n + 12) { animation-delay: 0.26s; }
 
+/* v0.12 B2 数据源标签呼吸点 */
+@keyframes av-breath {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 /* 动效降级：偏好减弱动态效果时全部关闭（覆盖组件内 scoped transition 需提升权重） */
 @media (prefers-reduced-motion: reduce) {
   .page-enter-active,
@@ -200,5 +280,9 @@ body {
   .anime-card,
   .anime-card .poster-frame {
     transition: none !important;
+  }
+
+  .source-dot {
+    animation: none !important;
   }
 }

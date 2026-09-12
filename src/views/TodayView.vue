@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NIcon, NTag } from 'naive-ui'
-import { HomeOutline, PlayOutline } from '@vicons/ionicons5'
+import { ChevronForwardOutline, HomeOutline, PlayOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useNsfwStore } from '../stores/nsfw'
 import { useSettingsStore } from '../stores/settings'
@@ -10,6 +10,7 @@ import { useLibraryStore } from '../stores/library'
 import type { WatchStatus } from '../stores/library'
 import type { CalendarDay, CalendarSubject } from '../types/bangumi'
 import { coverCardUrl } from '../utils/image'
+import { listBindings } from '../utils/mediaStore'
 import PosterImage from '../components/PosterImage.vue'
 import EmptyHint from '../components/EmptyHint.vue'
 
@@ -93,6 +94,32 @@ const continueItems = computed(() =>
     .sort((a, b) => (b.dirtyAt ?? b.addedAt) - (a.dirtyAt ?? a.addedAt))
     .slice(0, 8),
 )
+
+/** v0.13 PL3 继续观看纳入本地播放：取「第一个已绑定且未看过」的集作为直达播放目标
+ *  （比 progress+1 更稳：支持乱序绑定；无已绑定未看集则不显示按钮） */
+const localPlaySort = ref(new Map<number, number>())
+watch(
+  continueItems,
+  async (items) => {
+    const next = new Map<number, number>()
+    for (const e of items) {
+      const bindings = await listBindings(e.subjectId)
+      if (!bindings.length) continue
+      const watched = new Set(e.watchedEps ?? [])
+      const target = bindings
+        .map((b) => b.sort)
+        .sort((a, b) => a - b)
+        .find((s) => !watched.has(s) && (e.epsTotal > 0 ? s <= e.epsTotal : true))
+      if (target) next.set(e.subjectId, target)
+    }
+    localPlaySort.value = next
+  },
+  { immediate: true },
+)
+
+function playLocal(subjectId: number, sort: number) {
+  void router.push({ name: 'watch', query: { subject: String(subjectId), sort: String(sort) } })
+}
 
 /** 追番概览（纯本地统计） */
 const stats = computed(() => {
@@ -205,7 +232,7 @@ function continueWatch(id: number) {
               进度 {{ it.progress }}{{ it.epsTotal > 0 ? ` / ${it.epsTotal}` : '' }} 话 · {{ nextEpText(it) }}
             </div>
           </div>
-          <span class="row-arrow">›</span>
+          <span class="row-arrow"><NIcon :component="ChevronForwardOutline" /></span>
         </div>
       </template>
       <EmptyHint v-else-if="!loading" text="今天没有追番更新" sub="看看本周其他日子 ↓" />
@@ -214,7 +241,7 @@ function continueWatch(id: number) {
       <template v-if="!todayItems.length && weekGroups.length">
         <div v-for="g in weekGroups" :key="g.id" class="week-group">
           <div class="week-day">
-            {{ g.cn }}
+            <span class="week-chip" :class="{ today: g.id === todayId }">{{ g.cn }}</span>
             <NTag v-if="g.id === todayId" size="tiny" type="primary" :bordered="false" round>今天</NTag>
           </div>
           <div class="week-items">
@@ -237,7 +264,17 @@ function continueWatch(id: number) {
               {{ e.progress > 0 ? `上次看到第 ${e.progress}${e.epsTotal > 0 ? ` / ${e.epsTotal}` : ''} 话` : '尚未开始观看' }}
             </div>
           </div>
-          <NButton size="tiny" type="primary" secondary @click.stop="continueWatch(e.subjectId)"><span class="btn-icon-row"><NIcon :component="PlayOutline" size="12" />继续</span></NButton>
+          <NButton
+            v-if="localPlaySort.get(e.subjectId)"
+            size="tiny"
+            round
+            type="primary"
+            :title="`播放第 ${localPlaySort.get(e.subjectId)} 话`"
+            @click.stop="playLocal(e.subjectId, localPlaySort.get(e.subjectId)!)"
+          >
+            <span class="btn-icon-row"><NIcon :component="PlayOutline" size="12" />播放</span>
+          </NButton>
+          <NButton size="tiny" round type="primary" secondary @click.stop="continueWatch(e.subjectId)"><span class="btn-icon-row"><NIcon :component="PlayOutline" size="12" />继续</span></NButton>
         </div>
     </section>
 
@@ -264,7 +301,7 @@ function continueWatch(id: number) {
   flex-wrap: wrap;
 }
 
-/* 追番概览统计 */
+/* ── v0.12 B4 追番概览统计：令牌化渐变表面 ── */
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
@@ -273,33 +310,53 @@ function continueWatch(id: number) {
 }
 
 .stat-card {
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(128, 128, 128, 0.18);
-  background: rgba(128, 128, 128, 0.06);
+  position: relative;
+  padding: 15px 16px 13px;
+  border-radius: var(--av-radius-lg);
+  border: 1px solid var(--av-border);
+  background: var(--av-surface-grad);
+  box-shadow: var(--av-card-shadow);
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--av-ring);
 }
 
 .stat-num {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
 }
 
 .stat-label {
   font-size: 12px;
-  opacity: 0.6;
-  margin-top: 2px;
+  color: var(--av-text-secondary);
+  margin-top: 3px;
 }
 
 .today-section {
   margin-bottom: 26px;
 }
 
+/* B4 区块标题：主色短线锚点 */
 .section-title {
   font-size: 16px;
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
+  font-weight: 700;
+}
+
+.section-title::before {
+  content: '';
+  width: 4px;
+  height: 15px;
+  border-radius: 3px;
+  background: var(--av-progress-grad);
+  box-shadow: 0 0 8px rgba(138, 123, 255, 0.6);
 }
 
 .today-row {
@@ -308,7 +365,9 @@ function continueWatch(id: number) {
   gap: 14px;
   padding: 10px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(128, 128, 128, 0.18);
+  border: 1px solid var(--av-border);
+  background: var(--av-surface-grad);
+  box-shadow: var(--av-card-shadow);
   margin-bottom: 10px;
   cursor: pointer;
   transition: transform 0.15s ease, border-color 0.15s ease;
@@ -316,7 +375,7 @@ function continueWatch(id: number) {
 
 .today-row:hover {
   transform: translateY(-2px);
-  border-color: rgba(138, 123, 255, 0.55);
+  border-color: var(--av-ring);
 }
 
 .today-row.compact {
@@ -326,6 +385,11 @@ function continueWatch(id: number) {
 .row-poster {
   width: 56px;
   flex-shrink: 0;
+}
+
+/* 行内小海报统一 8px 圆角（列表行密度适配） */
+.row-poster :deep(.poster-frame) {
+  border-radius: 8px;
 }
 
 .row-info {
@@ -344,13 +408,29 @@ function continueWatch(id: number) {
 
 .row-sub {
   font-size: 12px;
-  opacity: 0.6;
+  color: var(--av-text-secondary);
   margin-top: 3px;
 }
 
+/* B4 圆形 chevron：hover 主色化并右移 */
 .row-arrow {
-  font-size: 22px;
-  opacity: 0.35;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--av-surface);
+  color: var(--av-text-tertiary);
+  font-size: 14px;
+  transition: transform 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.today-row:hover .row-arrow {
+  transform: translateX(2px);
+  color: var(--av-primary-hover);
+  background: var(--av-primary-soft);
 }
 
 .week-group {
@@ -358,17 +438,35 @@ function continueWatch(id: number) {
   align-items: baseline;
   gap: 12px;
   padding: 8px 4px;
-  border-bottom: 1px dashed rgba(128, 128, 128, 0.2);
+  border-bottom: 1px dashed var(--av-border);
 }
 
+/* B4 星期名胶囊化：今天主色高亮 */
 .week-day {
   font-size: 13px;
-  font-weight: 700;
-  width: 52px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.week-chip {
+  font-size: 11.5px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--av-surface);
+  color: var(--av-text-secondary);
+  white-space: nowrap;
+}
+
+.week-chip.today {
+  background: var(--av-primary-soft-strong);
+  color: #cfc7ff;
+  font-weight: 700;
+}
+
+html.light .week-chip.today {
+  color: #5b4fd6;
 }
 
 .week-items {
@@ -383,13 +481,13 @@ function continueWatch(id: number) {
 }
 
 .week-item:hover {
-  color: #8a7bff;
+  color: var(--av-primary-hover);
 }
 
 .week-item em {
   font-style: normal;
   font-size: 11px;
-  opacity: 0.5;
+  color: var(--av-text-tertiary);
   margin-left: 4px;
 }
 </style>

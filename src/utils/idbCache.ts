@@ -74,6 +74,42 @@ export async function idbSet(key: string, value: unknown): Promise<void> {
   }
 }
 
+export interface IdbStats {
+  count: number
+  /** 估算体积：按序列化后的 UTF-16 字符数 ×2 字节（与结构化克隆实际占用有偏差，仅作展示参考） */
+  bytes: number
+}
+
+/** 遍历 store 统计条目数与估算体积，供设置页缓存管理展示；失败静默返回 0 */
+export async function idbStats(): Promise<IdbStats> {
+  try {
+    const db = await openDb()
+    if (!db) return { count: 0, bytes: 0 }
+    return await new Promise<IdbStats>((resolve) => {
+      const tx = db.transaction(STORE, 'readonly')
+      const req = tx.objectStore(STORE).openCursor()
+      const stats: IdbStats = { count: 0, bytes: 0 }
+      req.onsuccess = () => {
+        const cursor = req.result
+        if (!cursor) {
+          resolve(stats)
+          return
+        }
+        stats.count += 1
+        try {
+          stats.bytes += (JSON.stringify(cursor.value)?.length ?? 0) * 2
+        } catch {
+          // 序列化失败（如含循环引用的不可能值）跳过体积不计
+        }
+        cursor.continue()
+      }
+      req.onerror = () => resolve({ count: 0, bytes: 0 })
+    })
+  } catch {
+    return { count: 0, bytes: 0 }
+  }
+}
+
 export async function idbClear(): Promise<void> {
   try {
     const db = await openDb()

@@ -20,3 +20,7 @@ tsconfig.tsbuildinfo
 # 本地工具与调试临时文件
 .zcode/
 .tmp_*.json
+
+# Tauri 构建产物残留（v1.0 桌面化时重建工程）
+release/
+src-tauri/

@@ -82,7 +82,7 @@ onMounted(async () => {
   max-width: 92vw;
   padding: 26px 28px;
   border-radius: 12px;
-  border: 1px solid rgba(128, 128, 128, 0.25);
+  border: 1px solid var(--av-border);
   display: flex;
   flex-direction: column;
   gap: 14px;

@@ -113,11 +113,12 @@ function onMenuSelectMobile(key: string) {
           <NTag
             v-if="!collapsed"
             size="small"
+            round
             :type="settings.isDemo ? 'warning' : 'success'"
             :bordered="false"
             class="source-tag"
           >
-            {{ settings.isDemo ? '演示数据' : '在线 API' }}
+            <span class="source-dot" />{{ settings.isDemo ? '演示数据' : '在线 API' }}
           </NTag>
         </div>
       </div>
@@ -162,8 +163,8 @@ function onMenuSelectMobile(key: string) {
       <div class="sider-inner">
         <NMenu :value="activeKey" :options="menuOptions" :indent="20" @update:value="onMenuSelectMobile" />
         <div class="sider-footer">
-          <NTag size="small" :type="settings.isDemo ? 'warning' : 'success'" :bordered="false" class="source-tag">
-            {{ settings.isDemo ? '演示数据' : '在线 API' }}
+          <NTag size="small" round :type="settings.isDemo ? 'warning' : 'success'" :bordered="false" class="source-tag">
+            <span class="source-dot" />{{ settings.isDemo ? '演示数据' : '在线 API' }}
           </NTag>
         </div>
       </div>
@@ -197,12 +198,72 @@ function onMenuSelectMobile(key: string) {
   letter-spacing: 0.3px;
 }
 
+/* 菜单激活态：渐变底 + 左侧发光指示条 + 白字（覆盖 naive 默认主色底） */
+.sider-inner :deep(.n-menu .n-menu-item-content) {
+  border-radius: 10px;
+}
+
+.sider-inner :deep(.n-menu .n-menu-item-content--selected) {
+  position: relative;
+  background: linear-gradient(90deg, rgba(138, 123, 255, 0.22), rgba(138, 123, 255, 0.07)) !important;
+}
+
+.sider-inner :deep(.n-menu .n-menu-item-content--selected::before) {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--av-progress-grad);
+  box-shadow: 0 0 10px rgba(138, 123, 255, 0.8);
+}
+
+.sider-inner :deep(.n-menu .n-menu-item-content--selected .n-menu-item-content-header),
+.sider-inner :deep(.n-menu .n-menu-item-content--selected .n-menu-item-content-header a) {
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.sider-inner :deep(.n-menu .n-menu-item-content--selected .n-icon) {
+  color: #fff;
+}
+
+html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected) {
+  background: linear-gradient(90deg, rgba(138, 123, 255, 0.18), rgba(138, 123, 255, 0.05)) !important;
+}
+
+html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-menu-item-content-header),
+html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-menu-item-content-header a) {
+  color: #5b4fd6 !important;
+}
+
+html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-icon) {
+  color: #5b4fd6;
+}
+
 .sider-footer {
   margin-top: auto;
   padding: 14px 16px 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  border-top: 1px solid var(--av-border);
+}
+
+/* v0.12 B2 数据源标签呼吸点（动效尊重 prefers-reduced-motion，降级规则在 styles.css） */
+.source-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 5px;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+  vertical-align: middle;
+  animation: av-breath 2.4s ease-in-out infinite;
 }
 
 .footer-row {

@@ -19,6 +19,12 @@ const nsfw = useNsfwStore()
 const settings = useSettingsStore()
 const library = useLibraryStore()
 
+/** v0.12 B5 在追进度线：有总话数的条目返回进度比值（0~1），未开始/无总话数返回 0 不渲染 */
+function progressRatio(id: number): number {
+  const e = library.entry(id)
+  return e && e.epsTotal > 0 ? Math.min(e.progress / e.epsTotal, 1) : 0
+}
+
 const days = ref<CalendarDay[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -128,6 +134,7 @@ function open(id: number) {
               :score="it.rating?.score"
               :extra="airText(it)"
               :in-library="library.has(it.id)"
+              :progress-ratio="progressRatio(it.id)"
               @open="open"
             />
           </div>

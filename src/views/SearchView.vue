@@ -524,7 +524,7 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
   margin-bottom: 12px;
   padding: 12px 14px;
   border-radius: 8px;
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--av-surface-hover);
 }
 
 .adv-row {
@@ -559,7 +559,7 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
   margin-bottom: 10px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--av-surface-hover);
 }
 
 .bar-label {

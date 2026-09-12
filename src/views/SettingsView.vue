@@ -8,25 +8,31 @@ import {
   NFormItem,
   NIcon,
   NInput,
+  NPopconfirm,
   NRadioButton,
   NRadioGroup,
   NSelect,
   NSwitch,
 } from 'naive-ui'
-import { SettingsOutline } from '@vicons/ionicons5'
+import { SettingsOutline, TrashOutline } from '@vicons/ionicons5'
 import { DEFAULT_SETTINGS, useSettingsStore } from '../stores/settings'
 import type { ImageQuality, SettingsState } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
+import { useNsfwStore } from '../stores/nsfw'
 import { useSyncStore } from '../stores/sync'
 import { applyImageMirror } from '../utils/image'
 import { bangumiApi, ApiError, clearApiCache } from '../api/bangumi'
+import { idbClear, idbStats } from '../utils/idbCache'
+import type { IdbStats } from '../utils/idbCache'
 import { clearErrLog, formatDiagnostics, readErrLog } from '../utils/errlog'
 import type { ErrLogEntry } from '../utils/errlog'
+import { exportMedia, importMedia } from '../utils/mediaStore'
 
 const message = useMessage()
 const settings = useSettingsStore()
 const library = useLibraryStore()
 const sync = useSyncStore()
+const nsfw = useNsfwStore()
 
 /** 预置反代选项（可下拉选择，也可直接输入自定义地址——NSelect tag 模式支持创建） */
 const API_BASE_OPTIONS = [
@@ -140,6 +146,35 @@ function clearErrors() {
   message.info('已清空错误日志')
 }
 
+/* ── v0.11 缓存管理：持久层统计 + 一键清除（内存层刷新页面即清，这里连带清掉当前会话） ── */
+const cacheStats = ref<IdbStats | null>(null)
+const clearingCache = ref(false)
+
+async function refreshCacheStats() {
+  cacheStats.value = await idbStats()
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
+async function clearCaches() {
+  if (clearingCache.value) return
+  clearingCache.value = true
+  try {
+    clearApiCache() // 内存层 11 个 TTL 缓存 + fire-and-forget 持久层清理
+    nsfw.flags = {} // R18 探测结果与会话状态一并复位，下次进入重新探测
+    nsfw.restored = false
+    await idbClear() // 显式等待持久层清空，确保下方统计读到清空后的值
+    await refreshCacheStats()
+    message.success('缓存已清除，浏览时将按需重新加载')
+  } finally {
+    clearingCache.value = false
+  }
+}
+
 /** E5 资料卡：优先取云端资料，回退到同步缓存的 me */
 const profile = computed(() => {
   if (sync.profile) return sync.profile
@@ -163,6 +198,7 @@ const profileAvatar = computed(() => {
 
 onMounted(() => {
   void sync.ensureProfile()
+  void refreshCacheStats()
 })
 
 function save() {
@@ -180,12 +216,15 @@ function reset() {
   message.info('已恢复默认设置')
 }
 
-function exportLibrary() {
+async function exportLibrary() {
+  // v0.13 PL4：附带媒体绑定与播放进度（可选段；句柄不导出，恢复后播放时引导重选文件）
+  const media = await exportMedia()
   const payload = {
     app: 'animeviewer',
     version: 1,
     exportedAt: new Date().toISOString(),
     entries: library.list,
+    ...(media.bindings.length || media.positions.length ? { media } : {}),
   }
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
@@ -194,7 +233,7 @@ function exportLibrary() {
   a.download = `animeviewer-library-${new Date().toISOString().slice(0, 10)}.json`
   a.click()
   URL.revokeObjectURL(url)
-  message.success(`已导出 ${library.count} 条收藏`)
+  message.success(`已导出 ${library.count} 条收藏${media.bindings.length ? ` · ${media.bindings.length} 条播放绑定` : ''}`)
 }
 
 async function onImportFile(ev: Event) {
@@ -207,7 +246,13 @@ async function onImportFile(ev: Event) {
     const entries = Array.isArray(parsed) ? parsed : (parsed as { entries?: unknown[] })?.entries
     if (!Array.isArray(entries)) throw new Error('文件格式不正确，需要 animeviewer 导出的 JSON')
     const res = library.importEntries(entries)
-    message.success(`导入完成：新增 ${res.added} 条，跳过重复/无效 ${res.skipped} 条`)
+    let mediaNote = ''
+    const mediaSection = (parsed as { media?: unknown }).media
+    if (mediaSection && typeof mediaSection === 'object') {
+      const r = await importMedia(mediaSection as Parameters<typeof importMedia>[0])
+      mediaNote = ` · 媒体绑定 +${r.bindingsAdded} · 播放进度 +${r.positionsMerged}`
+    }
+    message.success(`导入完成：新增 ${res.added} 条，跳过重复/无效 ${res.skipped} 条${mediaNote}`)
   } catch (e) {
     message.error(e instanceof Error ? `导入失败：${e.message}` : '导入失败')
   } finally {
@@ -350,6 +395,29 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
+        <NFormItem label="缓存管理（详情/子资源/R18 探测的离线缓存，不影响收藏与设置数据）">
+          <div class="cache-box">
+            <div class="cache-meta">
+              <span>
+                IndexedDB 持久缓存：{{ cacheStats ? `${cacheStats.count} 条 · 约 ${formatBytes(cacheStats.bytes)}` : '统计中…' }}
+              </span>
+              <span>清除后下次浏览相同条目会重新请求；追番记录、评分笔记与各项设置不受影响</span>
+            </div>
+            <div class="btn-row">
+              <NButton secondary size="small" @click="refreshCacheStats">刷新统计</NButton>
+              <NPopconfirm @positive-click="clearCaches">
+                <template #trigger>
+                  <NButton quaternary type="error" size="small" :loading="clearingCache">
+                    <template #icon><NIcon :component="TrashOutline" /></template>
+                    清除缓存
+                  </NButton>
+                </template>
+                清空内存与 IndexedDB 中的接口缓存？追番记录和设置不会丢失。
+              </NPopconfirm>
+            </div>
+          </div>
+        </NFormItem>
+
         <NFormItem label="诊断信息（仅存本地，不含 Token；遇到异常可复制后反馈）">
           <div class="diag-box">
             <div class="diag-meta">
@@ -388,7 +456,7 @@ async function onImportFile(ev: Event) {
   max-width: 620px;
   padding: 22px 24px;
   border-radius: 12px;
-  border: 1px solid rgba(128, 128, 128, 0.22);
+  border: 1px solid var(--av-border);
 }
 
 .btn-row {
@@ -426,7 +494,7 @@ async function onImportFile(ev: Event) {
   padding: 10px 12px;
   margin-bottom: 10px;
   border-radius: 10px;
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--av-surface-hover);
 }
 
 .profile-avatar {
@@ -444,7 +512,7 @@ async function onImportFile(ev: Event) {
   font-size: 22px;
   font-weight: 700;
   color: #fff;
-  background: linear-gradient(135deg, #8a7bff, #5d4fd8);
+  background: linear-gradient(135deg, var(--av-primary), #5d4fd8);
 }
 
 .profile-info {
@@ -475,7 +543,7 @@ async function onImportFile(ev: Event) {
 
 .profile-link {
   font-size: 12px;
-  color: #8a7bff;
+  color: var(--av-primary);
   text-decoration: none;
   flex-shrink: 0;
 }
@@ -512,7 +580,7 @@ async function onImportFile(ev: Event) {
 .sync-logs {
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(128, 128, 128, 0.1);
+  background: var(--av-surface-hover);
   font-family: Consolas, monospace;
   font-size: 12px;
   line-height: 1.7;
@@ -524,6 +592,22 @@ async function onImportFile(ev: Event) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* v0.11 缓存管理 */
+.cache-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cache-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  opacity: 0.7;
 }
 
 /* H4 诊断面板 */
@@ -545,7 +629,7 @@ async function onImportFile(ev: Event) {
 .diag-logs {
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(128, 128, 128, 0.1);
+  background: var(--av-surface-hover);
   font-family: Consolas, monospace;
   font-size: 12px;
   line-height: 1.7;

@@ -136,7 +136,15 @@ onBeforeUnmount(() => {
 .poster-skeleton {
   position: absolute;
   inset: 0;
-  background: linear-gradient(100deg, rgba(128, 128, 128, 0.1) 40%, rgba(128, 128, 128, 0.22) 50%, rgba(128, 128, 128, 0.1) 60%);
+  /* v0.12 B7：扫光升级——灰底上主色细亮带扫过 */
+  background: linear-gradient(
+    100deg,
+    rgba(128, 128, 128, 0.1) 35%,
+    rgba(138, 123, 255, 0.1) 48%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(138, 123, 255, 0.1) 52%,
+    rgba(128, 128, 128, 0.1) 65%
+  );
   background-size: 200% 100%;
   animation: poster-shimmer 1.4s ease infinite;
 }

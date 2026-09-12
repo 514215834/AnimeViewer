@@ -260,7 +260,7 @@ function actorImg(images?: CharacterPerson['images']): string {
 }
 
 .actor-card:hover .actor-name {
-  color: #8a7bff;
+  color: var(--av-primary);
 }
 
 .actor-avatar {

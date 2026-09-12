@@ -44,6 +44,11 @@ const sortOptions = [
 
 const statusText: Record<WatchStatus, string> = { wish: '想看', doing: '在看', done: '看完' }
 
+/** v0.12 B5 在追进度线（纯展示）：有总话数时返回进度比值 0~1 */
+function progressRatio(e: { progress: number; epsTotal: number }): number {
+  return e.epsTotal > 0 ? Math.min(e.progress / e.epsTotal, 1) : 0
+}
+
 /** 库内标签池（按出现次数取前 15） */
 const tagPool = computed(() => {
   const count = new Map<string, number>()
@@ -189,6 +194,12 @@ function removePerson(id: number, title: string) {
             :title="e.nameCn || e.name"
             :subject-id="e.subjectId"
           />
+          <span
+            v-if="progressRatio(e) > 0"
+            class="lib-progress"
+            :style="{ width: `${progressRatio(e) * 100}%` }"
+            aria-hidden="true"
+          />
         </div>
         <div class="lib-info">
           <div class="lib-title-row">
@@ -332,7 +343,7 @@ function removePerson(id: number, title: string) {
   gap: 12px;
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid rgba(128, 128, 128, 0.22);
+  border: 1px solid var(--av-border);
   content-visibility: auto;
   contain-intrinsic-size: auto 120px;
 }
@@ -363,7 +374,7 @@ function removePerson(id: number, title: string) {
 }
 
 .char-lib-name:hover {
-  color: #8a7bff;
+  color: var(--av-primary);
 }
 
 .char-lib-pending {
@@ -386,7 +397,7 @@ function removePerson(id: number, title: string) {
 .lib-mine {
   font-size: 11px;
   font-weight: 600;
-  color: #8a7bff;
+  color: var(--av-primary);
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -437,16 +448,33 @@ function removePerson(id: number, title: string) {
   display: flex;
   gap: 12px;
   padding: 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: var(--av-radius);
+  border: 1px solid var(--av-border);
+  /* v0.12 B4/B7：令牌化渐变表面 */
+  background: var(--av-surface-grad);
+  box-shadow: var(--av-card-shadow);
   content-visibility: auto;
   contain-intrinsic-size: auto 130px;
 }
 
 .lib-poster {
+  position: relative;
   width: 90px;
   flex-shrink: 0;
   cursor: pointer;
+}
+
+/* v0.12 B5 在追进度线：3px 主色渐变 + 光晕 */
+.lib-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  max-width: 100%;
+  border-radius: 0 0 0 var(--av-radius);
+  background: var(--av-progress-grad);
+  box-shadow: 0 0 8px rgba(138, 123, 255, 0.7);
+  pointer-events: none;
 }
 
 .lib-info {
@@ -475,7 +503,7 @@ function removePerson(id: number, title: string) {
 }
 
 .lib-title:hover {
-  color: #8a7bff;
+  color: var(--av-primary);
 }
 
 .lib-score {

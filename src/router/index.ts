@@ -22,6 +22,8 @@ const router = createRouter({
       ],
     },
     { path: '/oauth-callback', name: 'oauth-callback', component: () => import('../views/OAuthCallbackView.vue') },
+    // v0.13 PL1 沉浸播放页：置于 MainLayout 之外（无侧边栏），query: subject / sort
+    { path: '/watch', name: 'watch', component: () => import('../views/WatchView.vue'), meta: { title: '播放' } },
     { path: '/:pathMatch(.*)*', redirect: '/today' },
   ],
 })

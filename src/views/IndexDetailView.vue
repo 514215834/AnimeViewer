@@ -168,7 +168,7 @@ function open(id: number) {
 
 .index-link {
   font-size: 13px;
-  color: #8a7bff;
+  color: var(--av-primary);
   text-decoration: none;
 }
 

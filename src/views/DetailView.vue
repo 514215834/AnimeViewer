@@ -26,6 +26,7 @@ import {
   AddOutline,
   CreateOutline,
   MicOutline,
+  PlayOutline,
 } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from '../stores/library'
@@ -33,9 +34,12 @@ import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
 import type { WatchStatus } from '../stores/library'
 import { charAvatarUrl, coverCardUrl, upgradeStoredCover } from '../utils/image'
+import { listBindings } from '../utils/mediaStore'
+import type { MediaBinding } from '../utils/mediaCore'
 import type { Episode, RelatedSubject, SubjectCharacter, SubjectDetail, SubjectPerson } from '../types/bangumi'
 import PosterImage from '../components/PosterImage.vue'
 import EmptyHint from '../components/EmptyHint.vue'
+import MediaBindModal from '../components/MediaBindModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -53,6 +57,14 @@ const revealed = ref(false)
 const blockedByNsfw = computed(
   () => !!subject.value?.nsfw && settings.hideNsfw && !revealed.value,
 )
+
+/** v0.12 B6 Hero 背板：与主海报同源大图（放大/模糊/饱和由 CSS 完成），无图时仅占位底色 */
+const heroBackdropStyle = computed(() => {
+  const src = subject.value
+    ? upgradeStoredCover(subject.value.images?.large || subject.value.images?.common, settings.imageQuality)
+    : ''
+  return src ? { backgroundImage: `url("${src}")` } : undefined
+})
 
 const activeTab = ref('info')
 const characters = ref<SubjectCharacter[] | null>(null)
@@ -107,6 +119,31 @@ const epKeyword = ref('')
 /** 2026-09-09 实测：列表响应已携带 comment/duration/desc 等全字段，抽屉直接读列表数据，无需单独请求 */
 const drawerEp = ref<Episode | null>(null)
 const showEpDrawer = ref(false)
+
+/* ── v0.13 PL2/PL3 本地播放绑定 ── */
+const showMediaModal = ref(false)
+const mediaDefaultSort = ref(1)
+/** sort → 绑定（剧集 Tab 行内播放按钮渲染依据） */
+const boundMap = ref(new Map<number, MediaBinding>())
+
+async function refreshBindings() {
+  const list = await listBindings(id.value)
+  boundMap.value = new Map(list.map((b) => [b.sort, b]))
+}
+
+function openMediaModal(sort?: number) {
+  mediaDefaultSort.value = sort ?? mainEpisodes.value.find((e) => !boundMap.value.has(e.sort))?.sort ?? 1
+  showMediaModal.value = true
+}
+
+function playEp(sort: number) {
+  void router.push({ name: 'watch', query: { subject: String(id.value), sort: String(sort) } })
+}
+
+// 剧集 Tab 激活 / 条目切换时刷新绑定状态
+watch([id, activeTab], ([, tab]) => {
+  if (tab === 'eps') void refreshBindings()
+})
 
 function openEpDetail(ep: Episode) {
   drawerEp.value = ep
@@ -371,110 +408,116 @@ onBeforeUnmount(() => {
           </template>
         </NResult>
         <template v-else>
-        <div class="detail-head">
-          <div class="detail-poster">
-            <PosterImage
-              :src="upgradeStoredCover(subject.images?.large || subject.images?.common, settings.imageQuality)"
-              :title="subject.name_cn || subject.name"
-              :subject-id="subject.id"
-            />
-          </div>
-          <div class="detail-meta">
-            <h2 class="detail-title">{{ subject.name_cn || subject.name }}</h2>
-            <div v-if="subject.name_cn && subject.name" class="detail-sub">{{ subject.name }}</div>
-
-            <div class="rate-row">
-              <NRate :value="(subject.rating?.score ?? 0) / 2" allow-half readonly size="small" color="#ffd75e" />
-              <span class="rate-num">{{ subject.rating?.score?.toFixed(1) ?? '—' }}</span>
-              <span class="rate-total">{{ subject.rating?.total ?? 0 }} 人评分</span>
-            </div>
-
-            <div class="fact-row">
-              <NTag v-if="subject.total_episodes" size="small" :bordered="false">
-                共 {{ subject.total_episodes }} 话
-              </NTag>
-              <NTag v-if="subject.date" size="small" :bordered="false">开播 {{ subject.date }}</NTag>
-              <NTag v-if="subject.platform" size="small" :bordered="false">{{ subject.platform }}</NTag>
-            </div>
-
-            <div v-if="subject.tags?.length" class="tag-row">
-              <NTag
-                v-for="t in subject.tags.slice(0, 10)"
-                :key="t.name"
-                size="small"
-                round
-                type="info"
-                ghost
-                class="tag-clickable"
-                :title="`点击搜索标签「${t.name}」`"
-                @click="router.push({ name: 'search', query: { tag: t.name } })"
-              >
-                {{ t.name }} · {{ t.count }}
-              </NTag>
-            </div>
-
-            <div class="action-box">
-              <template v-if="!inLibrary">
-                <NButton type="primary" @click="add"><span class="btn-icon-row"><NIcon :component="AddOutline" size="15" />加入追番</span></NButton>
-              </template>
-              <template v-else-if="entry">
-                <NSelect
-                  size="small"
-                  :value="entry.status"
-                  :options="statusOptions"
-                  style="width: 110px"
-                  @update:value="(v: WatchStatus) => library.setStatus(entry!.subjectId, v)"
-                />
-                <NInputNumber
-                  size="small"
-                  :value="entry.progress"
-                  :min="0"
-                  :max="entry.epsTotal > 0 ? entry.epsTotal : 9999"
-                  style="width: 130px"
-                  @update:value="(v: number | null) => library.setProgress(entry!.subjectId, v ?? 0)"
-                />
-                <span class="progress-text">/ {{ entry.epsTotal > 0 ? entry.epsTotal : '?' }} 话</span>
-                <NButton size="small" quaternary type="error" @click="remove">移除</NButton>
-              </template>
-            </div>
-
-            <!-- F6 我的评分与笔记（追番库内条目）：本地即时保存，随同步推送 Bangumi 收藏评价 -->
-            <div v-if="entry" class="my-review">
-              <div class="my-review-head">
-                <span class="my-review-title"><NIcon :component="CreateOutline" size="15" />我的评分与笔记</span>
-                <label class="my-review-private">
-                  <NSwitch
-                    size="small"
-                    :value="entry.privateFlag ?? false"
-                    @update:value="(v: boolean) => setReview({ isPrivate: v })"
-                  />
-                  私密（仅自己可见）
-                </label>
-              </div>
-              <div class="my-review-rate">
-                <NRate
-                  allow-half
-                  :value="(entry.myRate ?? 0) / 2"
-                  size="medium"
-                  color="#ffd75e"
-                  @update:value="(v: number) => setReview({ rate: Math.round(v * 2) })"
-                />
-                <span v-if="entry.myRate" class="my-review-num">{{ entry.myRate }}/10</span>
-                <span v-else class="my-review-hint">点击评分</span>
-                <NButton v-if="entry.myRate" size="tiny" quaternary @click="setReview({ rate: 0 })">清除</NButton>
-              </div>
-              <NInput
-                type="textarea"
-                :value="entry.myComment ?? ''"
-                placeholder="写点笔记/短评（同步到 Bangumi 收藏评价，勾选私密后仅自己可见）"
-                :autosize="{ minRows: 2, maxRows: 6 }"
-                @update:value="onCommentInput"
+        <!-- v0.12 B6 Hero 头部：海报放大模糊饱和作背板 + 渐变压暗融入页面，前景海报浮起（R18 门控在本层之外整体生效） -->
+        <div class="detail-hero">
+          <div class="hero-backdrop" :style="heroBackdropStyle" aria-hidden="true" />
+          <div class="hero-shade" aria-hidden="true" />
+          <div class="hero-inner">
+            <div class="detail-poster">
+              <PosterImage
+                :src="upgradeStoredCover(subject.images?.large || subject.images?.common, settings.imageQuality)"
+                :title="subject.name_cn || subject.name"
+                :subject-id="subject.id"
               />
+            </div>
+            <div class="detail-meta">
+              <h2 class="detail-title">{{ subject.name_cn || subject.name }}</h2>
+              <div v-if="subject.name_cn && subject.name" class="detail-sub">{{ subject.name }}</div>
+
+              <div class="rate-row">
+                <NRate :value="(subject.rating?.score ?? 0) / 2" allow-half readonly size="small" color="#ffd75e" />
+                <span class="rate-num">{{ subject.rating?.score?.toFixed(1) ?? '—' }}</span>
+                <span class="rate-total">{{ subject.rating?.total ?? 0 }} 人评分</span>
+              </div>
+
+              <div class="fact-row">
+                <NTag v-if="subject.total_episodes" size="small" round :bordered="false">
+                  共 {{ subject.total_episodes }} 话
+                </NTag>
+                <NTag v-if="subject.date" size="small" round :bordered="false">开播 {{ subject.date }}</NTag>
+                <NTag v-if="subject.platform" size="small" round :bordered="false">{{ subject.platform }}</NTag>
+              </div>
+
+              <div v-if="subject.tags?.length" class="tag-row">
+                <NTag
+                  v-for="t in subject.tags.slice(0, 10)"
+                  :key="t.name"
+                  size="small"
+                  round
+                  type="info"
+                  ghost
+                  class="tag-clickable"
+                  :title="`点击搜索标签「${t.name}」`"
+                  @click="router.push({ name: 'search', query: { tag: t.name } })"
+                >
+                  {{ t.name }} · {{ t.count }}
+                </NTag>
+              </div>
+
+              <div class="action-box">
+                <template v-if="!inLibrary">
+                  <NButton round type="primary" @click="add"><span class="btn-icon-row"><NIcon :component="AddOutline" size="15" />加入追番</span></NButton>
+                </template>
+                <template v-else-if="entry">
+                  <NSelect
+                    size="small"
+                    :value="entry.status"
+                    :options="statusOptions"
+                    style="width: 110px"
+                    @update:value="(v: WatchStatus) => library.setStatus(entry!.subjectId, v)"
+                  />
+                  <NInputNumber
+                    size="small"
+                    :value="entry.progress"
+                    :min="0"
+                    :max="entry.epsTotal > 0 ? entry.epsTotal : 9999"
+                    style="width: 130px"
+                    @update:value="(v: number | null) => library.setProgress(entry!.subjectId, v ?? 0)"
+                  />
+                  <span class="progress-text">/ {{ entry.epsTotal > 0 ? entry.epsTotal : '?' }} 话</span>
+                  <NButton size="small" round quaternary type="error" @click="remove">移除</NButton>
+                </template>
+              </div>
+
+              <!-- F6 我的评分与笔记（追番库内条目）：本地即时保存，随同步推送 Bangumi 收藏评价 -->
+              <div v-if="entry" class="my-review">
+                <div class="my-review-head">
+                  <span class="my-review-title"><NIcon :component="CreateOutline" size="15" />我的评分与笔记</span>
+                  <label class="my-review-private">
+                    <NSwitch
+                      size="small"
+                      :value="entry.privateFlag ?? false"
+                      @update:value="(v: boolean) => setReview({ isPrivate: v })"
+                    />
+                    私密（仅自己可见）
+                  </label>
+                </div>
+                <div class="my-review-rate">
+                  <NRate
+                    allow-half
+                    :value="(entry.myRate ?? 0) / 2"
+                    size="medium"
+                    color="#ffd75e"
+                    @update:value="(v: number) => setReview({ rate: Math.round(v * 2) })"
+                  />
+                  <span v-if="entry.myRate" class="my-review-num">{{ entry.myRate }}/10</span>
+                  <span v-else class="my-review-hint">点击评分</span>
+                  <NButton v-if="entry.myRate" size="tiny" quaternary @click="setReview({ rate: 0 })">清除</NButton>
+                </div>
+                <NInput
+                  type="textarea"
+                  :value="entry.myComment ?? ''"
+                  placeholder="写点笔记/短评（同步到 Bangumi 收藏评价，勾选私密后仅自己可见）"
+                  :autosize="{ minRows: 2, maxRows: 6 }"
+                  @update:value="onCommentInput"
+                />
+              </div>
             </div>
           </div>
         </div>
 
-        <NTabs v-model:value="activeTab" type="line" style="margin-top: 18px" animated>
+        <!-- v0.12 B6：详情 Tabs 改分段胶囊形态 -->
+        <NTabs v-model:value="activeTab" type="segment" style="margin-top: 18px" animated>
           <NTabPane name="info" tab="简介">
             <NDescriptions v-if="infoboxRows.length" :column="2" bordered size="small" style="margin-bottom: 18px">
               <NDescriptionsItem v-for="row in infoboxRows" :key="row.key" :label="row.key">
@@ -606,6 +649,10 @@ onBeforeUnmount(() => {
             </template>
             <template v-else>
               <div class="eps-tools">
+                <!-- v0.13 PL2 本地播放入口 -->
+                <NButton size="tiny" secondary type="primary" @click="openMediaModal()">
+                  <span class="btn-icon-row"><NIcon :component="PlayOutline" size="12" />本地播放</span>
+                </NButton>
                 <NButton size="tiny" secondary @click="markAllEps(true)">全部看过</NButton>
                 <NButton size="tiny" secondary @click="markAllEps(false)">清空</NButton>
                 <NButton size="tiny" type="primary" secondary @click="enterImmersive">▶ 沉浸观剧</NButton>
@@ -654,6 +701,17 @@ onBeforeUnmount(() => {
                     <span class="ep-sort">{{ ep.type === 0 ? `第 ${ep.sort} 话` : `${EP_TYPE_LABELS[ep.type] ?? '其他'} ${ep.sort}` }}</span>
                     <span class="ep-name" :title="ep.name_cn || ep.name">{{ ep.name_cn || ep.name }}</span>
                     <span v-if="ep.airdate" class="ep-date">{{ ep.airdate }}</span>
+                    <!-- v0.13：已绑定本机文件的集显示行内播放 -->
+                    <NButton
+                      v-if="boundMap.has(ep.sort)"
+                      size="tiny"
+                      quaternary
+                      class="ep-play"
+                      title="播放本集"
+                      @click.stop="playEp(ep.sort)"
+                    >
+                      <template #icon><NIcon :component="PlayOutline" size="14" /></template>
+                    </NButton>
                   </div>
                 </div>
               </NSpin>
@@ -681,24 +739,101 @@ onBeforeUnmount(() => {
           <div class="epd-label">章节简介</div>
           <p v-if="drawerEp.desc" class="epd-desc">{{ drawerEp.desc }}</p>
           <EmptyHint v-else text="暂无章节简介" />
+          <!-- v0.13 本地播放：已绑定直接播放，未绑定进入绑定弹窗（预选本集） -->
+          <div class="epd-local-actions">
+            <NButton v-if="boundMap.has(drawerEp.sort)" type="primary" secondary block @click="playEp(drawerEp.sort)">
+              <span class="btn-icon-row"><NIcon :component="PlayOutline" size="14" />播放本集</span>
+            </NButton>
+            <NButton quaternary block size="small" @click="openMediaModal(drawerEp.sort)">
+              {{ boundMap.has(drawerEp.sort) ? '更换绑定' : '绑定本地视频' }}
+            </NButton>
+          </div>
           <NButton type="primary" secondary block @click="openEpCommentPage">
             去 bgm.tv 查看 {{ drawerEp.comment ?? 0 }} 条吐槽 ↗
           </NButton>
         </template>
       </NDrawerContent>
     </NDrawer>
+
+    <!-- v0.13 PL2 本地播放绑定弹窗 -->
+    <MediaBindModal
+      v-model:show="showMediaModal"
+      :subject-id="id"
+      :episodes="mainEpisodes"
+      :default-sort="mediaDefaultSort"
+      @changed="refreshBindings"
+      @play="playEp"
+    />
   </div>
 </template>
 
 <style scoped>
-.detail-head {
+/* ═══ v0.12 B6 详情页 Hero 头部 ═══ */
+.detail-hero {
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--av-border);
+}
+
+/* 海报放大模糊饱和背板（与主海报同源；无图时退化为占位底色） */
+.hero-backdrop {
+  position: absolute;
+  inset: -70px;
+  background-size: cover;
+  background-position: center 20%;
+  filter: blur(46px) saturate(1.25);
+  opacity: 0.34;
+  background-color: var(--av-img-placeholder);
+}
+
+html.light .hero-backdrop {
+  opacity: 0.22;
+}
+
+/* 渐变压暗：背板向下融入页面底色（亮/暗两套令牌，styles.css） */
+.hero-shade {
+  position: absolute;
+  inset: 0;
+  background: var(--av-hero-shade);
+}
+
+.hero-inner {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 22px;
+  padding: 26px 28px;
 }
 
 .detail-poster {
-  width: 210px;
+  width: 200px;
   flex-shrink: 0;
+}
+
+/* 前景海报浮起：描边 + 大投影 */
+.detail-poster :deep(.poster-frame) {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: var(--av-shadow-lg);
+}
+
+html.light .detail-poster :deep(.poster-frame) {
+  border-color: rgba(20, 20, 50, 0.12);
+}
+
+/* B6：segment Tabs 精修（分段胶囊，激活位主色渐变） */
+:deep(.n-tabs--segment-type .n-tabs-rail) {
+  border-radius: 10px;
+  padding: 4px;
+}
+
+:deep(.n-tabs--segment-type .n-tabs-tab) {
+  border-radius: 8px;
+}
+
+:deep(.n-tabs--segment-type .n-tabs-tab--active) {
+  background: linear-gradient(135deg, rgba(138, 123, 255, 0.4), rgba(138, 123, 255, 0.16)) !important;
 }
 
 .detail-meta {
@@ -707,32 +842,36 @@ onBeforeUnmount(() => {
 }
 
 .detail-title {
-  margin: 0 0 6px;
-  font-size: 24px;
+  margin: 2px 0 6px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
 }
 
 .detail-sub {
   font-size: 13px;
-  opacity: 0.55;
-  margin-bottom: 12px;
+  color: var(--av-text-tertiary);
+  margin-bottom: 14px;
 }
 
 .rate-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
+/* 大号金色评分 */
 .rate-num {
-  font-size: 16px;
-  font-weight: 700;
-  color: #ffd75e;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--av-gold);
+  text-shadow: 0 0 18px rgba(255, 215, 94, 0.35);
 }
 
 .rate-total {
   font-size: 12px;
-  opacity: 0.5;
+  color: var(--av-text-tertiary);
 }
 
 .fact-row,
@@ -748,8 +887,8 @@ onBeforeUnmount(() => {
 }
 
 .tag-clickable:hover {
-  color: #8a7bff;
-  border-color: #8a7bff;
+  color: var(--av-primary-hover);
+  border-color: var(--av-primary-hover);
 }
 
 .action-box {
@@ -764,8 +903,9 @@ onBeforeUnmount(() => {
   margin-top: 14px;
   padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid rgba(128, 128, 128, 0.22);
-  background: rgba(128, 128, 128, 0.06);
+  border: 1px solid var(--av-border);
+  background: var(--av-surface-grad);
+  box-shadow: var(--av-card-shadow);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -881,7 +1021,7 @@ onBeforeUnmount(() => {
 
 .char-card-link:hover .char-name,
 .staff-link:hover .staff-name {
-  color: #8a7bff;
+  color: var(--av-primary-hover);
 }
 
 .person-link {
@@ -889,7 +1029,7 @@ onBeforeUnmount(() => {
 }
 
 .person-link:hover {
-  color: #8a7bff;
+  color: var(--av-primary-hover);
   text-decoration: underline;
 }
 
@@ -907,14 +1047,14 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 34px 20px;
   border-radius: 12px;
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--av-surface-grad);
   text-align: center;
 }
 
 .immersive-sort {
   font-size: 13px;
   font-weight: 700;
-  color: #8a7bff;
+  color: var(--av-primary);
   letter-spacing: 1px;
 }
 
@@ -1066,7 +1206,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 8px 6px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+  border-bottom: 1px solid var(--av-border);
 }
 
 .ep-row.watched .ep-name,
@@ -1096,6 +1236,20 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+/* v0.13 行内播放按钮 */
+.ep-play {
+  flex-shrink: 0;
+  color: var(--av-primary-hover);
+}
+
+/* v0.13 单集抽屉本地播放操作区 */
+.epd-local-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 /* G1 章节类型分组 chips */
 .ep-type-tabs {
   display: flex;
@@ -1106,7 +1260,7 @@ onBeforeUnmount(() => {
 
 .ep-type-chip {
   cursor: pointer;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  border: 1px solid var(--av-border);
   background: transparent;
   color: inherit;
   border-radius: 999px;
@@ -1115,12 +1269,13 @@ onBeforeUnmount(() => {
 }
 
 .ep-type-chip:hover {
-  border-color: #8a7bff;
+  border-color: var(--av-primary);
 }
 
 .ep-type-chip.active {
-  border-color: #8a7bff;
-  color: #8a7bff;
+  border-color: var(--av-primary);
+  color: var(--av-primary-hover);
+  background: var(--av-primary-soft);
 }
 
 /* G2/G3 章节行可点击进抽屉 */
@@ -1129,7 +1284,7 @@ onBeforeUnmount(() => {
 }
 
 .ep-row:hover {
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--av-surface-hover);
 }
 
 /* 单集详情抽屉 */
@@ -1157,11 +1312,12 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
 }
 
-/* v0.10 P4：小屏详情头部纵排（海报上、信息下），标题缩号 */
+/* v0.10 P4 / v0.12 B6：小屏 Hero 纵排（海报上、信息下），标题缩号、内边距收窄 */
 @media (max-width: 768px) {
-  .detail-head {
+  .hero-inner {
     flex-direction: column;
     gap: 14px;
+    padding: 18px 16px;
   }
 
   .detail-poster {
