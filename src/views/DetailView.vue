@@ -36,6 +36,7 @@ import type { WatchStatus } from '../stores/library'
 import { charAvatarUrl, coverCardUrl, upgradeStoredCover } from '../utils/image'
 import { listBindings } from '../utils/mediaStore'
 import type { MediaBinding } from '../utils/mediaCore'
+import { mediaService, type SvcSubjectFile } from '../api/mediaService'
 import type { Episode, RelatedSubject, SubjectCharacter, SubjectDetail, SubjectPerson } from '../types/bangumi'
 import PosterImage from '../components/PosterImage.vue'
 import EmptyHint from '../components/EmptyHint.vue'
@@ -126,6 +127,23 @@ const mediaDefaultSort = ref(1)
 /** sort → 绑定（剧集 Tab 行内播放按钮渲染依据） */
 const boundMap = ref(new Map<number, MediaBinding>())
 
+/* ── v0.14 S5 媒体服务绑定：sort → 服务文件（本机绑定优先，服务源兜底显示） ── */
+const svcFiles = ref(new Map<number, SvcSubjectFile>())
+const svcLoaded = ref(false)
+
+async function refreshSvcFiles() {
+  svcLoaded.value = false
+  svcFiles.value = new Map()
+  if (!settings.svcEnabled) return
+  try {
+    const list = await mediaService.subjectFiles(id.value)
+    svcFiles.value = new Map(list.map((f) => [f.sort, f]))
+    svcLoaded.value = true
+  } catch {
+    // 服务不可达：静默降级为无服务按钮（不干扰本机播放功能）
+  }
+}
+
 async function refreshBindings() {
   const list = await listBindings(id.value)
   boundMap.value = new Map(list.map((b) => [b.sort, b]))
@@ -140,9 +158,27 @@ function playEp(sort: number) {
   void router.push({ name: 'watch', query: { subject: String(id.value), sort: String(sort) } })
 }
 
+/** v0.14 服务媒体库播放（?file= 服务文件 ID） */
+function playServiceEp(sort: number) {
+  const f = svcFiles.value.get(sort)
+  if (!f) return
+  void router.push({
+    name: 'watch',
+    query: { subject: String(id.value), sort: String(sort), file: String(f.fileId) },
+  })
+}
+
+/** 媒体库未收录本条目时的引导（服务已配置、已加载完成、无任何绑定文件） */
+const svcHintVisible = computed(
+  () => settings.svcEnabled && svcLoaded.value && svcFiles.value.size === 0 && mainEpisodes.value.length > 0,
+)
+
 // 剧集 Tab 激活 / 条目切换时刷新绑定状态
 watch([id, activeTab], ([, tab]) => {
-  if (tab === 'eps') void refreshBindings()
+  if (tab === 'eps') {
+    void refreshBindings()
+    void refreshSvcFiles()
+  }
 })
 
 function openEpDetail(ep: Episode) {
@@ -667,6 +703,11 @@ onBeforeUnmount(() => {
                   已看 {{ entry?.watchedEps?.length ?? 0 }} / {{ mainEpisodes.length }} 话
                 </span>
               </div>
+              <!-- v0.14：媒体库未收录本条目时的引导（服务已配置才会出现） -->
+              <div v-if="svcHintVisible" class="svc-hint">
+                <span>媒体库中未收录本条目——把视频文件放入服务扫描目录即可自动匹配</span>
+                <NButton size="tiny" quaternary type="primary" @click="router.push('/settings')">打开媒体库管理</NButton>
+              </div>
               <!-- G1 章节类型分组：进度统计仅本篇（mainEpisodes 语义不变）；H3 起非本篇行支持勾选（watchedSpecial 复合桶，不影响正篇进度） -->
               <div v-if="epTypeGroups.length > 1" class="ep-type-tabs">
                 <button
@@ -701,14 +742,24 @@ onBeforeUnmount(() => {
                     <span class="ep-sort">{{ ep.type === 0 ? `第 ${ep.sort} 话` : `${EP_TYPE_LABELS[ep.type] ?? '其他'} ${ep.sort}` }}</span>
                     <span class="ep-name" :title="ep.name_cn || ep.name">{{ ep.name_cn || ep.name }}</span>
                     <span v-if="ep.airdate" class="ep-date">{{ ep.airdate }}</span>
-                    <!-- v0.13：已绑定本机文件的集显示行内播放 -->
+                    <!-- v0.13：已绑定本机文件的集显示行内播放；v0.14：媒体服务已收录的集以服务源播放（本机优先） -->
                     <NButton
                       v-if="boundMap.has(ep.sort)"
                       size="tiny"
                       quaternary
                       class="ep-play"
-                      title="播放本集"
+                      title="播放本集（本机文件）"
                       @click.stop="playEp(ep.sort)"
+                    >
+                      <template #icon><NIcon :component="PlayOutline" size="14" /></template>
+                    </NButton>
+                    <NButton
+                      v-else-if="svcFiles.has(ep.sort)"
+                      size="tiny"
+                      quaternary
+                      class="ep-play ep-play-svc"
+                      :title="`播放本集（媒体库：${svcFiles.get(ep.sort)?.name}）`"
+                      @click.stop="playServiceEp(ep.sort)"
                     >
                       <template #icon><NIcon :component="PlayOutline" size="14" /></template>
                     </NButton>
@@ -739,10 +790,19 @@ onBeforeUnmount(() => {
           <div class="epd-label">章节简介</div>
           <p v-if="drawerEp.desc" class="epd-desc">{{ drawerEp.desc }}</p>
           <EmptyHint v-else text="暂无章节简介" />
-          <!-- v0.13 本地播放：已绑定直接播放，未绑定进入绑定弹窗（预选本集） -->
+          <!-- v0.13 本地播放：已绑定直接播放，未绑定进入绑定弹窗（预选本集）；v0.14 服务媒体库源兜底 -->
           <div class="epd-local-actions">
             <NButton v-if="boundMap.has(drawerEp.sort)" type="primary" secondary block @click="playEp(drawerEp.sort)">
               <span class="btn-icon-row"><NIcon :component="PlayOutline" size="14" />播放本集</span>
+            </NButton>
+            <NButton
+              v-else-if="svcFiles.has(drawerEp.sort)"
+              type="primary"
+              secondary
+              block
+              @click="playServiceEp(drawerEp.sort)"
+            >
+              <span class="btn-icon-row"><NIcon :component="PlayOutline" size="14" />播放本集（媒体库）</span>
             </NButton>
             <NButton quaternary block size="small" @click="openMediaModal(drawerEp.sort)">
               {{ boundMap.has(drawerEp.sort) ? '更换绑定' : '绑定本地视频' }}
@@ -1240,6 +1300,26 @@ html.light .detail-poster :deep(.poster-frame) {
 .ep-play {
   flex-shrink: 0;
   color: var(--av-primary-hover);
+}
+
+/* v0.14 服务媒体库源播放按钮（与本机源同位次，弱化区分） */
+.ep-play-svc {
+  opacity: 0.85;
+}
+
+/* v0.14 媒体库未收录引导 */
+.svc-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--av-text-tertiary);
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  border: 1px dashed var(--av-border);
+  border-radius: 10px;
 }
 
 /* v0.13 单集抽屉本地播放操作区 */

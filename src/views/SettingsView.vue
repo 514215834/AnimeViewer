@@ -14,7 +14,7 @@ import {
   NSelect,
   NSwitch,
 } from 'naive-ui'
-import { SettingsOutline, TrashOutline } from '@vicons/ionicons5'
+import { SettingsOutline, ServerOutline, TrashOutline } from '@vicons/ionicons5'
 import { DEFAULT_SETTINGS, useSettingsStore } from '../stores/settings'
 import type { ImageQuality, SettingsState } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
@@ -27,6 +27,8 @@ import type { IdbStats } from '../utils/idbCache'
 import { clearErrLog, formatDiagnostics, readErrLog } from '../utils/errlog'
 import type { ErrLogEntry } from '../utils/errlog'
 import { exportMedia, importMedia } from '../utils/mediaStore'
+import { mediaService, ServiceError, type SvcHealth, type SvcStatus } from '../api/mediaService'
+import MediaLibraryDrawer from '../components/MediaLibraryDrawer.vue'
 
 const message = useMessage()
 const settings = useSettingsStore()
@@ -109,6 +111,8 @@ function applyDraftBase() {
     oauthClientId: draft.oauthClientId.trim(),
     oauthClientSecret: draft.oauthClientSecret.trim(),
     refreshToken: draft.refreshToken.trim(),
+    svcUrl: (draft.svcUrl || '').trim().replace(/\/+$/, ''),
+    svcToken: (draft.svcToken || '').trim(),
   }
   settings.applyPatch(normalized)
   Object.assign(draft, normalized)
@@ -175,6 +179,35 @@ async function clearCaches() {
   }
 }
 
+/* ── v0.14 S5 媒体服务（AnimeViewerService）：连接测试 / 状态展示 / 媒体库管理抽屉 ── */
+const svcTesting = ref(false)
+const svcHealth = ref<SvcHealth | null>(null)
+const svcStatus = ref<SvcStatus | null>(null)
+const svcError = ref('')
+const showMediaLibrary = ref(false)
+
+async function testService(silent = false) {
+  // 测试前先把草稿中的地址/Token 落盘（媒体服务配置即时生效，与图片清晰度同策略）
+  settings.applyPatch({ svcUrl: (draft.svcUrl || '').trim().replace(/\/+$/, ''), svcToken: (draft.svcToken || '').trim() })
+  Object.assign(draft, { svcUrl: settings.svcUrl, svcToken: settings.svcToken })
+  svcTesting.value = true
+  svcError.value = ''
+  try {
+    svcHealth.value = await mediaService.health()
+    if (settings.svcEnabled) svcStatus.value = await mediaService.status()
+  } catch (e) {
+    svcHealth.value = null
+    svcStatus.value = null
+    if (!silent) svcError.value = e instanceof ServiceError ? e.message : String(e)
+  } finally {
+    svcTesting.value = false
+  }
+}
+
+function openMediaLibrary() {
+  showMediaLibrary.value = true
+}
+
 /** E5 资料卡：优先取云端资料，回退到同步缓存的 me */
 const profile = computed(() => {
   if (sync.profile) return sync.profile
@@ -199,6 +232,7 @@ const profileAvatar = computed(() => {
 onMounted(() => {
   void sync.ensureProfile()
   void refreshCacheStats()
+  if (settings.svcEnabled) void testService(true)
 })
 
 function save() {
@@ -418,6 +452,42 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
+        <NFormItem label="媒体服务（可选：AnimeViewerService 本地媒体库——自动扫描匹配、mkv 转封装播放、局域网观看）">
+          <div class="svc-box">
+            <div class="svc-grid">
+              <NInput v-model:value="draft.svcUrl" placeholder="服务地址，如 http://127.0.0.1:8787" clearable />
+              <NInput
+                v-model:value="draft.svcToken"
+                type="password"
+                show-password-on="click"
+                placeholder="配对 Token（服务首次启动时打印到控制台并写入 data/token）"
+              />
+            </div>
+            <div class="svc-status">
+              <template v-if="svcError">
+                <span class="svc-err">{{ svcError }}</span>
+              </template>
+              <template v-else-if="svcHealth">
+                <span>AnimeViewerService v{{ svcHealth.version }}</span>
+                <span>ffmpeg {{ svcHealth.ffmpeg ? '可用' : '未配置（mp4 直连可用，mkv 转封装不可用）' }}</span>
+                <span v-if="svcStatus">文件 {{ svcStatus.files }} · 已绑定 {{ svcStatus.bound }} · 待确认 {{ svcStatus.pending }}</span>
+              </template>
+              <span v-else class="svc-muted">未连接——填写地址与 Token 后点「连接测试」（配置即时生效）</span>
+            </div>
+            <div class="btn-row">
+              <NButton secondary size="small" :loading="svcTesting" @click="testService()">连接测试</NButton>
+              <NButton secondary size="small" :disabled="!settings.svcEnabled" @click="openMediaLibrary">
+                <template #icon><NIcon :component="ServerOutline" /></template>
+                媒体库管理
+              </NButton>
+            </div>
+            <div class="svc-tip">
+              服务默认地址 http://127.0.0.1:8787，默认仅本机可访问；部署与局域网开启方式见服务端 README。
+              配置后剧集 Tab 会显示媒体库已收录集的播放按钮。
+            </div>
+          </div>
+        </NFormItem>
+
         <NFormItem label="诊断信息（仅存本地，不含 Token；遇到异常可复制后反馈）">
           <div class="diag-box">
             <div class="diag-meta">
@@ -448,6 +518,9 @@ async function onImportFile(ev: Event) {
         </div>
       </NForm>
     </div>
+
+    <!-- v0.14 S5 媒体库管理抽屉（服务状态 / 扫描 / 目录 / 文件匹配） -->
+    <MediaLibraryDrawer v-model:show="showMediaLibrary" />
   </div>
 </template>
 
@@ -600,6 +673,48 @@ async function onImportFile(ev: Event) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* v0.14 S5 媒体服务 */
+.svc-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.svc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 480px) {
+  .svc-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.svc-status {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--av-text-secondary);
+}
+
+.svc-err {
+  color: var(--av-danger, #e05c5c);
+}
+
+.svc-muted {
+  opacity: 0.65;
+}
+
+.svc-tip {
+  font-size: 12px;
+  opacity: 0.55;
+  line-height: 1.6;
 }
 
 .cache-meta {

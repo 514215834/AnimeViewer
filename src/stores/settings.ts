@@ -19,6 +19,9 @@ export interface SettingsState {
   oauthClientId: string
   oauthClientSecret: string
   refreshToken: string
+  /** v0.14 本地媒体服务（AnimeViewerService）：地址与配对 Token，留空表示未启用 */
+  svcUrl: string
+  svcToken: string
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -38,6 +41,8 @@ export const DEFAULT_SETTINGS: SettingsState = {
   oauthClientId: '',
   oauthClientSecret: '',
   refreshToken: '',
+  svcUrl: '',
+  svcToken: '',
 }
 
 export const useSettingsStore = defineStore('settings', {
@@ -45,6 +50,8 @@ export const useSettingsStore = defineStore('settings', {
   state: (): SettingsState => ({ ...DEFAULT_SETTINGS, ...loadJson<Partial<SettingsState>>(STORAGE_KEY, {}) }),
   getters: {
     isDemo: (s) => s.dataSource === 'demo',
+    /** v0.14：媒体服务已配置（地址 + Token 均填写才视为启用） */
+    svcEnabled: (s) => !!s.svcUrl.trim() && !!s.svcToken.trim(),
   },
   actions: {
     persist() {
