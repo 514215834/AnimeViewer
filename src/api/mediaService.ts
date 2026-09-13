@@ -27,6 +27,9 @@ export interface SvcScanStatus {
   startedAt?: number
   finishedAt?: number
   lastError?: string
+  /** 匹配阶段进度（matchTotal=本轮待匹配数，matchDone=已处理数） */
+  matchTotal: number
+  matchDone: number
 }
 
 export interface SvcStatus {

@@ -58,16 +58,22 @@ const episodeLoading = ref(false)
 const pickedSort = ref<number | null>(null)
 const binding = ref(false)
 
-/* ── 扫描状态轮询（抽屉打开且扫描进行中时每 2s 刷新） ── */
+/* ── 扫描状态轮询（抽屉打开期间持续轮询；扫描运行中列表近实时刷新） ── */
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let refreshing = false
+/** 已「消费」过完成提示的扫描代际（startedAt）：轮询间隔可能错过整个快扫描的运行期，
+ *  以 startedAt 变化判定「有一轮扫描结束了」，对快/慢扫描都可靠；null=有扫描在途 */
+let seenFinishedScanAt: number | null | undefined = undefined
 
 const scanRunning = computed(() => !!status.value?.scan.running)
 const scanText = computed(() => {
   const s = status.value?.scan
   if (!s) return ''
   if (s.running) {
-    const phase = s.phase === 'matching' ? 'Bangumi 匹配中' : '扫描中'
-    return `${phase}：已处理 ${s.scanned} · 新增 ${s.added} · 更新 ${s.updated}${s.currentPath ? ` · ${shortPath(s.currentPath)}` : ''}`
+    if (s.phase === 'matching') {
+      return `Bangumi 匹配中 ${s.matchDone}/${s.matchTotal} · 已自动绑定 ${s.matched}${s.currentPath ? ` · 正在匹配：${shortPath(s.currentPath)}` : ''}`
+    }
+    return `扫描中：已处理 ${s.scanned} · 新增 ${s.added} · 更新 ${s.updated}${s.currentPath ? ` · ${shortPath(s.currentPath)}` : ''}`
   }
   if (s.finishedAt) {
     return `上次完成：处理 ${s.scanned} · 新增 ${s.added} · 更新 ${s.updated} · 移除 ${s.removed} · 自动绑定 ${s.matched}${s.lastError ? ` · 错误：${s.lastError}` : ''}`
@@ -119,6 +125,8 @@ async function refreshAll() {
     const [st, ds] = await Promise.all([mediaService.status(), mediaService.directories()])
     status.value = st
     dirs.value = ds
+    // 打开时有扫描在途 → seen 置 null，确保其完成时仍会触发提示；否则记录当前代际（不误报历史完成）
+    seenFinishedScanAt = st.scan.running ? null : (st.scan.startedAt ?? null)
     await refreshFiles()
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
@@ -127,7 +135,18 @@ async function refreshAll() {
   }
 }
 
+async function refreshDirs() {
+  try {
+    dirs.value = await mediaService.directories()
+  } catch {
+    /* 目录计数刷新失败静默 */
+  }
+}
+
+/** 列表增量刷新：运行中每 2s 调用，上一帧未返回则跳过本帧（防请求堆积） */
 async function refreshFiles() {
+  if (refreshing) return
+  refreshing = true
   try {
     const res = await mediaService.files({
       state: stateFilter.value || undefined,
@@ -140,6 +159,8 @@ async function refreshFiles() {
   } catch (e) {
     // 列表刷新失败不打断整体（保留状态区错误展示职责）
     message.warning(e instanceof Error ? e.message : '文件列表加载失败')
+  } finally {
+    refreshing = false
   }
 }
 
@@ -189,9 +210,21 @@ function startPolling() {
   stopPolling()
   pollTimer = setInterval(async () => {
     try {
-      status.value = await mediaService.status()
-      if (!status.value.scan.running) {
-        stopPolling()
+      const st = await mediaService.status()
+      status.value = st
+      if (!st.scan.running) {
+        // 完成判定：扫描代际（startedAt）变化 → 有一轮扫描结束（快扫描两次轮询间开始并结束也能捕获）
+        const startedAt = st.scan.startedAt ?? null
+        if (seenFinishedScanAt !== undefined && startedAt !== null && startedAt !== seenFinishedScanAt) {
+          message.success(
+            `扫描完成：处理 ${st.scan.scanned} · 新增 ${st.scan.added} · 自动绑定 ${st.scan.matched}` +
+              (st.scan.lastError ? ` · 错误：${st.scan.lastError}` : ''),
+          )
+          await Promise.all([refreshFiles(), refreshDirs()])
+        }
+        if (startedAt !== null) seenFinishedScanAt = startedAt
+      } else if (!rebindFile.value) {
+        // 运行中：文件列表近实时刷新（改绑弹窗打开时暂停，避免干扰选择）
         await refreshFiles()
       }
     } catch {
