@@ -156,7 +156,7 @@ export function buildWebdavStreamUrl(baseUrl: string, token: string, streamId: s
 
 /* ── v0.16 DN2/DN3 下载中心（类型与服务端 Dtos.java 一一对应）── */
 
-export type DownloadStatus = 'queued' | 'metadata' | 'downloading' | 'paused' | 'completed' | 'error'
+export type DownloadStatus = 'queued' | 'metadata' | 'downloading' | 'paused' | 'external' | 'completed' | 'error'
 
 export interface SvcDownloadFile {
   index: number
@@ -190,19 +190,25 @@ export interface SvcDownloadTask {
   completedAt?: number
 }
 
+export type DownloadEngineType = 'aria2-managed' | 'aria2-external' | 'qbittorrent'
+
 export interface SvcDownloadEngine {
   available: boolean
-  mode: 'managed' | 'external'
+  mode: 'managed' | 'external' | 'external-app'
   version?: string
   downloadDir?: string
   error?: string
 }
 
 export interface SvcDownloadSettings {
+  /** v0.18 引擎类型：aria2 托管 / aria2 外部 / qBittorrent 外部应用直开 */
+  engineType: DownloadEngineType
   enginePath: string
   engineUrl: string
   engineSecret: string
   rpcPort: number
+  /** qBittorrent 可执行文件完整路径（直开模式唯一配置） */
+  qbPath: string
   downloadDir: string
   maxConcurrent: number
   uploadLimit: string
@@ -315,7 +321,17 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = 10000): 
       headers: { 'X-AV-Token': svcToken, ...(init?.headers ?? {}) },
     })
     if (res.status === 401) throw new ServiceError('unauthorized', '媒体服务 Token 不正确')
-    if (res.status === 409) throw new ServiceError('busy', '扫描正在进行中')
+    if (res.status === 409) {
+      // 409 语义随端点不同（扫描进行中 / 任务已存在 / 任务已结束）——真实原因在响应体
+      let msg = '扫描正在进行中'
+      try {
+        const body = (await res.json()) as { message?: string }
+        if (body?.message) msg = body.message
+      } catch {
+        /* 非 JSON 错误体，保留默认文案 */
+      }
+      throw new ServiceError('busy', msg)
+    }
     if (!res.ok) {
       let msg = `服务错误（HTTP ${res.status}）`
       try {

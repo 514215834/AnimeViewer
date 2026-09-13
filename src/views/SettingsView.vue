@@ -217,10 +217,12 @@ const dlSaving = ref(false)
 const dlEngine = ref<SvcDownloadEngine | null>(null)
 const dlError = ref('')
 const dl = reactive({
+  engineType: 'aria2-managed' as import('../api/mediaService').DownloadEngineType,
   enginePath: 'aria2c',
   engineUrl: '',
   engineSecret: '',
   rpcPort: 16800,
+  qbPath: '',
   downloadDir: './data/downloads',
   maxConcurrent: 2,
   uploadLimit: '',
@@ -230,16 +232,27 @@ const dl = reactive({
   checkCertificate: false,
 })
 
+/** v0.18 引擎类型选项（qBittorrent = 外部应用直开，用户定案不用 WebUI） */
+const ENGINE_TYPE_OPTIONS = [
+  { label: 'aria2 · 托管拉起', value: 'aria2-managed' },
+  { label: 'aria2 · 外部实例', value: 'aria2-external' },
+  { label: 'qBittorrent · 外部应用直开', value: 'qbittorrent' },
+]
+const isQb = computed(() => dl.engineType === 'qbittorrent')
+const isAria2Managed = computed(() => dl.engineType === 'aria2-managed')
+
 async function loadDownloadSettings() {
   if (!settings.svcEnabled) return
   dlError.value = ''
   try {
     const s = await mediaService.downloadSettings()
     Object.assign(dl, {
+      engineType: s.engineType,
       enginePath: s.enginePath,
       engineUrl: s.engineUrl,
       engineSecret: s.engineSecret,
       rpcPort: s.rpcPort,
+      qbPath: s.qbPath,
       downloadDir: s.downloadDir,
       maxConcurrent: s.maxConcurrent,
       uploadLimit: s.uploadLimit,
@@ -259,10 +272,12 @@ async function saveDownloadSettings() {
   dlError.value = ''
   try {
     const s = await mediaService.saveDownloadSettings({
+      engineType: dl.engineType,
       enginePath: dl.enginePath.trim(),
       engineUrl: dl.engineUrl.trim(),
       engineSecret: dl.engineSecret.trim(),
       rpcPort: Number(dl.rpcPort) || 16800,
+      qbPath: dl.qbPath.trim(),
       downloadDir: dl.downloadDir.trim(),
       maxConcurrent: Number(dl.maxConcurrent) || 2,
       uploadLimit: dl.uploadLimit.trim(),
@@ -585,30 +600,37 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
-        <NFormItem label="BT 下载（可选：媒体服务侧 aria2 引擎——磁力下载完成后自动进入媒体库匹配播放）">
+        <NFormItem label="BT 下载（可选：aria2 引擎托管下载，或直开本机 qBittorrent 下载）">
           <div class="svc-box">
             <div class="svc-grid dl-grid">
-              <NInput v-model:value="dl.enginePath" placeholder="aria2c 可执行文件（PATH 探测；未入 PATH 填完整路径，如 G:/aria2/aria2c.exe）" clearable />
-              <NInput v-model:value="dl.engineUrl" placeholder="外部实例 RPC 地址（选填，如 http://127.0.0.1:6800/rpc；填写后优先于托管模式）" clearable />
-              <NInput
-                v-model:value="dl.engineSecret"
-                type="password"
-                show-password-on="click"
-                placeholder="外部实例 rpc-secret（选填）"
-                clearable
-              />
-              <div class="dl-row2">
-                <NInputNumber v-model:value="dl.rpcPort" :min="1" :max="65535" placeholder="RPC 端口">
+              <NSelect v-model:value="dl.engineType" :options="ENGINE_TYPE_OPTIONS" placeholder="引擎类型" />
+              <template v-if="isQb">
+                <NInput v-model:value="dl.qbPath" placeholder="qBittorrent 可执行文件完整路径（如 G:/qbittorrent/qbittorrent.exe）" clearable />
+              </template>
+              <template v-else>
+                <NInput v-if="isAria2Managed" v-model:value="dl.enginePath" placeholder="aria2c 可执行文件（PATH 探测；未入 PATH 填完整路径，如 G:/aria2/aria2c.exe）" clearable />
+                <NInput v-if="!isAria2Managed" v-model:value="dl.engineUrl" placeholder="外部实例 RPC 地址（如 http://127.0.0.1:6800/rpc）" clearable />
+                <NInput
+                  v-if="!isAria2Managed"
+                  v-model:value="dl.engineSecret"
+                  type="password"
+                  show-password-on="click"
+                  placeholder="外部实例 rpc-secret（选填）"
+                  clearable
+                />
+                <NInputNumber v-if="isAria2Managed" v-model:value="dl.rpcPort" :min="1" :max="65535" placeholder="RPC 端口">
                   <template #prefix>RPC</template>
                 </NInputNumber>
-                <NInputNumber v-model:value="dl.maxConcurrent" :min="1" :max="10" placeholder="并发任务">
-                  <template #prefix>并发</template>
-                </NInputNumber>
-                <NInputNumber v-model:value="dl.seedTimeMinutes" :min="0" :max="100000" placeholder="做种分钟">
-                  <template #prefix>做种</template>
-                </NInputNumber>
-                <NInput v-model:value="dl.uploadLimit" placeholder="上传限速（如 2M，留空不限）" clearable />
-              </div>
+                <div class="dl-row2">
+                  <NInputNumber v-model:value="dl.maxConcurrent" :min="1" :max="10" placeholder="并发任务">
+                    <template #prefix>并发</template>
+                  </NInputNumber>
+                  <NInputNumber v-model:value="dl.seedTimeMinutes" :min="0" :max="100000" placeholder="做种分钟">
+                    <template #prefix>做种</template>
+                  </NInputNumber>
+                  <NInput v-model:value="dl.uploadLimit" placeholder="上传限速（如 2M，留空不限）" clearable />
+                </div>
+              </template>
               <NInput v-model:value="dl.downloadDir" placeholder="下载目录（相对服务工作目录，默认 ./data/downloads）" />
               <NInput
                 v-model:value="dl.trackersText"
@@ -618,7 +640,7 @@ async function onImportFile(ev: Event) {
               />
               <div class="dl-switches">
                 <span class="dl-switch-item">完成后自动入库扫描 <NSwitch v-model:value="dl.autoScan" size="small" /></span>
-                <span class="dl-switch-item">aria2 证书校验 <NSwitch v-model:value="dl.checkCertificate" size="small" /></span>
+                <span v-if="!isQb" class="dl-switch-item">aria2 证书校验 <NSwitch v-model:value="dl.checkCertificate" size="small" /></span>
               </div>
             </div>
             <div class="svc-status">
@@ -627,7 +649,9 @@ async function onImportFile(ev: Event) {
               </template>
               <template v-else-if="dlEngine">
                 <span>
-                  {{ dlEngine.available ? `aria2 ${dlEngine.version ?? ''}（${dlEngine.mode === 'external' ? '外部实例' : '托管模式'}）` : '引擎不可用' }}
+                  {{ dlEngine.available
+                    ? (dlEngine.mode === 'external-app' ? 'qBittorrent 直开就绪' : `aria2 ${dlEngine.version ?? ''}（${dlEngine.mode === 'external' ? '外部实例' : '托管模式'}）`)
+                    : '引擎不可用' }}
                 </span>
                 <span v-if="dlEngine.available">目录 {{ dlEngine.downloadDir }}</span>
                 <span v-else class="svc-err">{{ dlEngine.error }}</span>
@@ -639,8 +663,9 @@ async function onImportFile(ev: Event) {
               </div>
             </div>
             <div class="svc-tip">
-              下载中心（侧边栏「下载」）粘贴磁力/种子直链即可下载；完成后自动触发媒体库增量扫描并按文件名匹配绑定，
-              剧集 Tab 随即出现播放按钮。Windows 下 aria2 建议关闭证书校验（schannel 吊销检查会导致 HTTPS tracker 握手失败）。
+              {{ isQb
+                ? 'qBittorrent 直开（用户定案，不用 WebUI）：添加磁力时服务端直接拉起本机 qBittorrent 并带上磁力参数，下载进度与文件管理全部在 qBt 内进行（本页下载中心仅保留任务台账，无进度同步）；已开着的 qBt 实例会由其单实例机制接收任务。种子直链会暂存为临时 .torrent 后拉起。'
+                : '下载中心（侧边栏「下载」）粘贴磁力/种子直链即可下载；完成后自动触发媒体库增量扫描并按文件名匹配绑定，剧集 Tab 随即出现播放按钮。Windows 下 aria2 建议关闭证书校验（schannel 吊销检查会导致 HTTPS tracker 握手失败）。' }}
             </div>
           </div>
         </NFormItem>

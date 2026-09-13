@@ -2,9 +2,12 @@
 /** v0.16 DN3 下载中心：aria2 下载引擎的前端面板。
  *  引擎状态卡（可用性/模式/版本/下载目录 + 重启）→ 添加磁力（解析预览 + 可选关联条目/集数，
  *  服务未配置时降级「一键复制磁力」）→ 任务列表（2s 轮询，进度/速度/peer 如实显示）→
- *  任务详情抽屉（文件清单勾选 select-file、删除含删文件）。 */
+ *  任务详情抽屉（文件清单勾选 select-file、删除含删文件）。
+ *  v0.18 qBittorrent 外部应用直开：添加磁力即拉起本机 qBt（无 RPC），此类任务状态定格
+ *  external（已交给下载器），列表不显示进度条/速度，暂停恢复与文件勾选被隐藏（在 qBt 中操作）。 */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  NAlert,
   NButton,
   NCheckbox,
   NDrawer,
@@ -113,9 +116,13 @@ const STATUS_TAG: Record<string, { label: string; type: 'default' | 'success' | 
   metadata: { label: '解析元数据', type: 'info' },
   downloading: { label: '下载中', type: 'success' },
   paused: { label: '已暂停', type: 'warning' },
+  external: { label: '已交给下载器', type: 'info' },
   completed: { label: '已完成', type: 'success' },
   error: { label: '失败', type: 'error' },
 }
+
+/** v0.18 当前引擎是否 qBittorrent 直开（添加弹窗文案/操作隐藏依据） */
+const externalEngine = computed(() => engine.value?.available && engine.value?.mode === 'external-app')
 
 function taskName(t: SvcDownloadTask): string {
   if (t.name) return t.name
@@ -215,7 +222,7 @@ async function submitAdd() {
       subjectNameCn: addSubject.value?.nameCn,
       episodeSort: addSort.value ?? undefined,
     })
-    message.success('任务已加入下载队列')
+    message.success(externalEngine.value ? '已拉起本机 qBittorrent 下载' : '任务已加入下载队列')
     addOpen.value = false
     await Promise.all([refreshTasks(), refreshEngine()])
   } catch (e) {
@@ -232,6 +239,12 @@ async function submitAdd() {
 async function copyMagnet() {
   await clipboard.write(addUri.value.trim())
   message.success('磁力链接已复制，可粘贴到外部 BT 客户端（qBittorrent 等）')
+}
+
+/** 任务磁力/直链复制（直开任务进度不可见，复制后可自行粘贴回 qBt） */
+async function copyTaskUri(t: SvcDownloadTask) {
+  await clipboard.write(t.uri)
+  message.success('链接已复制')
 }
 
 /* ── 任务详情 ── */
@@ -330,12 +343,14 @@ onBeforeUnmount(() => {
     <div v-if="serviceConfigured" class="engine-card" :class="{ off: engine && !engine.available }">
       <template v-if="engine">
         <NTag size="small" round :type="engine.available ? 'success' : 'error'" :bordered="false">
-          {{ engine.available ? `引擎可用 · ${engine.mode === 'external' ? '外部实例' : '托管模式'}` : '引擎不可用' }}
+          {{ engine.available ? `引擎可用 · ${engine.mode === 'external-app' ? 'qBittorrent 直开' : engine.mode === 'external' ? '外部实例' : '托管模式'}` : '引擎不可用' }}
         </NTag>
         <span v-if="engine.version" class="engine-meta">aria2 {{ engine.version }}</span>
         <span v-if="engine.downloadDir" class="engine-meta">目录 {{ engine.downloadDir }}</span>
         <span v-if="engine.error" class="engine-error">{{ engine.error }}</span>
-        <NButton v-if="engine.available" size="tiny" quaternary @click="restartEngine">重启引擎</NButton>
+        <NButton v-if="engine.available" size="tiny" quaternary @click="restartEngine">
+          {{ engine.mode === 'external-app' ? '重新检测' : '重启引擎' }}
+        </NButton>
         <NButton v-else size="tiny" quaternary type="primary" @click="restartEngine">重试连接</NButton>
       </template>
       <NSpin v-else size="small" />
@@ -366,23 +381,31 @@ onBeforeUnmount(() => {
                 {{ t.subjectNameCn || t.subjectName }}<template v-if="t.episodeSort"> · 第 {{ t.episodeSort }} 话</template>
               </NTag>
             </div>
-            <NProgress
-              class="dl-bar"
-              type="line"
-              :percentage="Math.round(ratio(t) * 1000) / 10"
-              :show-indicator="false"
-              :height="6"
-              :border-radius="4"
-            />
-            <div class="dl-stat-line">
-              <span>{{ formatBytes(t.completedLength) }} / {{ t.totalLength ? formatBytes(t.totalLength) : '未知大小' }}</span>
-              <span v-if="t.status === 'downloading'" class="dl-speed">↓ {{ formatSpeed(t.downloadSpeed) }}</span>
-              <span>连接 {{ t.connections }} · 种子 {{ t.seeds }}</span>
-            </div>
+            <template v-if="t.status === 'external'">
+              <div class="dl-external-tip">已拉起本机 qBittorrent 下载——进度与文件请在 qBittorrent 中查看</div>
+            </template>
+            <template v-else>
+              <NProgress
+                class="dl-bar"
+                type="line"
+                :percentage="Math.round(ratio(t) * 1000) / 10"
+                :show-indicator="false"
+                :height="6"
+                :border-radius="4"
+              />
+              <div class="dl-stat-line">
+                <span>{{ formatBytes(t.completedLength) }} / {{ t.totalLength ? formatBytes(t.totalLength) : '未知大小' }}</span>
+                <span v-if="t.status === 'downloading'" class="dl-speed">↓ {{ formatSpeed(t.downloadSpeed) }}</span>
+                <span>连接 {{ t.connections }} · 种子 {{ t.seeds }}</span>
+              </div>
+            </template>
             <div v-if="t.error" class="dl-error">{{ t.error }}</div>
           </div>
           <div class="dl-ops" @click.stop>
-            <NButton size="tiny" quaternary circle @click="pauseOrResume(t)">
+            <NButton size="tiny" quaternary circle @click="copyTaskUri(t)" title="复制磁力/直链">
+              <template #icon><NIcon :component="CopyOutline" /></template>
+            </NButton>
+            <NButton v-if="t.status !== 'external'" size="tiny" quaternary circle @click="pauseOrResume(t)">
               <template #icon>
                 <NIcon :component="t.status === 'paused' ? PlayOutline : PauseOutline" />
               </template>
@@ -393,7 +416,7 @@ onBeforeUnmount(() => {
                   <template #icon><NIcon :component="TrashOutline" /></template>
                 </NButton>
               </template>
-              删除任务（下载文件保留在磁盘）
+              {{ t.status === 'external' ? '删除台账记录（qBittorrent 中的任务与文件不受影响）' : '删除任务（下载文件保留在磁盘）' }}
             </NPopconfirm>
           </div>
         </div>
@@ -453,6 +476,9 @@ onBeforeUnmount(() => {
           <span class="engine-error">无法识别的链接</span>
         </template>
       </div>
+      <div v-if="addUri.trim() && addValid && externalEngine" class="add-engine-hint dim">
+        qBittorrent 直开：提交后服务端将直接拉起本机 qBittorrent 下载（进度在 qBt 内查看，此处仅记录台账）
+      </div>
 
       <div class="add-subject">
         <NInput
@@ -488,7 +514,7 @@ onBeforeUnmount(() => {
             :loading="addBusy"
             @click="submitAdd"
           >
-            加入下载队列
+            {{ externalEngine ? '用 qBittorrent 打开' : '加入下载队列' }}
           </NButton>
         </div>
       </template>
@@ -524,56 +550,78 @@ onBeforeUnmount(() => {
         <div v-if="detailTask.error" class="dl-error">{{ detailTask.error }}</div>
         <div class="detail-uri dim" :title="detailTask.uri">{{ detailTask.uri }}</div>
 
-        <h4 class="detail-files-title">文件（{{ detailTask.files.length }}）</h4>
-        <NEmpty v-if="!detailTask.files.length" description="元数据解析中，文件清单稍后出现" size="small" />
-        <div v-else class="file-list">
-          <label v-for="f in detailTask.files" :key="f.index" class="file-row">
-            <NCheckbox
-              size="small"
-              :checked="fileSelection.has(f.index)"
-              :disabled="filesComplete"
-              @update:checked="(v: boolean) => toggleFile(f.index, v)"
-            />
-            <span class="file-name" :title="f.path">{{ f.name || f.path }}</span>
-            <span class="file-size dim">
-              {{ formatBytes(f.completedLength) }} / {{ formatBytes(f.length) }}
-            </span>
-          </label>
-        </div>
-        <NButton
-          v-if="detailTask.files.length && !filesComplete"
-          size="small"
-          type="primary"
-          secondary
-          :disabled="!selectionChanged"
-          :loading="applyingSelection"
-          @click="applySelection"
-        >
-          应用文件选择（{{ fileSelection.size }} / {{ detailTask.files.length }}）
-        </NButton>
-        <p v-if="detailTask.files.length && !filesComplete" class="detail-hint dim">
-          整季包可只勾选需要的集；应用时会短暂暂停任务，未选文件将被清理
-        </p>
+        <template v-if="detailTask.status === 'external'">
+          <NAlert type="info" :show-icon="false" class="detail-external-tip">
+            已拉起本机 qBittorrent 下载——下载进度、做种与文件管理请在 qBittorrent 中查看；此页仅保留任务台账。
+          </NAlert>
+        </template>
+        <template v-else>
+          <h4 class="detail-files-title">文件（{{ detailTask.files.length }}）</h4>
+          <NEmpty v-if="!detailTask.files.length" description="元数据解析中，文件清单稍后出现" size="small" />
+          <div v-else class="file-list">
+            <label v-for="f in detailTask.files" :key="f.index" class="file-row">
+              <NCheckbox
+                size="small"
+                :checked="fileSelection.has(f.index)"
+                :disabled="filesComplete"
+                @update:checked="(v: boolean) => toggleFile(f.index, v)"
+              />
+              <span class="file-name" :title="f.path">{{ f.name || f.path }}</span>
+              <span class="file-size dim">
+                {{ formatBytes(f.completedLength) }} / {{ formatBytes(f.length) }}
+              </span>
+            </label>
+          </div>
+          <NButton
+            v-if="detailTask.files.length && !filesComplete"
+            size="small"
+            type="primary"
+            secondary
+            :disabled="!selectionChanged"
+            :loading="applyingSelection"
+            @click="applySelection"
+          >
+            应用文件选择（{{ fileSelection.size }} / {{ detailTask.files.length }}）
+          </NButton>
+          <p v-if="detailTask.files.length && !filesComplete" class="detail-hint dim">
+            整季包可只勾选需要的集；应用时会短暂暂停任务，未选文件将被清理
+          </p>
+        </template>
 
         <template #footer>
           <div class="detail-footer">
-            <NPopconfirm @positive-click="removeTask(detailTask!, false)">
-              <template #trigger>
-                <NButton size="small" quaternary type="error">
-                  <template #icon><NIcon :component="TrashOutline" /></template>
-                  删除任务
-                </NButton>
-              </template>
-              仅删除任务记录，磁盘文件保留
-            </NPopconfirm>
-            <NPopconfirm @positive-click="removeTask(detailTask!, true)">
+            <NButton size="small" quaternary @click="copyTaskUri(detailTask!)">
+              <template #icon><NIcon :component="CopyOutline" /></template>
+              复制磁力
+            </NButton>
+            <div v-if="detailTask.status !== 'external'" class="detail-footer-right">
+              <NPopconfirm @positive-click="removeTask(detailTask!, false)">
+                <template #trigger>
+                  <NButton size="small" quaternary type="error">
+                    <template #icon><NIcon :component="TrashOutline" /></template>
+                    删除任务
+                  </NButton>
+                </template>
+                仅删除任务记录，磁盘文件保留
+              </NPopconfirm>
+              <NPopconfirm @positive-click="removeTask(detailTask!, true)">
+                <template #trigger>
+                  <NButton size="small" type="error" secondary>
+                    <template #icon><NIcon :component="TrashOutline" /></template>
+                    删除任务并删文件
+                  </NButton>
+                </template>
+                删除任务并一并删除已下载的文件（不可恢复）？
+              </NPopconfirm>
+            </div>
+            <NPopconfirm v-else @positive-click="removeTask(detailTask!, false)">
               <template #trigger>
                 <NButton size="small" type="error" secondary>
                   <template #icon><NIcon :component="TrashOutline" /></template>
-                  删除任务并删文件
+                  删除台账记录
                 </NButton>
               </template>
-              删除任务并一并删除已下载的文件（不可恢复）？
+              仅删除下载中心记录，qBittorrent 中的任务与磁盘文件不受影响
             </NPopconfirm>
           </div>
         </template>
@@ -705,6 +753,24 @@ onBeforeUnmount(() => {
   color: #e88080;
 }
 
+.dl-external-tip {
+  margin: 5px 0 2px;
+  max-width: 560px;
+  font-size: 11.5px;
+  color: var(--av-text-secondary);
+  background: var(--av-primary-soft);
+  border-radius: 8px;
+  padding: 5px 10px;
+}
+
+.add-engine-hint {
+  margin-top: 8px;
+}
+
+.detail-external-tip {
+  margin-bottom: 10px;
+}
+
 .dl-ops {
   display: flex;
   gap: 4px;
@@ -821,6 +887,12 @@ onBeforeUnmount(() => {
 .detail-footer {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-footer-right {
+  display: flex;
   gap: 8px;
 }
 </style>
