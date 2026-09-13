@@ -16,7 +16,7 @@ import { mediaService, isDirectExt, servicePositionId, type SvcFile } from '../a
 import { useLibraryStore } from '../stores/library'
 import { useSyncStore } from '../stores/sync'
 import { isWatchedComplete, positionIdOf } from '../utils/mediaCore'
-import { parseDanmakuXml, type DanmakuItem } from '../utils/danmaku'
+import { appendDanmaku, parseDanmakuXml, type DanmakuItem } from '../utils/danmaku'
 import { getBinding, getDanmaku, getFileRecord, getPosition, saveDanmaku, savePosition } from '../utils/mediaStore'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import EmptyHint from '../components/EmptyHint.vue'
@@ -264,6 +264,18 @@ function onSourceError() {
   applyOnlineSource()
 }
 
+/** v0.15 发送弹幕持久化：beforeEmit 抛出的弹幕追加进 dm: 存储（下次进入自动加载）。
+ *  故意不更新 danmakuItems——那会触发 danmuku.load() 全量重载，使刚发送的弹幕在当前进度重飘一次。 */
+/** v0.15 发送弹幕持久化：beforeEmit 回调交来的弹幕追加进 dm: 存储（下次进入自动加载）。
+ *  故意不更新 danmakuItems——那会触发 danmuku.load() 全量重载，使刚发送的弹幕在当前进度重飘一次。 */
+async function onDanmukuEmit(item: DanmakuItem) {
+  try {
+    await saveDanmaku(subjectId.value, sort.value, appendDanmaku(danmakuItems.value, item))
+  } catch {
+    // 持久化失败静默：不影响本次发送显示
+  }
+}
+
 /** v0.15 O4 弹幕导入：B 站 XML → 解析 → dm: 存储热更新（整文件失败拒绝导入） */
 async function onDanmakuFile(ev: Event) {
   const input = ev.target as HTMLInputElement
@@ -374,6 +386,7 @@ function onSeekReload(target: number) {
         :start-at="startAt"
         :remux="remux"
         :danmaku="danmakuItems"
+        :persist-danmuku="onDanmukuEmit"
         @progress="onProgress"
         @seekreload="onSeekReload"
         @sourceerror="onSourceError"

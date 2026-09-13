@@ -51,3 +51,38 @@ describe('v0.15 O4 B 站弹幕 XML 解析', () => {
     expect(items[0].text).toBe('d0')
   })
 })
+
+/* ── v0.15 发送弹幕持久化（appendDanmaku）── */
+
+import { appendDanmaku } from './danmaku'
+
+describe('v0.15 发送弹幕追加（appendDanmaku）', () => {
+  it('追加条目带 local 标记并按时间升序插入', () => {
+    const existing = [
+      { time: 5, mode: 0 as const, text: '导入A' },
+      { time: 15, mode: 0 as const, text: '导入B' },
+    ]
+    const out = appendDanmaku(existing, { time: 9, mode: 0, color: '#ffffff', text: '发送1' })
+    expect(out.map((d) => [d.time, d.text, d.local])).toEqual([
+      [5, '导入A', undefined],
+      [9, '发送1', true],
+      [15, '导入B', undefined],
+    ])
+    // 原数组不被修改
+    expect(existing).toHaveLength(2)
+  })
+
+  it('超出上限 FIFO 丢最旧（保最新发送）', () => {
+    const existing = Array.from({ length: 8 }, (_, i) => ({ time: i, mode: 0 as const, text: `d${i}` }))
+    const out = appendDanmaku(existing, { time: 100, mode: 0, text: '最新' }, 5)
+    expect(out).toHaveLength(5)
+    expect(out[0].text).toBe('d4')
+    expect(out[out.length - 1]).toMatchObject({ text: '最新', local: true })
+  })
+
+  it('空池追加成单条', () => {
+    expect(appendDanmaku([], { time: 3, mode: 2, text: '首条' })).toEqual([
+      { time: 3, mode: 2, text: '首条', local: true },
+    ])
+  })
+})

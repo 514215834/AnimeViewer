@@ -12,6 +12,8 @@ export interface DanmakuItem {
   text: string
   /** 附加内联样式（插件渲染链路最后应用，可覆盖默认描边等；解析器不产出，由播放器层补充） */
   style?: Partial<CSSStyleDeclaration>
+  /** 用户经插件发送框发送（本地持久化标记，与导入弹幕区分；渲染无影响） */
+  local?: boolean
 }
 
 /** 单集弹幕上限：B 站长视频可达数千条，超出截断保护播放器 */
@@ -35,6 +37,19 @@ export function parseDanmakuXml(xmlText: string): DanmakuItem[] {
   if (!items.length) throw new Error('未找到有效弹幕数据')
   items.sort((a, b) => a.time - b.time)
   return items.length > DANMAKU_MAX_ITEMS ? items.slice(0, DANMAKU_MAX_ITEMS) : items
+}
+
+/** v0.15 发送弹幕持久化（纯函数，供单测）：追加进既有弹幕池，带 local 标记，
+ *  按时间升序保持（与解析器产出同序），超出上限 FIFO 丢最旧。
+ *  item.time 为发送时刻的集内绝对时间——重开播放进度到该时刻时弹幕再次出现。 */
+export function appendDanmaku(
+  existing: DanmakuItem[],
+  item: DanmakuItem,
+  max = DANMAKU_MAX_ITEMS,
+): DanmakuItem[] {
+  const merged = [...existing, { ...item, local: true }]
+  merged.sort((a, b) => a.time - b.time)
+  return merged.length > max ? merged.slice(merged.length - max) : merged
 }
 
 function parseNode(node: Element): DanmakuItem | null {

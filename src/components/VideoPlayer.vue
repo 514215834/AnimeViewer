@@ -23,6 +23,8 @@ const props = defineProps<{
   remux?: boolean
   /** v0.15 O4 弹幕数据（按「条目+话数」维度，空数组 = 无弹幕） */
   danmaku?: DanmakuItem[]
+  /** v0.15 发送弹幕持久化回调（函数 prop 直调，绕开组件 emit 的事件查找链） */
+  persistDanmuku?: (item: DanmakuItem) => void
 }>()
 
 const emit = defineEmits<{
@@ -105,6 +107,18 @@ onMounted(async () => {
         filter: (danmu) => {
           danmu.border = false
           danmu.style = { ...danmu.style, textShadow: 'none' }
+          return true
+        },
+        // 发送弹幕持久化：beforeEmit 仅在 emitter 发送路径调用，此时 danmu.time 仍为发送时刻的
+        // 集内绝对时间（emitter 随后才 delete time 改为立即飘出）——交外层追加进 dm: 存储，
+        // 下次进入自动加载；返回 true 不拦截本次发送
+        beforeEmit: (danmu) => {
+          props.persistDanmuku?.({
+            time: danmu.time ?? 0,
+            mode: danmu.mode ?? 0,
+            color: danmu.color,
+            text: danmu.text,
+          })
           return true
         },
       }),

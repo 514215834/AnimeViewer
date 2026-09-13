@@ -36,7 +36,13 @@ function openDb(): Promise<IDBDatabase | null> {
       req.onupgradeneeded = () => {
         if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE)
       }
-      req.onsuccess = () => resolve(req.result)
+      req.onsuccess = () => {
+        // 连接被浏览器/异常关闭后重置单例，下次操作自动重开（否则后续读写静默失败）
+        req.result.onclose = () => {
+          dbPromise = null
+        }
+        resolve(req.result)
+      }
       req.onerror = () => resolve(null)
       req.onblocked = () => resolve(null)
     } catch {
@@ -184,7 +190,10 @@ export async function getDanmaku(subjectId: number, sort: number): Promise<Danma
 }
 
 export async function saveDanmaku(subjectId: number, sort: number, items: DanmakuItem[]): Promise<void> {
-  await idbPut(`dm:${subjectId}:${sort}`, { subjectId, sort, items, importedAt: Date.now() } satisfies DanmakuRecord)
+  // items 可能来自响应式 ref（深层 reactive Proxy）——IDB 结构化克隆不支持 Proxy，
+  // put 会抛 DataCloneError 被静默吞掉；统一净化为纯 JSON 数据再写
+  const plain = JSON.parse(JSON.stringify(items)) as DanmakuItem[]
+  await idbPut(`dm:${subjectId}:${sort}`, { subjectId, sort, items: plain, importedAt: Date.now() } satisfies DanmakuRecord)
 }
 
 /* ── 播放历史（v0.15 O5）：进度记录全量 / 单条删除 / 清空（只动进度，不碰绑定）── */
