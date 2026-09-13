@@ -50,12 +50,6 @@ let destroyed = false
 /** sourceerror 只上报一次（外层换源重建组件） */
 let sourceErrored = false
 
-/** 弹幕统一关闭描边：插件默认模板带四向 1px 黑色 text-shadow（观感即「弹幕有边框」），
- *  danmu.style 在插件渲染链路最后应用，可覆盖默认描边；border 字段是另一种彩色边框，一并显式关闭。 */
-function danmukuOf(items?: DanmakuItem[]) {
-  return (items ?? []).map((d) => ({ ...d, border: false as const, style: { ...d.style, textShadow: 'none' } }))
-}
-
 function emitProgress(force = false) {
   if (!art) return
   const now = Date.now()
@@ -98,12 +92,21 @@ onMounted(async () => {
     lang: 'zh-cn',
     plugins: [
       danmukuFactory({
-        danmuku: () => Promise.resolve(danmukuOf(props.danmaku)),
+        danmuku: () => Promise.resolve(props.danmaku ?? []),
         speed: 5,
         margin: [10, '25%'],
         opacity: 1,
         color: '#FFFFFF',
         antiOverlap: true,
+        // 弹幕统一去描边/边框/半透明底（用户反馈「弹幕有边框」）：插件默认模板带四向 1px 黑色
+        // text-shadow；自带「发送弹幕」更是硬编码 danmu.border=true（彩色边框 + 半透明黑底）且
+        // emitter 直调引擎 emit、绕过公开 Result 包装——filter 是引擎入队前对同一 danmu 引用的
+        // 公共必经点，在此 mutate 即覆盖 导入/发送/外部 emit 全部来源
+        filter: (danmu) => {
+          danmu.border = false
+          danmu.style = { ...danmu.style, textShadow: 'none' }
+          return true
+        },
       }),
     ],
     controls: [
@@ -250,11 +253,11 @@ onMounted(async () => {
   window.addEventListener('keydown', fKeyHandler)
 })
 
-// v0.15 O4 导入弹幕后热更新（插件已在构造时挂载）
+// v0.15 O4 导入弹幕后热更新（插件已在构造时挂载；样式统一由 option.filter 收敛）
 watch(
   () => props.danmaku,
   (items) => {
-    if (danmuku) void danmuku.load(danmukuOf(items))
+    if (danmuku) void danmuku.load(items ?? [])
   },
 )
 
