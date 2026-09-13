@@ -27,6 +27,7 @@ import {
   CreateOutline,
   MicOutline,
   PlayOutline,
+  CloudDownloadOutline,
 } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from '../stores/library'
@@ -42,6 +43,7 @@ import type { Episode, RelatedSubject, SubjectCharacter, SubjectDetail, SubjectP
 import PosterImage from '../components/PosterImage.vue'
 import EmptyHint from '../components/EmptyHint.vue'
 import MediaBindModal from '../components/MediaBindModal.vue'
+import ResourceSearchModal from '../components/ResourceSearchModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -196,6 +198,21 @@ function playServiceEp(sort: number) {
 const svcHintVisible = computed(
   () => settings.svcEnabled && svcLoaded.value && svcFiles.value.size === 0 && mainEpisodes.value.length > 0,
 )
+
+/* ── v0.17 R2 条目找资源：剧集 Tab / 单集抽屉入口 → ResourceSearchModal ── */
+const showResourceModal = ref(false)
+/** 资源搜索预填集数（null = 条目级入口） */
+const resourceDefaultSort = ref<number | null>(null)
+
+function openResourceSearch(sort?: number) {
+  resourceDefaultSort.value = sort ?? null
+  showResourceModal.value = true
+}
+
+function onResourceEnqueued(payload: { episodeSort?: number }) {
+  // 带集数入队后刷新服务文件状态（下载完成入库前不出现新播放按钮，属预期；此处仅刷新关联状态）
+  if (payload.episodeSort) message.info(`第 ${payload.episodeSort} 话资源已入队，可在「下载」页查看进度`)
+}
 
 // 剧集 Tab 激活 / 条目切换时刷新绑定状态
 watch([id, activeTab], ([, tab]) => {
@@ -713,6 +730,10 @@ onBeforeUnmount(() => {
                 <NButton size="tiny" secondary type="primary" @click="openMediaModal()">
                   <span class="btn-icon-row"><NIcon :component="PlayOutline" size="12" />本地播放</span>
                 </NButton>
+                <!-- v0.17 R2 条目找资源（服务已配置才显示） -->
+                <NButton v-if="settings.svcEnabled" size="tiny" secondary @click="openResourceSearch()">
+                  <span class="btn-icon-row"><NIcon :component="CloudDownloadOutline" size="12" />资源搜索</span>
+                </NButton>
                 <NButton size="tiny" secondary @click="markAllEps(true)">全部看过</NButton>
                 <NButton size="tiny" secondary @click="markAllEps(false)">清空</NButton>
                 <NButton size="tiny" type="primary" secondary @click="enterImmersive">▶ 沉浸观剧</NButton>
@@ -831,6 +852,16 @@ onBeforeUnmount(() => {
             <NButton quaternary block size="small" @click="openMediaModal(drawerEp.sort)">
               {{ boundMap.has(drawerEp.sort) ? '更换绑定' : '绑定本地视频' }}
             </NButton>
+            <!-- v0.17 R2 单集找资源（服务已配置才显示；预填本集集数） -->
+            <NButton
+              v-if="settings.svcEnabled"
+              quaternary
+              block
+              size="small"
+              @click="openResourceSearch(drawerEp.type === 0 ? drawerEp.sort : undefined)"
+            >
+              <span class="btn-icon-row"><NIcon :component="CloudDownloadOutline" size="14" />搜索本集资源</span>
+            </NButton>
             <!-- v0.15 O4 弹幕导入（按条目+话数存储，与播放源无关） -->
             <NButton quaternary block size="small" @click="importDrawerDanmaku(drawerEp.sort)">导入弹幕（B 站 XML）</NButton>
           </div>
@@ -852,6 +883,18 @@ onBeforeUnmount(() => {
       :default-sort="mediaDefaultSort"
       @changed="refreshBindings"
       @play="playEp"
+    />
+
+    <!-- v0.17 R2 资源搜索弹窗（条目级/单集级共用；关闭即销毁状态） -->
+    <ResourceSearchModal
+      v-if="showResourceModal"
+      :show="showResourceModal"
+      :subject-id="id"
+      :subject-name="subject?.name"
+      :subject-name-cn="subject?.name_cn"
+      :default-sort="resourceDefaultSort"
+      @update:show="showResourceModal = $event"
+      @enqueued="onResourceEnqueued"
     />
   </div>
 </template>

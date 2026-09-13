@@ -82,3 +82,54 @@ describe('v0.16 下载中心纯函数', () => {
     expect(formatSpeed(1024 * 1024 * 16)).toBe('16.0 MB/s')
   })
 })
+
+/* ── v0.17 R2/R3 资源发现 ── */
+
+import { extractFansub, searchKeywords } from './mediaService'
+
+describe('v0.17 资源发现纯函数', () => {
+  it('extractFansub：行首 [组名] 优先', () => {
+    expect(extractFansub('[雪飘工作室][名探偵プリキュア！][1080p][33]')).toBe('雪飘工作室')
+    expect(extractFansub('[SubGroup] Title - 05 [1080p]')).toBe('SubGroup')
+    expect(extractFansub('[组名超长超过三十个字符的非法形态不该匹配xxxxxxxxxxxxxxxx]')).toBeNull()
+  })
+
+  it('extractFansub：acgnx 官方发布「镜像站 | 标题」形态取镜像名', () => {
+    expect(extractFansub('萌番組鏡像 | 名侦探光之美少女！ - EP33 [简／繁]')).toBe('萌番組鏡像')
+    expect(extractFansub('動漫花園鏡像|[Title][01]')).toBe('動漫花園鏡像')
+  })
+
+  it('extractFansub：无组名形态返回 null', () => {
+    expect(extractFansub('名侦探光之美少女！ - EP33')).toBeNull()
+    expect(extractFansub('')).toBeNull()
+  })
+
+  it('searchKeywords：中文名/原名双查询候选（去重、非空）', () => {
+    expect(searchKeywords('名侦探光之美少女！', '名探偵プリキュア！')).toEqual([
+      '名侦探光之美少女！',
+      '名探偵プリキュア！',
+    ])
+    expect(searchKeywords('同一名字', '同一名字')).toEqual(['同一名字'])
+    expect(searchKeywords('  只有中文名  ', '')).toEqual(['只有中文名'])
+    expect(searchKeywords('', undefined)).toEqual([])
+  })
+})
+
+import { guessEpisodeSortFromTitle } from './mediaService'
+
+describe('v0.17 资源标题集数猜测', () => {
+  it('EP33 / 第33话 显式标记优先', () => {
+    expect(guessEpisodeSortFromTitle('名侦探光之美少女！ - EP33 [简／繁] (1080p)')).toBe(33)
+    expect(guessEpisodeSortFromTitle('[Group][Title][05][1080p]')).toBe(5)
+    expect(guessEpisodeSortFromTitle('动画 第13话 WebRip')).toBe(13)
+  })
+
+  it('退化：最后一个非年份非分辨率数字', () => {
+    expect(guessEpisodeSortFromTitle('[Group] Title 07 (2026) [1080p]')).toBe(7)
+    expect(guessEpisodeSortFromTitle('Movie 2019 1080p')).toBeNull()
+  })
+
+  it('无数字返回 null', () => {
+    expect(guessEpisodeSortFromTitle('完整季播合集')).toBeNull()
+  })
+})

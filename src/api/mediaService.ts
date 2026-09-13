@@ -493,4 +493,104 @@ export const mediaService = {
       body: JSON.stringify({ deleteFiles }),
     })
   },
+
+  /* ── v0.17 R1/R2 资源发现（RSS 站点源 + 条目找资源）── */
+
+  resourceSearch(keyword: string, sites?: string[]): Promise<SvcResourceSearch> {
+    const qs = new URLSearchParams({ keyword })
+    if (sites?.length) qs.set('sites', sites.join(','))
+    return request<SvcResourceSearch>(`/api/resources/search?${qs.toString()}`, undefined, 30000)
+  },
+  resourceSites(): Promise<SvcResourceSite[]> {
+    return request<{ sites: SvcResourceSite[] }>('/api/resources/sites').then((r) => r.sites)
+  },
+  saveResourceSite(site: SvcResourceSite): Promise<SvcResourceSite[]> {
+    return request<{ sites: SvcResourceSite[] }>('/api/resources/sites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(site),
+    }).then((r) => r.sites)
+  },
+  removeResourceSite(key: string): Promise<SvcResourceSite[]> {
+    return request<{ sites: SvcResourceSite[] }>(`/api/resources/sites/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    }).then((r) => r.sites)
+  },
+  enqueueResource(req: SvcResourceAddRequest): Promise<SvcDownloadTask> {
+    return post<SvcDownloadTask>('/api/resources/enqueue', req)
+  },
+}
+
+/* ── v0.17 R1/R2 资源发现（类型与服务端 Dtos.java 一一对应）── */
+
+export interface SvcResourceItem {
+  title: string
+  magnet: string
+  infoHash?: string
+  site: string
+  size?: string
+  category?: string
+  publisher?: string
+  pubDate?: number
+  link?: string
+}
+
+export interface SvcResourceSite {
+  key: string
+  name: string
+  baseUrl: string
+  searchTemplate: string
+  builtin: boolean
+}
+
+export interface SvcResourceSearch {
+  keyword: string
+  items: SvcResourceItem[]
+  sites: SvcResourceSite[]
+  error?: string
+}
+
+export interface SvcResourceAddRequest {
+  magnet: string
+  subjectId?: number
+  subjectName?: string
+  subjectNameCn?: string
+  episodeSort?: number
+}
+
+/** 从资源标题提取字幕组（纯函数，R3 过滤用）：
+ *  行首 [组名]（最常见）→ 竖线前缀（acgnx 官方发布「镜像站 | 标题」形态取镜像名）→ 其余返回 null */
+export function extractFansub(title: string): string | null {
+  const t = title.trim()
+  const lead = t.match(/^\[([^\[\]]{1,30})]/)
+  if (lead) return lead[1].trim()
+  const pipe = t.match(/^([^|｜]{1,24})[|｜]/)
+  if (pipe) return pipe[1].trim()
+  return null
+}
+
+/** 关键词策略（纯函数）：中文名/原名双查询合并的基础——按名种给出候选词序（去重、非空） */
+export function searchKeywords(nameCn?: string, name?: string): string[] {
+  const out: string[] = []
+  for (const s of [nameCn?.trim(), name?.trim()]) {
+    if (s && !out.includes(s)) out.push(s)
+  }
+  return out
+}
+
+/** 资源标题集数猜测（纯函数，确认弹窗预填用）：
+ *  优先 EP33 / 第33话 等显式标记，退化为「最后一个非年份、非分辨率后缀的独立数字」 */
+export function guessEpisodeSortFromTitle(title: string): number | null {
+  const explicit = title.match(/EP?\s*(\d{1,4})(?!\d)/i) ?? title.match(/第\s*(\d{1,4})\s*[话話集]/)
+  if (explicit) {
+    const n = Number(explicit[1])
+    if (n >= 1 && n <= 999) return n
+  }
+  let guess: number | null = null
+  for (const m of title.matchAll(/\d{1,4}(?!\d)/g)) {
+    const n = Number(m[0])
+    const next = title[m.index + m[0].length]?.toLowerCase()
+    if (n >= 1 && n <= 999 && next !== 'p' && !(n >= 1900 && n <= 2099)) guess = n
+  }
+  return guess
 }

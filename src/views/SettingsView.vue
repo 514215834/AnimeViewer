@@ -854,6 +854,7 @@ async function onImportFile(ev: Event) {
 
 /* v0.16 DN4 下载设置 */
 .dl-grid > :first-child,
+.dl-grid > :nth-child(4),
 .dl-grid > :nth-child(5),
 .dl-grid > :nth-child(6) {
   grid-column: 1 / -1;
@@ -861,7 +862,7 @@ async function onImportFile(ev: Event) {
 
 .dl-row2 {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1.4fr;
+  grid-template-columns: 1.2fr 1fr 1fr 1.5fr;
   gap: 10px;
 }
 
