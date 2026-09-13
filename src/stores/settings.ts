@@ -22,6 +22,10 @@ export interface SettingsState {
   /** v0.14 本地媒体服务（AnimeViewerService）：地址与配对 Token，留空表示未启用 */
   svcUrl: string
   svcToken: string
+  /** v0.15 O3 WebDAV 账号（单账号起步）：浏览/播放用户自备 WebDAV 源，凭据仅存本机 */
+  webdavUrl: string
+  webdavUser: string
+  webdavPass: string
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -43,6 +47,9 @@ export const DEFAULT_SETTINGS: SettingsState = {
   refreshToken: '',
   svcUrl: '',
   svcToken: '',
+  webdavUrl: '',
+  webdavUser: '',
+  webdavPass: '',
 }
 
 export const useSettingsStore = defineStore('settings', {
@@ -52,6 +59,10 @@ export const useSettingsStore = defineStore('settings', {
     isDemo: (s) => s.dataSource === 'demo',
     /** v0.14：媒体服务已配置（地址 + Token 均填写才视为启用） */
     svcEnabled: (s) => !!s.svcUrl.trim() && !!s.svcToken.trim(),
+    /** v0.15 O3：WebDAV 已配置（填地址即启用，匿名服务账号密码可空） */
+    webdavEnabled: (s) => !!s.webdavUrl.trim(),
+    /** WebDAV 根地址（去尾斜杠，供路径拼接） */
+    webdavRoot: (s) => s.webdavUrl.trim().replace(/\/+$/, ''),
   },
   actions: {
     persist() {

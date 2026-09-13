@@ -3,17 +3,21 @@
  *  ① 目录扫描（showDirectoryPicker，句柄持久化、跨会话恢复授权）② 多选文件
  *  ③ 拖拽兜底（全浏览器）④ 演示模式内置样例视频；
  *  文件 → 集数为手动绑定（集数自动猜测仅作预填，正式识别在 v0.14 服务端）。
- *  兼容性：File System Access API 仅 Chromium；Firefox/Safari 走 <input type=file> + 拖拽。 */
-import { ref, watch } from 'vue'
-import { NButton, NIcon, NModal, NSelect, NTag } from 'naive-ui'
-import { FolderOpenOutline, PlayOutline, TrashOutline, VideocamOutline } from '@vicons/ionicons5'
+ *  兼容性：File System Access API 仅 Chromium；Firefox/Safari 走 <input type=file> + 拖拽。
+ *  v0.15 O1/O3：新增「添加在线源」（直链 / m3u8，URL 文件名段猜测集数）与
+ *  WebDAV 浏览（账号在设置页配置，服务端 PROPFIND 列目录，绑定记 webdav 元数据）。 */
+import { computed, ref, watch } from 'vue'
+import { NButton, NIcon, NInput, NModal, NSelect, NTag } from 'naive-ui'
+import { CloudOutline, FolderOpenOutline, FolderOutline, PlayOutline, TrashOutline, VideocamOutline } from '@vicons/ionicons5'
 import type { Episode } from '../types/bangumi'
 import { useSettingsStore } from '../stores/settings'
 import { useMessage } from 'naive-ui'
+import { mediaService, type SvcWebdavEntry } from '../api/mediaService'
 import {
   fileKeyOf,
   guessEpisodeSort,
   isVideoName,
+  urlFileName,
   type MediaBinding,
 } from '../utils/mediaCore'
 import {
@@ -272,6 +276,102 @@ async function unbind(sort: number) {
   emit('changed')
 }
 
+/* ── v0.15 O1 添加在线源（直链 / m3u8）── */
+
+const urlDraft = ref('')
+const urlName = ref('')
+const urlSort = ref<number | null>(null)
+const urlReady = computed(() => /^https?:\/\//i.test(urlDraft.value.trim()))
+
+watch(urlDraft, (v) => {
+  // 地址输入时从文件名段预填集数（如 episode-03.mp4 → 3），可人工修正
+  urlSort.value = urlReady.value ? guessEpisodeSort(urlFileName(v)) : null
+})
+
+async function bindUrl() {
+  const url = urlDraft.value.trim()
+  if (!/^https?:\/\//i.test(url)) {
+    message.warning('请输入 http(s):// 开头的播放地址')
+    return
+  }
+  if (!urlSort.value) {
+    message.warning('请先选择要绑定到的集数')
+    return
+  }
+  await setBinding({
+    subjectId: props.subjectId,
+    sort: urlSort.value,
+    name: urlName.value.trim() || urlFileName(url) || '在线源',
+    type: 'url',
+    url,
+    addedAt: Date.now(),
+  })
+  message.success(`在线源已绑定到第 ${urlSort.value} 话`)
+  urlDraft.value = ''
+  urlName.value = ''
+  urlSort.value = null
+  await refreshBindings()
+  emit('changed')
+}
+
+/* ── v0.15 O3 WebDAV 浏览（账号在设置页配置；凭据只在服务端 POST 体流转）── */
+
+const davLoading = ref(false)
+const davPath = ref('/')
+const davList = ref<SvcWebdavEntry[]>([])
+const davSorts = ref<Record<string, number | null>>({})
+const davCrumb = computed(() => davPath.value.split('/').filter(Boolean))
+
+async function browseDav(path: string) {
+  if (!settings.webdavEnabled) {
+    message.warning('请先在设置页配置 WebDAV 账号')
+    return
+  }
+  davLoading.value = true
+  try {
+    const res = await mediaService.webdavBrowse(path)
+    davPath.value = res.path
+    davList.value = res.list
+    const sorts: Record<string, number | null> = {}
+    for (const e of res.list) if (!e.dir) sorts[e.name] = guessEpisodeSort(e.name)
+    davSorts.value = sorts
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : 'WebDAV 浏览失败')
+  } finally {
+    davLoading.value = false
+  }
+}
+
+function davEnter(entry: SvcWebdavEntry) {
+  void browseDav(`${davPath.value === '/' ? '' : davPath.value}/${entry.name}`)
+}
+
+/** 绑定记录的 url 字段 = WebDAV 文件完整地址（仅作标识与进度键；播放走 open→streamId 会话流） */
+function davFileUrl(filePath: string): string {
+  return `${settings.webdavRoot}${filePath}`
+}
+
+async function bindDavFile(entry: SvcWebdavEntry) {
+  const sort = davSorts.value[entry.name] ?? guessEpisodeSort(entry.name)
+  if (!sort) {
+    message.warning('请先选择要绑定到的集数')
+    return
+  }
+  const filePath = `${davPath.value === '/' ? '' : davPath.value}/${entry.name}`
+  await setBinding({
+    subjectId: props.subjectId,
+    sort,
+    name: entry.name,
+    type: 'url',
+    url: davFileUrl(filePath),
+    webdav: { path: filePath },
+    addedAt: Date.now(),
+  })
+  message.success(`WebDAV 文件已绑定到第 ${sort} 话`)
+  await refreshBindings()
+  emit('changed')
+}
+
 async function playBound(sort: number) {
   // 直接校验绑定仍存在（句柄授权在播放页处理）
   const b = await getBinding(props.subjectId, sort)
@@ -361,9 +461,79 @@ function close() {
         </div>
       </section>
 
+      <!-- v0.15 O1/O3 添加在线源 -->
+      <section class="mb-section">
+        <h4 class="mb-title">添加在线源（用户自备）</h4>
+        <div class="mb-url-row">
+          <NInput
+            v-model:value="urlDraft"
+            size="small"
+            clearable
+            placeholder="视频直链（mp4/webm）或 m3u8 地址，http(s):// 开头"
+          />
+          <NSelect
+            v-model:value="urlSort"
+            size="small"
+            filterable
+            placeholder="绑定到"
+            style="width: 190px"
+            :options="sortOptions()"
+            :consistent-menu-width="false"
+          />
+        </div>
+        <div class="mb-url-row" style="margin-top: 8px">
+          <NInput v-model:value="urlName" size="small" clearable placeholder="名称（可选，默认取地址文件名）" />
+          <NButton size="small" type="primary" secondary :disabled="!urlReady || !urlSort" @click="bindUrl">
+            <template #icon><NIcon :component="CloudOutline" /></template>
+            绑定
+          </NButton>
+        </div>
+
+        <!-- WebDAV 浏览 -->
+        <div v-if="settings.webdavEnabled" class="mb-dav">
+          <div class="mb-dav-head">
+            <NButton size="tiny" secondary @click="browseDav('/')">
+              <template #icon><NIcon :component="CloudOutline" /></template>
+              浏览 WebDAV
+            </NButton>
+            <span v-if="davList.length" class="mb-dav-crumb">
+              <a @click="browseDav('/')">根目录</a>
+              <template v-for="(seg, i) in davCrumb" :key="i">
+                /
+                <a @click="browseDav(`/${davCrumb.slice(0, i + 1).join('/')}`)">{{ seg }}</a>
+              </template>
+            </span>
+          </div>
+          <div v-if="davLoading" class="mb-empty">加载中…</div>
+          <div v-else-if="davList.length" class="mb-dav-list">
+            <div v-for="entry in davList" :key="`${davPath}:${entry.name}`" class="mb-pending-row">
+              <NIcon :component="entry.dir ? FolderOutline : VideocamOutline" size="14" />
+              <a v-if="entry.dir" class="mb-file-name mb-dav-dir" :title="entry.name" @click="davEnter(entry)">{{ entry.name }}</a>
+              <span v-else class="mb-file-name" :title="entry.name">{{ entry.name }}</span>
+              <span v-if="!entry.dir && entry.size" class="mb-file-size">{{ fmtSize(entry.size) }}</span>
+              <template v-if="!entry.dir">
+                <NSelect
+                  v-model:value="davSorts[entry.name]"
+                  size="tiny"
+                  filterable
+                  placeholder="绑定到"
+                  style="width: 190px"
+                  :options="sortOptions()"
+                  :consistent-menu-width="false"
+                />
+                <NButton size="tiny" type="primary" secondary @click="bindDavFile(entry)">绑定</NButton>
+              </template>
+            </div>
+          </div>
+          <div v-else class="mb-empty">点「浏览 WebDAV」列出根目录</div>
+        </div>
+        <p v-else class="mb-inline-hint">配置 WebDAV 账号后（设置页 · WebDAV 账号）可在此浏览并绑定网络存储中的视频。</p>
+      </section>
+
       <p class="mb-hint">
         句柄保存在本机浏览器，每次会话需重新授权（浏览器安全策略）；支持 mp4 / webm 直播，mkv / avi
         等容器浏览器暂不支持播放（v0.14 服务端转封装解决）。Firefox/Safari 不支持目录选择，可多选文件或拖拽。
+        在线源仅限用户自备地址；m3u8 经 hls.js 播放，直链跨域受限且已配置媒体服务时自动经服务代理。
       </p>
     </div>
   </NModal>
@@ -407,6 +577,55 @@ function close() {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* v0.15 在线源行 */
+.mb-url-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mb-inline-hint {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--av-text-tertiary);
+}
+
+.mb-dav {
+  margin-top: 12px;
+  border-top: 1px dashed var(--av-border);
+  padding-top: 10px;
+}
+
+.mb-dav-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mb-dav-crumb {
+  font-size: 12px;
+  color: var(--av-text-tertiary);
+}
+
+.mb-dav-crumb a {
+  color: var(--av-primary);
+  cursor: pointer;
+}
+
+.mb-dav-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mb-dav-dir {
+  color: var(--av-primary);
+  cursor: pointer;
 }
 
 .mb-drop {

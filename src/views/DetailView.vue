@@ -34,7 +34,8 @@ import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
 import type { WatchStatus } from '../stores/library'
 import { charAvatarUrl, coverCardUrl, upgradeStoredCover } from '../utils/image'
-import { listBindings } from '../utils/mediaStore'
+import { listBindings, saveDanmaku } from '../utils/mediaStore'
+import { parseDanmakuXml } from '../utils/danmaku'
 import type { MediaBinding } from '../utils/mediaCore'
 import { mediaService, type SvcSubjectFile } from '../api/mediaService'
 import type { Episode, RelatedSubject, SubjectCharacter, SubjectDetail, SubjectPerson } from '../types/bangumi'
@@ -156,6 +157,29 @@ function openMediaModal(sort?: number) {
 
 function playEp(sort: number) {
   void router.push({ name: 'watch', query: { subject: String(id.value), sort: String(sort) } })
+}
+
+/** v0.15 O4 抽屉弹幕导入：B 站 XML → dm:{subjectId}:{sort}（整文件失败拒绝导入） */
+const drawerDmInput = ref<HTMLInputElement | null>(null)
+let drawerDmSort = 1
+
+function importDrawerDanmaku(sort: number) {
+  drawerDmSort = sort
+  drawerDmInput.value?.click()
+}
+
+async function onDrawerDanmaku(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    const items = parseDanmakuXml(await file.text())
+    await saveDanmaku(id.value, drawerDmSort, items)
+    message.success(`已导入 ${items.length} 条弹幕（第 ${drawerDmSort} 话）`)
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : '弹幕导入失败')
+  }
 }
 
 /** v0.14 服务媒体库播放（?file= 服务文件 ID） */
@@ -807,6 +831,8 @@ onBeforeUnmount(() => {
             <NButton quaternary block size="small" @click="openMediaModal(drawerEp.sort)">
               {{ boundMap.has(drawerEp.sort) ? '更换绑定' : '绑定本地视频' }}
             </NButton>
+            <!-- v0.15 O4 弹幕导入（按条目+话数存储，与播放源无关） -->
+            <NButton quaternary block size="small" @click="importDrawerDanmaku(drawerEp.sort)">导入弹幕（B 站 XML）</NButton>
           </div>
           <NButton type="primary" secondary block @click="openEpCommentPage">
             去 bgm.tv 查看 {{ drawerEp.comment ?? 0 }} 条吐槽 ↗
@@ -814,6 +840,9 @@ onBeforeUnmount(() => {
         </template>
       </NDrawerContent>
     </NDrawer>
+
+    <!-- v0.15 O4 抽屉弹幕导入（隐藏文件选择） -->
+    <input ref="drawerDmInput" type="file" accept=".xml,text/xml,application/xml" hidden @change="onDrawerDanmaku" />
 
     <!-- v0.13 PL2 本地播放绑定弹窗 -->
     <MediaBindModal

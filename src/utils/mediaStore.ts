@@ -16,6 +16,7 @@ import {
   type MediaFileRecord,
   type WatchPosition,
 } from './mediaCore'
+import type { DanmakuItem } from './danmaku'
 
 const DB_NAME = 'animeviewer-media'
 const DB_VERSION = 1
@@ -165,6 +166,42 @@ export async function getPosition(id: string): Promise<WatchPosition | null> {
 export async function savePosition(id: string, position: number, duration: number): Promise<void> {
   if (!id) return
   await idbPut(positionKey(id), { id, position, duration, updatedAt: Date.now() } satisfies WatchPosition)
+}
+
+/* ── 弹幕（v0.15 O4）：按「条目+话数」维度 dm:{subjectId}:{sort}，与播放源解耦（换绑/换源不丢）──
+   前缀用 dm: 而非 d:，避开既有 d:last 目录句柄键被 d: 前缀扫描误捞 ── */
+
+export interface DanmakuRecord {
+  subjectId: number
+  sort: number
+  items: DanmakuItem[]
+  importedAt: number
+}
+
+export async function getDanmaku(subjectId: number, sort: number): Promise<DanmakuItem[]> {
+  const rec = await idbGet<DanmakuRecord>(`dm:${subjectId}:${sort}`)
+  return rec?.items ?? []
+}
+
+export async function saveDanmaku(subjectId: number, sort: number, items: DanmakuItem[]): Promise<void> {
+  await idbPut(`dm:${subjectId}:${sort}`, { subjectId, sort, items, importedAt: Date.now() } satisfies DanmakuRecord)
+}
+
+/* ── 播放历史（v0.15 O5）：进度记录全量 / 单条删除 / 清空（只动进度，不碰绑定）── */
+
+export async function listAllPositions(): Promise<WatchPosition[]> {
+  const rows = await idbScan<WatchPosition>('p:')
+  return rows.map((r) => r.value)
+}
+
+export async function deletePosition(id: string): Promise<void> {
+  if (!id) return
+  await idbDelete(positionKey(id))
+}
+
+export async function clearPositions(): Promise<void> {
+  const rows = await idbScan<WatchPosition>('p:')
+  for (const r of rows) await idbDelete(r.key)
 }
 
 /* ── 目录句柄（PL2：每次会话恢复一次授权） ── */

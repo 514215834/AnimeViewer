@@ -113,6 +113,9 @@ function applyDraftBase() {
     refreshToken: draft.refreshToken.trim(),
     svcUrl: (draft.svcUrl || '').trim().replace(/\/+$/, ''),
     svcToken: (draft.svcToken || '').trim(),
+    webdavUrl: (draft.webdavUrl || '').trim().replace(/\/+$/, ''),
+    webdavUser: (draft.webdavUser || '').trim(),
+    webdavPass: (draft.webdavPass || '').trim(),
   }
   settings.applyPatch(normalized)
   Object.assign(draft, normalized)
@@ -484,6 +487,26 @@ async function onImportFile(ev: Event) {
             <div class="svc-tip">
               服务默认地址 http://127.0.0.1:8787，默认仅本机可访问；部署与局域网开启方式见服务端 README。
               配置后剧集 Tab 会显示媒体库已收录集的播放按钮。
+            </div>
+          </div>
+        </NFormItem>
+
+        <NFormItem label="WebDAV 账号（可选：浏览并播放自备网络存储中的视频；凭据仅存本机，播放凭据由媒体服务会话托管）">
+          <div class="svc-box">
+            <div class="svc-grid">
+              <NInput v-model:value="draft.webdavUrl" placeholder="WebDAV 地址，如 https://dav.example.com/dav" clearable />
+              <NInput v-model:value="draft.webdavUser" placeholder="账号（匿名服务可留空）" clearable />
+              <NInput
+                v-model:value="draft.webdavPass"
+                type="password"
+                show-password-on="click"
+                placeholder="密码"
+                clearable
+              />
+            </div>
+            <div class="svc-tip">
+              填写地址后即可在剧集 Tab「本地播放」弹窗中浏览 WebDAV 目录并绑定集数；播放需同时配置上方媒体服务。
+              仅支持只读浏览，不做上传/删除等写操作。
             </div>
           </div>
         </NFormItem>

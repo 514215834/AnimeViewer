@@ -16,8 +16,10 @@ export interface MediaBinding {
   type: MediaBindingType
   /** type=file：指向 mediaFiles 记录的键（句柄仅存本机 IndexedDB，导出不含） */
   fileKey?: string
-  /** type=url / demo：直接可播放地址 */
+  /** type=url / demo：直接可播放地址（WebDAV 源为完整文件 URL，仅作标识与进度键，播放走服务端会话流） */
   url?: string
+  /** type=url 且来源为 WebDAV（v0.15 O3）：path 为相对 WebDAV 根的原始路径，播放时 open→streamId 换取流地址 */
+  webdav?: { path: string }
   addedAt: number
 }
 
@@ -108,6 +110,64 @@ export const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mkv', 'avi', 'mov', 'm4v', 'ts'
 
 export function isVideoName(name: string): boolean {
   return VIDEO_EXTENSIONS.includes(name.split('.').pop()?.toLowerCase() ?? '')
+}
+
+/* ── v0.15 O1 在线源（直链 / HLS）── */
+
+/** HLS 判定：路径以 .m3u8 结尾（大小写不敏感，忽略查询串/哈希）——hls.js 按 MSE 播放，原生 seek */
+export function isHlsUrl(url: string): boolean {
+  if (!url) return false
+  try {
+    const path = new URL(url).pathname
+    return path.toLowerCase().endsWith('.m3u8')
+  } catch {
+    return /\.m3u8(\?|#|$)/i.test(url)
+  }
+}
+
+/** URL 文件名段（去查询串/哈希后取最后一段，供名称缺省与集数猜测） */
+export function urlFileName(url: string): string {
+  if (!url) return ''
+  try {
+    const u = new URL(url)
+    const seg = u.pathname.split('/').filter(Boolean).pop() ?? ''
+    return decodeURIComponent(seg)
+  } catch {
+    return url.split(/[?#]/)[0].split('/').filter(Boolean).pop() ?? ''
+  }
+}
+
+/* ── v0.15 O5 播放历史：位置记录 → 归属解析（纯函数） ── */
+
+export type HistorySource = 'file' | 'url' | 'webdav' | 'demo' | 'service'
+
+/** 历史行归属：位置标识反解出 条目+话数+来源（无法归属的记录返回 null，如绑定已解） */
+export interface HistoryOwner {
+  subjectId: number
+  sort: number
+  source: HistorySource
+  positionId: string
+}
+
+/** svc:{subjectId}:{sort} 服务源；u:{url} 按绑定 url 反查（含 WebDAV）；demo 按演示绑定；其余按 fileKey 反查 */
+export function resolvePositionOwner(position: WatchPosition, bindings: MediaBinding[]): HistoryOwner | null {
+  const id = position.id
+  if (!id) return null
+  if (id.startsWith('svc:')) {
+    const m = /^svc:(\d+):(\d+)$/.exec(id)
+    return m ? { subjectId: Number(m[1]), sort: Number(m[2]), source: 'service', positionId: id } : null
+  }
+  if (id.startsWith('u:')) {
+    const url = id.slice(2)
+    const b = bindings.find((x) => x.type === 'url' && x.url === url)
+    return b ? { subjectId: b.subjectId, sort: b.sort, source: b.webdav ? 'webdav' : 'url', positionId: id } : null
+  }
+  if (id === DEMO_POSITION_ID) {
+    const b = bindings.find((x) => x.type === 'demo')
+    return b ? { subjectId: b.subjectId, sort: b.sort, source: 'demo', positionId: id } : null
+  }
+  const b = bindings.find((x) => x.type === 'file' && x.fileKey === id)
+  return b ? { subjectId: b.subjectId, sort: b.sort, source: 'file', positionId: id } : null
 }
 
 /** 导出格式（可选 media 段，向后兼容：旧备份无此段照常导入；句柄不导出） */

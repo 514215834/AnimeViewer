@@ -3,7 +3,9 @@
  *  VideoPlayer 播放；进度持久化（续播记忆）+ ≥95% 自然看完自动复用 E1 链路标记看过。
  *  文件型绑定跨会话需恢复授权（浏览器安全模型）：授权失效时给出重授权/重绑引导。
  *  v0.14：新增媒体服务源（?file=服务文件ID）——mp4 直连 Range 流；mkv 等容器走服务端
- *  ffmpeg 转封装「直播式」流，seek 以 ?t= 重拉（seekBase 记录流起点，进度换算回绝对时间）。 */
+ *  ffmpeg 转封装「直播式」流，seek 以 ?t= 重拉（seekBase 记录流起点，进度换算回绝对时间）。
+ *  v0.15：URL 型绑定扩展为 直链/HLS（hls.js）/WebDAV 三类在线源；直连失败自动经服务代理
+ *  重试一次（CORS 容灾）；弹幕按「条目+话数」维度加载与导入（dm: 存储，与源解耦）。 */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
@@ -14,7 +16,8 @@ import { mediaService, isDirectExt, servicePositionId, type SvcFile } from '../a
 import { useLibraryStore } from '../stores/library'
 import { useSyncStore } from '../stores/sync'
 import { isWatchedComplete, positionIdOf } from '../utils/mediaCore'
-import { getBinding, getFileRecord, getPosition, savePosition } from '../utils/mediaStore'
+import { parseDanmakuXml, type DanmakuItem } from '../utils/danmaku'
+import { getBinding, getDanmaku, getFileRecord, getPosition, saveDanmaku, savePosition } from '../utils/mediaStore'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import EmptyHint from '../components/EmptyHint.vue'
 
@@ -41,6 +44,12 @@ const videoSrc = ref('')
 const startAt = ref(0)
 /** v0.14 是否为服务端转封装流（seek 重拉模式） */
 const remux = ref(false)
+/** v0.15 O1 在线源（直链/HLS）：原始地址 + 是否已切换为服务代理 */
+const urlSource = ref('')
+const onlineProxied = ref(false)
+/** v0.15 O4 弹幕（按条目+话数加载，全部源类型可用） */
+const danmakuItems = ref<DanmakuItem[]>([])
+const dmInput = ref<HTMLInputElement | null>(null)
 /** 进度持久化的位置标识 */
 let positionId = ''
 let objectUrl = ''
@@ -48,6 +57,8 @@ let objectUrl = ''
 let autoMarked = false
 /** v0.14 转封装流的起点（绝对时间）：进度 = seekBase + 流内时间 */
 let seekBase = 0
+/** 最近一次上报的播放位置（代理重试重建播放器时作为续播起点） */
+let lastPosition = 0
 
 /** PL5 演示视频资源（用户提供的内置样例，播放时才请求） */
 const demoClipUrl = new URL('../assets/demo-clip.mp4', import.meta.url).href
@@ -64,12 +75,18 @@ async function load() {
   videoSrc.value = ''
   startAt.value = 0
   remux.value = false
+  urlSource.value = ''
+  onlineProxied.value = false
+  lastPosition = 0
   seekBase = 0
   try {
     if (!subjectId.value || !sort.value) {
       fatal.value = '缺少条目或集数参数'
       return
     }
+    // v0.15 O4 弹幕与源无关，全部源类型可用（导入入口在 meta 行）
+    danmakuItems.value = await getDanmaku(subjectId.value, sort.value)
+    if (seq !== loadSeq) return
     if (fileId.value) {
       await loadServiceSource(seq)
     } else {
@@ -129,10 +146,25 @@ async function loadLocalSource(seq: number) {
   if (binding.type === 'demo') {
     videoSrc.value = demoClipUrl
   } else if (binding.type === 'url') {
-    videoSrc.value = binding.url ?? ''
-    if (!videoSrc.value) {
-      fatal.value = '播放源地址为空'
-      return
+    if (binding.webdav) {
+      // v0.15 O3 WebDAV 源：凭据在服务端会话（open→streamId），播放地址不含凭据；Range 直连原生 seek
+      if (!mediaService.configured()) {
+        fatal.value = 'WebDAV 播放需要媒体服务（凭据由服务端会话托管）——请到设置页配置服务与 WebDAV 账号'
+        return
+      }
+      try {
+        const open = await mediaService.webdavOpen()
+        if (seq !== loadSeq) return
+        videoSrc.value = mediaService.webdavStreamUrl(open.streamId)
+      } catch (e) {
+        fatal.value = e instanceof Error ? e.message : String(e)
+        return
+      }
+    } else {
+      // v0.15 O1 直链 / HLS：先直连，失败经服务代理重试一次
+      urlSource.value = binding.url ?? ''
+      applyOnlineSource()
+      if (!videoSrc.value) return
     }
   } else {
     // 文件型：优先 File 对象（拖拽/input 兜底），其次 FSA 句柄（跨会话需恢复授权）
@@ -197,9 +229,61 @@ async function reauthorize() {
   message.warning('未获得文件访问授权')
 }
 
+/** v0.15 O1 在线源地址解析：直连优先，代理态经服务转发（videoSrc 变化 → :key 重建播放器） */
+function applyOnlineSource() {
+  const url = urlSource.value
+  if (!url) {
+    fatal.value = '播放源地址为空'
+    return
+  }
+  if (onlineProxied.value) {
+    const proxied = mediaService.proxyUrl(url)
+    if (!proxied) {
+      fatal.value = '媒体服务未配置，无法经代理播放在线源'
+      return
+    }
+    videoSrc.value = proxied
+  } else {
+    videoSrc.value = url
+  }
+}
+
+/** v0.15 O1 在线源加载失败容灾：未代理过且服务可用 → 自动经代理重试一次（结果不粘性记忆） */
+function onSourceError() {
+  if (!urlSource.value) return
+  if (onlineProxied.value) {
+    fatal.value = '在线源播放失败（直连与代理均不可用）——请检查地址是否有效，或更换播放源'
+    return
+  }
+  if (!mediaService.configured()) {
+    fatal.value = '在线源直连失败（通常是跨域限制）——配置媒体服务后可自动经代理重试'
+    return
+  }
+  onlineProxied.value = true
+  if (lastPosition > 5) startAt.value = lastPosition
+  applyOnlineSource()
+}
+
+/** v0.15 O4 弹幕导入：B 站 XML → 解析 → dm: 存储热更新（整文件失败拒绝导入） */
+async function onDanmakuFile(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    const items = parseDanmakuXml(await file.text())
+    await saveDanmaku(subjectId.value, sort.value, items)
+    danmakuItems.value = items
+    message.success(`已导入 ${items.length} 条弹幕`)
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : '弹幕导入失败')
+  }
+}
+
 /** PL3 进度持久化 + ≥95% 自动标记（复用 E1 单集增量链路，照常进入上云队列）。
  *  v0.14：position/duration 为流内相对值——转封装流按 seekBase 换算回文件绝对时间再存储/判定。 */
 async function onProgress(position: number, duration: number) {
+  lastPosition = position
   const absPos = seekBase + position
   const absDur = seekBase + duration
   if (positionId) void savePosition(positionId, absPos, absDur)
@@ -289,12 +373,18 @@ function onSeekReload(target: number) {
         :title="videoTitle"
         :start-at="startAt"
         :remux="remux"
+        :danmaku="danmakuItems"
         @progress="onProgress"
         @seekreload="onSeekReload"
+        @sourceerror="onSourceError"
       />
       <div class="watch-meta">
         <span class="watch-name">{{ videoTitle }}</span>
         <span class="watch-source" :title="bindingName">来源：{{ bindingName }}</span>
+        <span v-if="onlineProxied" class="watch-source">· 经服务代理</span>
+        <span v-if="danmakuItems.length" class="watch-source">弹幕 {{ danmakuItems.length }} 条</span>
+        <input ref="dmInput" type="file" accept=".xml,text/xml,application/xml" hidden @change="onDanmakuFile" />
+        <NButton size="tiny" quaternary @click="dmInput?.click()">导入弹幕</NButton>
         <span class="watch-hint">
           {{ remux ? '转封装流 · 拖动进度将重新加载' : '空格播放/暂停 · ←→ 快进快退 · F 全屏' }} · 看完 95% 自动标记
         </span>

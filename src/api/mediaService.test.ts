@@ -27,3 +27,21 @@ describe('v0.14 mediaService 纯函数', () => {
     expect(isDirectExt('')).toBe(false)
   })
 })
+
+/* ── v0.15 O1 流代理 / O3 WebDAV 地址构造 ── */
+
+import { buildProxyUrl, buildWebdavStreamUrl } from './mediaService'
+
+describe('v0.15 mediaService 纯函数', () => {
+  it('buildProxyUrl：目标 URL 整体编码、尾斜杠规范化', () => {
+    expect(buildProxyUrl('http://s:8787/', 't0k', 'https://a.com/v/EP01.mp4?sign=x')).toBe(
+      'http://s:8787/api/proxy?token=t0k&url=https%3A%2F%2Fa.com%2Fv%2FEP01.mp4%3Fsign%3Dx',
+    )
+  })
+
+  it('buildWebdavStreamUrl：streamId 编码拼接', () => {
+    expect(buildWebdavStreamUrl('http://s:8787', 't', 'abc123')).toBe(
+      'http://s:8787/api/webdav/stream/abc123?token=t',
+    )
+  })
+})

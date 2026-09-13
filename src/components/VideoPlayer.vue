@@ -3,10 +3,16 @@
  *  职责边界：本组件只管「播 + 报进度」——进度持久化、续播定位、完播自动标记由 WatchView 决策；
  *  键盘：空格/←→/↑↓ 由 ArtPlayer hotkey 承担（播放器聚焦时），F 全屏为本组件自定义。
  *  v0.14：remux 模式（服务端 ffmpeg 转封装「直播式」流）不支持随机跳转——
- *  拦截 seek：目标在已缓冲区间内放行原生 seek，否则向外交付「seek 重拉」（外层以 ?t= 重建流）。 */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+ *  拦截 seek：目标在已缓冲区间内放行原生 seek，否则向外交付「seek 重拉」（外层以 ?t= 重建流）。
+ *  v0.15 O1：m3u8 源经 hls.js（MSE）播放，独立动态 chunk，原生 seek 不走重拉；
+ *  在线源加载失败（网络/跨域）向外交付 sourceerror，由外层决定是否经服务代理重试。
+ *  v0.15 O4：artplayer-plugin-danmuku 弹幕（独立 chunk，仅播放页下载）；
+ *  弹幕源以 props 传入，导入后变化经插件 load() 热更新。 */
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type Artplayer from 'artplayer'
-import { formatClock } from '../utils/mediaCore'
+import type { Result as DanmukuResult } from 'artplayer-plugin-danmuku'
+import type { DanmakuItem } from '../utils/danmaku'
+import { formatClock, isHlsUrl } from '../utils/mediaCore'
 
 const props = defineProps<{
   src: string
@@ -15,6 +21,8 @@ const props = defineProps<{
   startAt?: number
   /** v0.14 服务端转封装流：seek 需重拉 */
   remux?: boolean
+  /** v0.15 O4 弹幕数据（按「条目+话数」维度，空数组 = 无弹幕） */
+  danmaku?: DanmakuItem[]
 }>()
 
 const emit = defineEmits<{
@@ -24,16 +32,23 @@ const emit = defineEmits<{
   (e: 'ended'): void
   /** v0.14 remux：用户 seek 超出已缓冲区间 → 请求外层以 t=target 重建流 */
   (e: 'seekreload', target: number): void
+  /** v0.15 O1 在线源加载失败（HLS fatal 错误 / video 网络错误），外层可经代理重试 */
+  (e: 'sourceerror'): void
 }>()
 
 const container = ref<HTMLDivElement | null>(null)
 let art: Artplayer | null = null
+let danmuku: DanmukuResult | null = null
+let hls: { destroy: () => void } | null = null
 let lastEmitAt = 0
 let fKeyHandler: ((e: KeyboardEvent) => void) | null = null
+let videoErrorHandler: (() => void) | null = null
 /** 程序性 seek（续播定位）不触发重拉的时间窗 */
 let suppressSeekUntil = 0
-/** 卸载中标记：销毁流程内的 seek 一律不再重拉 */
+/** 卸载中标记：销毁流程内的 seek 一律不再重拉、不再上报错误 */
 let destroyed = false
+/** sourceerror 只上报一次（外层换源重建组件） */
+let sourceErrored = false
 
 function emitProgress(force = false) {
   if (!art) return
@@ -43,10 +58,20 @@ function emitProgress(force = false) {
   emit('progress', Number(art.currentTime) || 0, Number(art.duration) || 0)
 }
 
+function emitSourceError() {
+  if (destroyed || sourceErrored) return
+  sourceErrored = true
+  emit('sourceerror')
+}
+
 onMounted(async () => {
   if (!container.value) return
   suppressSeekUntil = Date.now() + 1500
   const { default: ArtplayerCtor } = await import('artplayer')
+  // v0.15 O4 弹幕插件与 ArtPlayer 同批动态 import（Option.danmuku 传函数，导入后经 load() 热更新）
+  const { default: danmukuFactory } = await import('artplayer-plugin-danmuku')
+  const hlsSrc = isHlsUrl(props.src)
+
   art = new ArtplayerCtor({
     container: container.value,
     url: props.src,
@@ -65,6 +90,16 @@ onMounted(async () => {
     mutex: true,
     theme: '#8a7bff',
     lang: 'zh-cn',
+    plugins: [
+      danmukuFactory({
+        danmuku: () => Promise.resolve(props.danmaku ?? []),
+        speed: 5,
+        margin: [10, '25%'],
+        opacity: 1,
+        color: '#FFFFFF',
+        antiOverlap: true,
+      }),
+    ],
     controls: [
       {
         name: 'av-theater',
@@ -86,8 +121,45 @@ onMounted(async () => {
           if (art) art.pip = !art.pip
         },
       },
+      {
+        name: 'av-danmuku',
+        position: 'right',
+        index: 7,
+        html: '弹幕',
+        tooltip: '弹幕开关',
+        click: () => {
+          if (!danmuku) return
+          if (danmuku.isHide) danmuku.show()
+          else danmuku.hide()
+        },
+      },
     ],
+    ...(hlsSrc
+      ? {
+          type: 'm3u8',
+          customType: {
+            m3u8: async (video: HTMLVideoElement, url: string) => {
+              const { default: Hls } = await import('hls.js')
+              if (Hls.isSupported()) {
+                const inst = new Hls()
+                inst.on(Hls.Events.ERROR, (_evt, data) => {
+                  // 仅 fatal 网络类错误触发外层容灾（解码类错误重试无意义，但也只报一次不刷屏）
+                  if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) emitSourceError()
+                })
+                hls = inst
+                inst.loadSource(url)
+                inst.attachMedia(video)
+              } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = url // 无 MSE 的老 Safari 原生 HLS 兜底
+              } else {
+                emitSourceError()
+              }
+            },
+          },
+        }
+      : {}),
   })
+  danmuku = (art as unknown as { danmuku?: DanmukuResult }).danmuku ?? null
 
   art.on('ready', () => {
     const duration = Number(art?.duration) || 0
@@ -152,6 +224,16 @@ onMounted(async () => {
   }
   ;(art.video as HTMLVideoElement).addEventListener('seeking', seekingHandler)
 
+  // v0.15 O1 直链（非 HLS）加载失败上报：MEDIA_ERR_NETWORK(2) / MEDIA_ERR_SRC_NOT_SUPPORTED(4)
+  // 覆盖跨域拒绝与地址失效；HLS 走 hls.js 错误通道。只报一次。
+  if (!hlsSrc) {
+    videoErrorHandler = () => {
+      const code = (art?.video as HTMLVideoElement | undefined)?.error?.code
+      if (code === 2 || code === 4) emitSourceError()
+    }
+    ;(art.video as HTMLVideoElement).addEventListener('error', videoErrorHandler)
+  }
+
   // 自定义快捷键：F 全屏（空格/←→/↑↓ 由 ArtPlayer hotkey 处理）
   fKeyHandler = (e: KeyboardEvent) => {
     if (e.key.toLowerCase() !== 'f') return
@@ -162,12 +244,25 @@ onMounted(async () => {
   window.addEventListener('keydown', fKeyHandler)
 })
 
+// v0.15 O4 导入弹幕后热更新（插件已在构造时挂载）
+watch(
+  () => props.danmaku,
+  (items) => {
+    if (danmuku) void danmuku.load(items ?? [])
+  },
+)
+
 onBeforeUnmount(() => {
   // 卸载兜底：补发最后一次进度（外层持久化），再销毁播放器
   destroyed = true
   emitProgress(true)
   if (fKeyHandler) window.removeEventListener('keydown', fKeyHandler)
   fKeyHandler = null
+  if (videoErrorHandler && art) (art.video as HTMLVideoElement).removeEventListener('error', videoErrorHandler)
+  videoErrorHandler = null
+  hls?.destroy()
+  hls = null
+  danmuku = null
   art?.destroy(false)
   art = null
 })

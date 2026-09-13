@@ -14,6 +14,7 @@ const router = createRouter({
         { path: 'discover', name: 'discover', component: () => import('../views/DiscoverView.vue'), meta: { title: '发现' } },
         { path: 'search', name: 'search', component: () => import('../views/SearchView.vue'), meta: { title: '搜索' } },
         { path: 'library', name: 'library', component: () => import('../views/LibraryView.vue'), meta: { title: '我的追番' } },
+        { path: 'history', name: 'history', component: () => import('../views/HistoryView.vue'), meta: { title: '播放历史' } },
         { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { title: '设置' } },
         { path: 'subject/:id', name: 'subject', component: () => import('../views/DetailView.vue'), meta: { title: '条目详情' } },
         { path: 'index/:id', name: 'index-detail', component: () => import('../views/IndexDetailView.vue'), meta: { title: '目录详情' } },

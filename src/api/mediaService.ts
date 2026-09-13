@@ -139,9 +139,33 @@ export function buildStreamUrl(baseUrl: string, token: string, fileId: number, t
   return `${base}/api/stream/${fileId}?${qs.toString()}`
 }
 
+/** v0.15 O1 流代理地址（纯函数）：直链/HLS 经服务代理转发（Token 查询参数传递） */
+export function buildProxyUrl(baseUrl: string, token: string, targetUrl: string): string {
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  return `${base}/api/proxy?token=${encodeURIComponent(token)}&url=${encodeURIComponent(targetUrl)}`
+}
+
+/** v0.15 O3 WebDAV 会话流地址（纯函数）：streamId 为短时会话，凭据只在服务端内存 */
+export function buildWebdavStreamUrl(baseUrl: string, token: string, streamId: string): string {
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  return `${base}/api/webdav/stream/${encodeURIComponent(streamId)}?token=${encodeURIComponent(token)}`
+}
+
 /** 服务播放的进度标识：按「条目 + 话数」记忆（同一集换绑/重扫文件后进度不丢） */
 export function servicePositionId(subjectId: number, sort: number): string {
   return `svc:${subjectId}:${sort}`
+}
+
+export interface SvcWebdavEntry {
+  name: string
+  dir: boolean
+  size?: number
+  mtime?: number
+}
+
+export interface SvcWebdavBrowse {
+  path: string
+  list: SvcWebdavEntry[]
 }
 
 /* ── 错误归一 ── */
@@ -282,5 +306,36 @@ export const mediaService = {
   streamUrl(fileId: number, t?: number): string {
     const { svcUrl, svcToken } = useSettingsStore()
     return buildStreamUrl(svcUrl, svcToken, fileId, t)
+  },
+
+  /** v0.15 O1 在线源代理地址：服务未配置返回空串（调用方据此提示） */
+  proxyUrl(targetUrl: string): string {
+    const { svcUrl, svcToken } = useSettingsStore()
+    if (!svcUrl.trim() || !svcToken.trim()) return ''
+    return buildProxyUrl(svcUrl, svcToken, targetUrl)
+  },
+
+  /* ── v0.15 O3 WebDAV（凭据仅随 POST 体流转，来自设置页本机存储）── */
+
+  webdavBrowse(path: string): Promise<SvcWebdavBrowse> {
+    const { webdavUrl, webdavUser, webdavPass } = useSettingsStore()
+    return post<SvcWebdavBrowse>('/api/webdav/browse', {
+      url: webdavUrl.trim(),
+      username: webdavUser,
+      password: webdavPass,
+      path,
+    })
+  },
+  webdavOpen(): Promise<{ streamId: string }> {
+    const { webdavUrl, webdavUser, webdavPass } = useSettingsStore()
+    return post<{ streamId: string }>('/api/webdav/open', {
+      url: webdavUrl.trim(),
+      username: webdavUser,
+      password: webdavPass,
+    })
+  },
+  webdavStreamUrl(streamId: string): string {
+    const { svcUrl, svcToken } = useSettingsStore()
+    return buildWebdavStreamUrl(svcUrl, svcToken, streamId)
   },
 }
