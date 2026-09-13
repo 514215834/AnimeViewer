@@ -10,6 +10,8 @@ export interface DanmakuItem {
   mode: 0 | 1 | 2
   color?: string
   text: string
+  /** 附加内联样式（插件渲染链路最后应用，可覆盖默认描边等；解析器不产出，由播放器层补充） */
+  style?: Partial<CSSStyleDeclaration>
 }
 
 /** 单集弹幕上限：B 站长视频可达数千条，超出截断保护播放器 */

@@ -50,6 +50,12 @@ let destroyed = false
 /** sourceerror 只上报一次（外层换源重建组件） */
 let sourceErrored = false
 
+/** 弹幕统一关闭描边：插件默认模板带四向 1px 黑色 text-shadow（观感即「弹幕有边框」），
+ *  danmu.style 在插件渲染链路最后应用，可覆盖默认描边；border 字段是另一种彩色边框，一并显式关闭。 */
+function danmukuOf(items?: DanmakuItem[]) {
+  return (items ?? []).map((d) => ({ ...d, border: false as const, style: { ...d.style, textShadow: 'none' } }))
+}
+
 function emitProgress(force = false) {
   if (!art) return
   const now = Date.now()
@@ -92,7 +98,7 @@ onMounted(async () => {
     lang: 'zh-cn',
     plugins: [
       danmukuFactory({
-        danmuku: () => Promise.resolve(props.danmaku ?? []),
+        danmuku: () => Promise.resolve(danmukuOf(props.danmaku)),
         speed: 5,
         margin: [10, '25%'],
         opacity: 1,
@@ -248,7 +254,7 @@ onMounted(async () => {
 watch(
   () => props.danmaku,
   (items) => {
-    if (danmuku) void danmuku.load(items ?? [])
+    if (danmuku) void danmuku.load(danmukuOf(items))
   },
 )
 
