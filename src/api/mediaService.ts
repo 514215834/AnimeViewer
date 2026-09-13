@@ -79,6 +79,9 @@ export interface SvcFile {
   matchedAt?: number
   probedAt?: number
   error?: string
+  /** v0.16 DN5 来源下载任务溯源 */
+  downloadTaskId?: number
+  downloadTaskName?: string
 }
 
 export interface SvcPage<T> {
@@ -149,6 +152,117 @@ export function buildProxyUrl(baseUrl: string, token: string, targetUrl: string)
 export function buildWebdavStreamUrl(baseUrl: string, token: string, streamId: string): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
   return `${base}/api/webdav/stream/${encodeURIComponent(streamId)}?token=${encodeURIComponent(token)}`
+}
+
+/* ── v0.16 DN2/DN3 下载中心（类型与服务端 Dtos.java 一一对应）── */
+
+export type DownloadStatus = 'queued' | 'metadata' | 'downloading' | 'paused' | 'completed' | 'error'
+
+export interface SvcDownloadFile {
+  index: number
+  path: string
+  name: string
+  length: number
+  completedLength: number
+  selected: boolean
+}
+
+export interface SvcDownloadTask {
+  id: number
+  gid?: string
+  infoHash?: string
+  name?: string
+  uri: string
+  subjectId?: number
+  subjectName?: string
+  subjectNameCn?: string
+  episodeSort?: number
+  status: DownloadStatus
+  totalLength: number
+  completedLength: number
+  downloadSpeed: number
+  uploadSpeed: number
+  connections: number
+  seeds: number
+  files: SvcDownloadFile[]
+  error?: string
+  createdAt?: number
+  completedAt?: number
+}
+
+export interface SvcDownloadEngine {
+  available: boolean
+  mode: 'managed' | 'external'
+  version?: string
+  downloadDir?: string
+  error?: string
+}
+
+export interface SvcDownloadSettings {
+  enginePath: string
+  engineUrl: string
+  engineSecret: string
+  rpcPort: number
+  downloadDir: string
+  maxConcurrent: number
+  uploadLimit: string
+  trackers: string[]
+  autoScan: boolean
+  seedTimeMinutes: number
+  checkCertificate: boolean
+}
+
+export interface SvcDownloadAddRequest {
+  uri: string
+  subjectId?: number
+  subjectName?: string
+  subjectNameCn?: string
+  episodeSort?: number
+}
+
+/** 磁力解析纯函数（添加弹窗预览用）：infohash / dn 显示名 / 自带 tracker 数 */
+export function parseMagnet(uri: string): { infoHash?: string; displayName?: string; trackers: number } {
+  const out: { infoHash?: string; displayName?: string; trackers: number } = { trackers: 0 }
+  if (!uri.startsWith('magnet:?')) return out
+  for (const pair of uri.slice(8).split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq <= 0) continue
+    const k = pair.slice(0, eq)
+    const v = pair.slice(eq + 1)
+    try {
+      if (k === 'xt' && v.startsWith('urn:btih:')) out.infoHash = v.slice(9)
+      else if (k === 'dn') out.displayName = decodeURIComponent(v.replace(/\+/g, ' '))
+      else if (k === 'tr') out.trackers += 1
+    } catch {
+      /* 非法编码忽略该参数 */
+    }
+  }
+  return out
+}
+
+/** 下载速度/体积格式化（纯函数） */
+export function formatSpeed(bytesPerSec: number): string {
+  if (!bytesPerSec || bytesPerSec <= 0) return '0 B/s'
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+  let v = bytesPerSec
+  let u = 0
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024
+    u += 1
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[u]}`
+}
+
+export function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let v = bytes
+  let u = 0
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024
+    u += 1
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[u]}`
 }
 
 /** 服务播放的进度标识：按「条目 + 话数」记忆（同一集换绑/重扫文件后进度不丢） */
@@ -337,5 +451,46 @@ export const mediaService = {
   webdavStreamUrl(streamId: string): string {
     const { svcUrl, svcToken } = useSettingsStore()
     return buildWebdavStreamUrl(svcUrl, svcToken, streamId)
+  },
+
+  /* ── v0.16 DN1/DN3 下载中心 ── */
+
+  downloadEngine(): Promise<SvcDownloadEngine> {
+    return request<SvcDownloadEngine>('/api/downloads/engine')
+  },
+  restartDownloadEngine(): Promise<SvcDownloadEngine> {
+    return post<SvcDownloadEngine>('/api/downloads/engine/restart')
+  },
+  downloadSettings(): Promise<SvcDownloadSettings> {
+    return request<SvcDownloadSettings>('/api/downloads/settings')
+  },
+  saveDownloadSettings(s: SvcDownloadSettings): Promise<SvcDownloadSettings> {
+    return request<SvcDownloadSettings>('/api/downloads/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    })
+  },
+  downloads(): Promise<SvcDownloadTask[]> {
+    return request<{ tasks: SvcDownloadTask[] }>('/api/downloads').then((r) => r.tasks)
+  },
+  addDownload(req: SvcDownloadAddRequest): Promise<SvcDownloadTask> {
+    return post<SvcDownloadTask>('/api/downloads', req)
+  },
+  pauseDownload(id: number): Promise<void> {
+    return post<void>(`/api/downloads/${id}/pause`)
+  },
+  resumeDownload(id: number): Promise<void> {
+    return post<void>(`/api/downloads/${id}/resume`)
+  },
+  applyDownloadSelection(id: number, indexes: number[]): Promise<void> {
+    return post<void>(`/api/downloads/${id}/selection`, { indexes })
+  },
+  removeDownload(id: number, deleteFiles: boolean): Promise<void> {
+    return request<void>(`/api/downloads/${id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deleteFiles }),
+    })
   },
 }

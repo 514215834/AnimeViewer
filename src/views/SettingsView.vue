@@ -8,6 +8,7 @@ import {
   NFormItem,
   NIcon,
   NInput,
+  NInputNumber,
   NPopconfirm,
   NRadioButton,
   NRadioGroup,
@@ -27,7 +28,7 @@ import type { IdbStats } from '../utils/idbCache'
 import { clearErrLog, formatDiagnostics, readErrLog } from '../utils/errlog'
 import type { ErrLogEntry } from '../utils/errlog'
 import { exportMedia, importMedia } from '../utils/mediaStore'
-import { mediaService, ServiceError, type SvcHealth, type SvcStatus } from '../api/mediaService'
+import { mediaService, ServiceError, type SvcDownloadEngine, type SvcHealth, type SvcStatus } from '../api/mediaService'
 import MediaLibraryDrawer from '../components/MediaLibraryDrawer.vue'
 
 const message = useMessage()
@@ -211,6 +212,78 @@ function openMediaLibrary() {
   showMediaLibrary.value = true
 }
 
+/* ── v0.16 DN4 下载设置（配置存服务端 SQLite settings 表，前端表单直读直写） ── */
+const dlSaving = ref(false)
+const dlEngine = ref<SvcDownloadEngine | null>(null)
+const dlError = ref('')
+const dl = reactive({
+  enginePath: 'aria2c',
+  engineUrl: '',
+  engineSecret: '',
+  rpcPort: 16800,
+  downloadDir: './data/downloads',
+  maxConcurrent: 2,
+  uploadLimit: '',
+  trackersText: '',
+  autoScan: true,
+  seedTimeMinutes: 0,
+  checkCertificate: false,
+})
+
+async function loadDownloadSettings() {
+  if (!settings.svcEnabled) return
+  dlError.value = ''
+  try {
+    const s = await mediaService.downloadSettings()
+    Object.assign(dl, {
+      enginePath: s.enginePath,
+      engineUrl: s.engineUrl,
+      engineSecret: s.engineSecret,
+      rpcPort: s.rpcPort,
+      downloadDir: s.downloadDir,
+      maxConcurrent: s.maxConcurrent,
+      uploadLimit: s.uploadLimit,
+      trackersText: s.trackers.join('\n'),
+      autoScan: s.autoScan,
+      seedTimeMinutes: s.seedTimeMinutes,
+      checkCertificate: s.checkCertificate,
+    })
+    dlEngine.value = await mediaService.downloadEngine()
+  } catch (e) {
+    dlError.value = e instanceof ServiceError ? e.message : String(e)
+  }
+}
+
+async function saveDownloadSettings() {
+  dlSaving.value = true
+  dlError.value = ''
+  try {
+    const s = await mediaService.saveDownloadSettings({
+      enginePath: dl.enginePath.trim(),
+      engineUrl: dl.engineUrl.trim(),
+      engineSecret: dl.engineSecret.trim(),
+      rpcPort: Number(dl.rpcPort) || 16800,
+      downloadDir: dl.downloadDir.trim(),
+      maxConcurrent: Number(dl.maxConcurrent) || 2,
+      uploadLimit: dl.uploadLimit.trim(),
+      trackers: dl.trackersText
+        .split(/[\n,]+/)
+        .map((x) => x.trim())
+        .filter(Boolean),
+      autoScan: dl.autoScan,
+      seedTimeMinutes: Number(dl.seedTimeMinutes) || 0,
+      checkCertificate: dl.checkCertificate,
+    })
+    Object.assign(dl, { ...s, trackersText: s.trackers.join('\n') })
+    dlEngine.value = await mediaService.downloadEngine()
+    message.success(dlEngine.value.available ? '下载设置已保存，引擎就绪' : `设置已保存，但引擎未就绪：${dlEngine.value.error ?? ''}`)
+  } catch (e) {
+    dlError.value = e instanceof ServiceError ? e.message : String(e)
+  } finally {
+    dlSaving.value = false
+  }
+}
+
 /** E5 资料卡：优先取云端资料，回退到同步缓存的 me */
 const profile = computed(() => {
   if (sync.profile) return sync.profile
@@ -236,6 +309,7 @@ onMounted(() => {
   void sync.ensureProfile()
   void refreshCacheStats()
   if (settings.svcEnabled) void testService(true)
+  void loadDownloadSettings()
 })
 
 function save() {
@@ -511,6 +585,66 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
+        <NFormItem label="BT 下载（可选：媒体服务侧 aria2 引擎——磁力下载完成后自动进入媒体库匹配播放）">
+          <div class="svc-box">
+            <div class="svc-grid dl-grid">
+              <NInput v-model:value="dl.enginePath" placeholder="aria2c 可执行文件（PATH 探测；未入 PATH 填完整路径，如 G:/aria2/aria2c.exe）" clearable />
+              <NInput v-model:value="dl.engineUrl" placeholder="外部实例 RPC 地址（选填，如 http://127.0.0.1:6800/rpc；填写后优先于托管模式）" clearable />
+              <NInput
+                v-model:value="dl.engineSecret"
+                type="password"
+                show-password-on="click"
+                placeholder="外部实例 rpc-secret（选填）"
+                clearable
+              />
+              <div class="dl-row2">
+                <NInputNumber v-model:value="dl.rpcPort" :min="1" :max="65535" placeholder="RPC 端口">
+                  <template #prefix>RPC</template>
+                </NInputNumber>
+                <NInputNumber v-model:value="dl.maxConcurrent" :min="1" :max="10" placeholder="并发任务">
+                  <template #prefix>并发</template>
+                </NInputNumber>
+                <NInputNumber v-model:value="dl.seedTimeMinutes" :min="0" :max="100000" placeholder="做种分钟">
+                  <template #prefix>做种</template>
+                </NInputNumber>
+                <NInput v-model:value="dl.uploadLimit" placeholder="上传限速（如 2M，留空不限）" clearable />
+              </div>
+              <NInput v-model:value="dl.downloadDir" placeholder="下载目录（相对服务工作目录，默认 ./data/downloads）" />
+              <NInput
+                v-model:value="dl.trackersText"
+                type="textarea"
+                :rows="2"
+                placeholder="注入磁力的公共 tracker（每行一个；无 tracker 磁力仅靠 DHT，元数据解析极慢）"
+              />
+              <div class="dl-switches">
+                <span class="dl-switch-item">完成后自动入库扫描 <NSwitch v-model:value="dl.autoScan" size="small" /></span>
+                <span class="dl-switch-item">aria2 证书校验 <NSwitch v-model:value="dl.checkCertificate" size="small" /></span>
+              </div>
+            </div>
+            <div class="svc-status">
+              <template v-if="dlError">
+                <span class="svc-err">{{ dlError }}</span>
+              </template>
+              <template v-else-if="dlEngine">
+                <span>
+                  {{ dlEngine.available ? `aria2 ${dlEngine.version ?? ''}（${dlEngine.mode === 'external' ? '外部实例' : '托管模式'}）` : '引擎不可用' }}
+                </span>
+                <span v-if="dlEngine.available">目录 {{ dlEngine.downloadDir }}</span>
+                <span v-else class="svc-err">{{ dlEngine.error }}</span>
+              </template>
+              <span v-else class="svc-muted">引擎状态未知——保存设置后自动探测</span>
+              <div class="btn-row">
+                <NButton secondary size="small" :loading="dlSaving" @click="saveDownloadSettings">保存并应用</NButton>
+                <NButton quaternary size="small" :disabled="!settings.svcEnabled" @click="loadDownloadSettings">重新读取</NButton>
+              </div>
+            </div>
+            <div class="svc-tip">
+              下载中心（侧边栏「下载」）粘贴磁力/种子直链即可下载；完成后自动触发媒体库增量扫描并按文件名匹配绑定，
+              剧集 Tab 随即出现播放按钮。Windows 下 aria2 建议关闭证书校验（schannel 吊销检查会导致 HTTPS tracker 握手失败）。
+            </div>
+          </div>
+        </NFormItem>
+
         <NFormItem label="诊断信息（仅存本地，不含 Token；遇到异常可复制后反馈）">
           <div class="diag-box">
             <div class="diag-meta">
@@ -717,6 +851,42 @@ async function onImportFile(ev: Event) {
     grid-template-columns: 1fr;
   }
 }
+
+/* v0.16 DN4 下载设置 */
+.dl-grid > :first-child,
+.dl-grid > :nth-child(5),
+.dl-grid > :nth-child(6) {
+  grid-column: 1 / -1;
+}
+
+.dl-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1.4fr;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .dl-row2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.dl-switches {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+}
+
+.dl-switch-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--av-text-secondary);
+}
+
 
 .svc-status {
   display: flex;

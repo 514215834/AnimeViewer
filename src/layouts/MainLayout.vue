@@ -21,6 +21,7 @@ import {
   SearchOutline,
   LibraryOutline,
   TimeOutline,
+  CloudDownloadOutline,
   SettingsOutline,
   TvOutline,
   MoonOutline,
@@ -64,6 +65,7 @@ const menuOptions = computed<MenuOption[]>(() => [
   { label: '搜索', key: 'search', icon: renderIcon(SearchOutline) },
   { label: `我的追番${library.count ? ` (${library.count})` : ''}`, key: 'library', icon: renderIcon(LibraryOutline) },
   { label: '播放历史', key: 'history', icon: renderIcon(TimeOutline) },
+  { label: '下载', key: 'downloads', icon: renderIcon(CloudDownloadOutline) },
   { label: '设置', key: 'settings', icon: renderIcon(SettingsOutline) },
 ])
 

@@ -45,3 +45,40 @@ describe('v0.15 mediaService 纯函数', () => {
     )
   })
 })
+
+/* ── v0.16 DN3 下载中心 ── */
+
+import { formatBytes, formatSpeed, parseMagnet } from './mediaService'
+
+describe('v0.16 下载中心纯函数', () => {
+  it('parseMagnet：infohash/dn 显示名/tracker 计数', () => {
+    const m = parseMagnet(
+      'magnet:?xt=urn:btih:d160b8d8ea35a5b4e52837468fc8f03d55cef1f7' +
+        '&dn=%E5%90%8D%E4%BE%A6%E6%8E%A2' +
+        '&tr=' +
+        encodeURIComponent('http://t1/announce') +
+        '&tr=' +
+        encodeURIComponent('http://t2/announce'),
+    )
+    expect(m.infoHash).toBe('d160b8d8ea35a5b4e52837468fc8f03d55cef1f7')
+    expect(m.displayName).toBe('名侦探')
+    expect(m.trackers).toBe(2)
+  })
+
+  it('parseMagnet：无 dn/tr 的裸磁力与非磁力输入', () => {
+    const bare = parseMagnet(`magnet:?xt=urn:btih:${'a'.repeat(40)}`)
+    expect(bare.infoHash).toBe('a'.repeat(40))
+    expect(bare.displayName).toBeUndefined()
+    expect(bare.trackers).toBe(0)
+    expect(parseMagnet('https://example.com/a.torrent').infoHash).toBeUndefined()
+    expect(parseMagnet('').trackers).toBe(0)
+  })
+
+  it('formatBytes / formatSpeed：分级换算与零值', () => {
+    expect(formatBytes(0)).toBe('0 B')
+    expect(formatBytes(1024)).toBe('1.0 KB')
+    expect(formatBytes(1024 * 1024 * 5)).toBe('5.0 MB')
+    expect(formatSpeed(0)).toBe('0 B/s')
+    expect(formatSpeed(1024 * 1024 * 16)).toBe('16.0 MB/s')
+  })
+})

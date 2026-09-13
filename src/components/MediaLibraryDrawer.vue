@@ -17,7 +17,7 @@ import {
   NSpin,
   NTag,
 } from 'naive-ui'
-import { RefreshOutline, SearchOutline, TrashOutline } from '@vicons/ionicons5'
+import { CloudDownloadOutline, RefreshOutline, SearchOutline, TrashOutline } from '@vicons/ionicons5'
 import {
   mediaService,
   type SvcBangumiEpisode,
@@ -434,6 +434,9 @@ onBeforeUnmount(stopPolling)
                   {{ f.ext.toUpperCase() }} · {{ fmtSize(f.size) }}{{ fmtDuration(f.durationSec) ? ` · ${fmtDuration(f.durationSec)}` : '' }}
                   <template v-if="f.width"> · {{ f.width }}×{{ f.height }}</template>
                 </span>
+                <span v-if="f.downloadTaskName" class="file-src">
+                  <NIcon :component="CloudDownloadOutline" /> 来自下载任务：{{ f.downloadTaskName }}
+                </span>
                 <span class="file-parse">
                   <template v-if="f.parsedTitle">识别：{{ f.parsedTitle }}<template v-if="f.parsedEpisode"> 第 {{ f.parsedEpisode }} 话</template></template>
                   <template v-else>未识别出标题</template>
@@ -634,6 +637,19 @@ onBeforeUnmount(stopPolling)
 .file-parse {
   font-size: 12px;
   color: var(--av-text-secondary);
+}
+
+/* v0.16 DN5 来源下载任务溯源 */
+.file-src {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--av-primary);
+}
+
+.file-src .n-icon {
+  font-size: 12px;
 }
 
 .file-error {
