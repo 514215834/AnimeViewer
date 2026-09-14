@@ -299,6 +299,47 @@ async function saveDownloadSettings() {
   }
 }
 
+/* ── v0.19 SU1 订阅设置（配置存服务端 SQLite settings 表；检索间隔/滤广告下限/全自动三重保护） ── */
+const subSaving = ref(false)
+const subError = ref('')
+const sub = reactive({
+  intervalMinutes: 60,
+  minSizeMb: 0,
+  autoDailyLimit: 5,
+  autoMaxSizeMb: 0,
+  autoOnlyMatched: true,
+})
+
+async function loadSubscriptionSettings() {
+  if (!settings.svcEnabled) return
+  subError.value = ''
+  try {
+    Object.assign(sub, await mediaService.subscriptionSettings())
+  } catch (e) {
+    subError.value = e instanceof ServiceError ? e.message : String(e)
+  }
+}
+
+async function saveSubscriptionSettings() {
+  subSaving.value = true
+  subError.value = ''
+  try {
+    const s = await mediaService.saveSubscriptionSettings({
+      intervalMinutes: Number(sub.intervalMinutes) || 60,
+      minSizeMb: Number(sub.minSizeMb) || 0,
+      autoDailyLimit: Number(sub.autoDailyLimit) || 0,
+      autoMaxSizeMb: Number(sub.autoMaxSizeMb) || 0,
+      autoOnlyMatched: sub.autoOnlyMatched,
+    })
+    Object.assign(sub, s)
+    message.success('订阅设置已保存')
+  } catch (e) {
+    subError.value = e instanceof ServiceError ? e.message : String(e)
+  } finally {
+    subSaving.value = false
+  }
+}
+
 /** E5 资料卡：优先取云端资料，回退到同步缓存的 me */
 const profile = computed(() => {
   if (sync.profile) return sync.profile
@@ -325,6 +366,7 @@ onMounted(() => {
   void refreshCacheStats()
   if (settings.svcEnabled) void testService(true)
   void loadDownloadSettings()
+  void loadSubscriptionSettings()
 })
 
 function save() {
@@ -666,6 +708,47 @@ async function onImportFile(ev: Event) {
               {{ isQb
                 ? 'qBittorrent 直开（用户定案，不用 WebUI）：添加磁力时服务端直接拉起本机 qBittorrent 并带上磁力参数，下载进度与文件管理全部在 qBt 内进行（本页下载中心仅保留任务台账，无进度同步）；已开着的 qBt 实例会由其单实例机制接收任务。种子直链会暂存为临时 .torrent 后拉起。'
                 : '下载中心（侧边栏「下载」）粘贴磁力/种子直链即可下载；完成后自动触发媒体库增量扫描并按文件名匹配绑定，剧集 Tab 随即出现播放按钮。Windows 下 aria2 建议关闭证书校验（schannel 吊销检查会导致 HTTPS tracker 握手失败）。' }}
+            </div>
+          </div>
+        </NFormItem>
+
+        <!-- v0.19 SU1 订阅自动化 -->
+        <NFormItem label="订阅自动化（追番自动下载 Sonarr-lite；条目在详情页剧集 Tab 开启「自动追下载」）">
+          <div class="svc-box">
+            <div class="svc-grid dl-grid">
+              <div class="dl-row2">
+                <NInputNumber v-model:value="sub.intervalMinutes" :min="30" :max="360" placeholder="检索间隔">
+                  <template #prefix>间隔</template>
+                  <template #suffix>分钟</template>
+                </NInputNumber>
+                <NInputNumber v-model:value="sub.minSizeMb" :min="0" placeholder="大小下限">
+                  <template #prefix>下限</template>
+                  <template #suffix>MB</template>
+                </NInputNumber>
+              </div>
+              <div class="dl-row2">
+                <NInputNumber v-model:value="sub.autoDailyLimit" :min="0" :max="1000" placeholder="每日自动入队上限">
+                  <template #prefix>日限</template>
+                </NInputNumber>
+                <NInputNumber v-model:value="sub.autoMaxSizeMb" :min="0" placeholder="单任务大小上限">
+                  <template #prefix>单限</template>
+                  <template #suffix>MB</template>
+                </NInputNumber>
+              </div>
+              <div class="dl-switches">
+                <span class="dl-switch-item">全自动仅限已匹配条目 <NSwitch v-model:value="sub.autoOnlyMatched" size="small" /></span>
+              </div>
+            </div>
+            <div class="svc-status">
+              <template v-if="subError"><span class="svc-err">{{ subError }}</span></template>
+              <span v-else class="svc-muted">命中默认进入下载中心「待确认命中」队列，人工把关后才下载</span>
+              <div class="btn-row">
+                <NButton secondary size="small" :loading="subSaving" :disabled="!settings.svcEnabled" @click="saveSubscriptionSettings">保存订阅设置</NButton>
+              </div>
+            </div>
+            <div class="svc-tip">
+              服务端按间隔检索已订阅条目的 RSS 新集资源（过滤已下载/已看过的集数与历史命中）；「全自动」为条目级开关，
+              三重保护 = 每日自动入队上限 + 单任务大小上限 + 仅已匹配条目（保护不满足时降级待确认）。
             </div>
           </div>
         </NFormItem>

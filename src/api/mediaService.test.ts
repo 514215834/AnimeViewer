@@ -133,3 +133,23 @@ describe('v0.17 资源标题集数猜测', () => {
     expect(guessEpisodeSortFromTitle('完整季播合集')).toBeNull()
   })
 })
+
+import { maxWatched } from './mediaService'
+
+describe('v0.19 订阅观看基线（maxWatched 纯函数）', () => {
+  it('取已看最大话数', () => {
+    expect(maxWatched([1, 2, 8])).toBe(8)
+    expect(maxWatched([5])).toBe(5)
+  })
+
+  it('空列表 / undefined / null 返回 0', () => {
+    expect(maxWatched([])).toBe(0)
+    expect(maxWatched(undefined)).toBe(0)
+    expect(maxWatched(null)).toBe(0)
+  })
+
+  it('忽略非正数与非有限值（脏数据兜底）', () => {
+    expect(maxWatched([3, NaN, 0, -1])).toBe(3)
+    expect(maxWatched([Infinity])).toBe(0)
+  })
+})

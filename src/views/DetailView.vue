@@ -38,7 +38,7 @@ import { charAvatarUrl, coverCardUrl, upgradeStoredCover } from '../utils/image'
 import { listBindings, saveDanmaku } from '../utils/mediaStore'
 import { parseDanmakuXml } from '../utils/danmaku'
 import type { MediaBinding } from '../utils/mediaCore'
-import { mediaService, type SvcSubjectFile } from '../api/mediaService'
+import { mediaService, maxWatched, ServiceError, type SvcSubscription, type SvcSubjectFile } from '../api/mediaService'
 import type { Episode, RelatedSubject, SubjectCharacter, SubjectDetail, SubjectPerson } from '../types/bangumi'
 import PosterImage from '../components/PosterImage.vue'
 import EmptyHint from '../components/EmptyHint.vue'
@@ -214,12 +214,61 @@ function onResourceEnqueued(payload: { episodeSort?: number }) {
   if (payload.episodeSort) message.info(`第 ${payload.episodeSort} 话资源已入队，可在「下载」页查看进度`)
 }
 
+/* ── v0.19 SU1 条目级「自动追下载」订阅：服务已配置才可见；开启即后台定时检索（默认命中入待确认队列） ── */
+const subscription = ref<SvcSubscription | null>(null)
+const subscribed = computed(() => subscription.value !== null)
+const subBusy = ref(false)
+
+async function refreshSubscription() {
+  if (!settings.svcEnabled || !subject.value) return
+  try {
+    const list = await mediaService.subscriptions()
+    subscription.value = list.find((s) => s.subjectId === id.value) ?? null
+    // 观看进度越过基线时静默抬升过滤基线（只升不降，服务端已做同值防御）
+    const watchedMax = maxWatched(entry.value?.watchedEps)
+    if (subscription.value && watchedMax > subscription.value.minEpisode) {
+      subscription.value = await mediaService.updateSubscription(subscription.value.id, { minEpisode: watchedMax })
+    }
+  } catch {
+    // 服务不可达：静默降级为无开关干扰
+  }
+}
+
+async function toggleSubscription(on: boolean) {
+  if (!subject.value || subBusy.value) return
+  subBusy.value = true
+  try {
+    if (on) {
+      subscription.value = await mediaService.subscribeSubject({
+        subjectId: subject.value.id,
+        subjectName: subject.value.name,
+        subjectNameCn: subject.value.name_cn,
+        minEpisode: maxWatched(entry.value?.watchedEps),
+      })
+      message.success(`已订阅「${subject.value.name_cn || subject.value.name}」，正在执行首次检索——命中将在下载中心待确认`)
+    } else if (subscription.value) {
+      await mediaService.unsubscribeSubject(subscription.value.id)
+      subscription.value = null
+      message.info('已取消订阅（已生成的待确认命中保留）')
+    }
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '订阅操作失败')
+  } finally {
+    subBusy.value = false
+  }
+}
+
 // 剧集 Tab 激活 / 条目切换时刷新绑定状态
 watch([id, activeTab], ([, tab]) => {
   if (tab === 'eps') {
     void refreshBindings()
     void refreshSvcFiles()
+    void refreshSubscription()
   }
+})
+
+watch(id, () => {
+  subscription.value = null
 })
 
 function openEpDetail(ep: Episode) {
@@ -696,6 +745,24 @@ onBeforeUnmount(() => {
 
           <NTabPane name="eps" tab="剧集">
             <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
+            <!-- v0.19 SU1 自动追下载订阅：独立行，不依赖加入追番（服务已配置即可订阅） -->
+            <div v-if="settings.svcEnabled && subject" class="eps-sub-row">
+              <span
+                class="eps-sub"
+                :title="subscribed ? '已订阅：定时检索新集资源；在下载中心管理订阅与待确认命中' : '开启后服务端定时检索本条目新集资源（默认命中后人工确认）'"
+              >
+                自动追下载
+                <NSwitch
+                  size="small"
+                  :value="subscribed"
+                  :loading="subBusy"
+                  @update:value="toggleSubscription"
+                />
+              </span>
+              <span v-if="subscribed" class="eps-sub-state">
+                已订阅 · 基线第 {{ subscription?.minEpisode ?? 0 }} 话后 · 命中在下载中心待确认
+              </span>
+            </div>
             <EmptyHint v-if="!inLibrary" text="加入追番后，可在这里勾选单集记录进度" />
             <!-- E1 沉浸观剧模式：逐集「标记并下一集」，单集增量同步 -->
             <template v-else-if="immersive && immersiveEp">
@@ -1320,6 +1387,31 @@ html.light .detail-poster :deep(.poster-frame) {
 .eps-count {
   font-size: 12px;
   opacity: 0.6;
+}
+
+/* v0.19 SU1 自动追下载订阅行 */
+.eps-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px dashed var(--av-border);
+  border-radius: 10px;
+  flex-wrap: wrap;
+}
+
+.eps-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.eps-sub-state {
+  font-size: 11.5px;
+  color: var(--av-text-tertiary);
 }
 
 /* H2 章节过滤框：固定宽度避免挤压计数 */

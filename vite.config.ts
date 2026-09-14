@@ -13,9 +13,12 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // v0.10 P2：框架与组件库拆独立 chunk，业务代码迭代时浏览器缓存不受影响
+        // v0.19：mediaService 显式拆独立 chunk——MainLayout 全局通知轮询急切导入后，
+        // 自然分包失效会把全部 API 层吞进业务主包（显式拆分恢复 v0.17 的分包形态）
         manualChunks: {
           'vendor-vue': ['vue', 'vue-router', 'pinia'],
           'vendor-naive': ['naive-ui'],
+          mediaService: ['./src/api/mediaService'],
         },
       },
     },

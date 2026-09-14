@@ -4,12 +4,16 @@
  *  服务未配置时降级「一键复制磁力」）→ 任务列表（2s 轮询，进度/速度/peer 如实显示）→
  *  任务详情抽屉（文件清单勾选 select-file、删除含删文件）。
  *  v0.18 qBittorrent 外部应用直开：添加磁力即拉起本机 qBt（无 RPC），此类任务状态定格
- *  external（已交给下载器），列表不显示进度条/速度，暂停恢复与文件勾选被隐藏（在 qBt 中操作）。 */
+ *  external（已交给下载器），列表不显示进度条/速度，暂停恢复与文件勾选被隐藏（在 qBt 中操作）。
+ *  v0.19 SU1/SU2 订阅自动化：待确认命中区（一键下载/忽略/忽略字幕组并记忆）+ 订阅管理
+ *  （全自动开关/立即全量检索/取消订阅）+ 命中历史台账。 */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   NAlert,
   NButton,
   NCheckbox,
+  NCollapse,
+  NCollapseItem,
   NDrawer,
   NDrawerContent,
   NEmpty,
@@ -21,6 +25,7 @@ import {
   NProgress,
   NSelect,
   NSpin,
+  NSwitch,
   NTag,
   NTooltip,
   useMessage,
@@ -44,6 +49,8 @@ import {
   ServiceError,
   type SvcDownloadEngine,
   type SvcDownloadTask,
+  type SvcSubHit,
+  type SvcSubscription,
 } from '../api/mediaService'
 import EmptyHint from '../components/EmptyHint.vue'
 
@@ -101,12 +108,123 @@ async function refreshTasks(silent = true) {
 }
 
 onMounted(async () => {
-  await Promise.all([refreshEngine(), refreshTasks(false)])
+  await Promise.all([refreshEngine(), refreshTasks(false), refreshSubscriptionData()])
   timer = window.setInterval(refreshTasks, 2000)
+  subTimer = window.setInterval(refreshSubscriptionData, 10000)
 })
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
+  if (subTimer) window.clearInterval(subTimer)
 })
+
+/* ── v0.19 SU1/SU2 订阅与命中（10s 轮询；操作后立即刷新） ── */
+
+const pendingHits = ref<SvcSubHit[]>([])
+const hitHistory = ref<SvcSubHit[]>([])
+const subs = ref<SvcSubscription[]>([])
+const subBusyId = ref<number | null>(null)
+const checkNowBusy = ref(false)
+let subTimer: number | null = null
+
+const HIT_STATUS: Record<string, { label: string; type: 'default' | 'success' | 'warning' | 'info' | 'error' }> = {
+  pending: { label: '待确认', type: 'warning' },
+  enqueued: { label: '已入队', type: 'info' },
+  auto: { label: '已自动入队', type: 'success' },
+  ignored: { label: '已忽略', type: 'error' },
+}
+
+async function refreshSubscriptionData(silent = true) {
+  if (!serviceConfigured.value) return
+  try {
+    const [pending, history, list] = await Promise.all([
+      mediaService.subHits('pending', 50),
+      mediaService.subHits(undefined, 30),
+      mediaService.subscriptions(),
+    ])
+    pendingHits.value = pending
+    hitHistory.value = history.filter((h) => h.status !== 'pending')
+    subs.value = list
+  } catch (e) {
+    if (!silent) message.error(e instanceof ServiceError ? e.message : '订阅数据加载失败')
+  }
+}
+
+function subName(s: SvcSubscription): string {
+  return s.subjectNameCn || s.subjectName || `条目 ${s.subjectId}`
+}
+
+function hitSubjectName(h: SvcSubHit): string {
+  return h.subjectNameCn || h.subjectName || `条目 ${h.subjectId}`
+}
+
+async function acceptHit(h: SvcSubHit) {
+  subBusyId.value = h.id
+  try {
+    await mediaService.acceptHit(h.id)
+    message.success(h.episodeSort ? `第 ${h.episodeSort} 话资源已加入下载队列` : '资源已加入下载队列')
+    await Promise.all([refreshSubscriptionData(), refreshTasks()])
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '入队失败')
+    await refreshSubscriptionData()
+  } finally {
+    subBusyId.value = null
+  }
+}
+
+async function ignoreHit(h: SvcSubHit, blockFansub: boolean) {
+  subBusyId.value = h.id
+  try {
+    await mediaService.ignoreHit(h.id, blockFansub)
+    message.success(blockFansub && h.fansub ? `已忽略，且后续不再显示「${h.fansub}」的命中` : '已忽略该命中')
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '操作失败')
+    await refreshSubscriptionData()
+  } finally {
+    subBusyId.value = null
+  }
+}
+
+async function toggleSubAuto(s: SvcSubscription, auto: boolean) {
+  subBusyId.value = s.id
+  try {
+    await mediaService.updateSubscription(s.id, { auto })
+    message.success(auto
+      ? '已开启全自动：命中直接入下载队列（受每日上限/大小上限/仅已匹配三重保护约束）'
+      : '已切换为待确认模式：命中需人工确认后才下载')
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '操作失败')
+  } finally {
+    subBusyId.value = null
+  }
+}
+
+async function removeSub(s: SvcSubscription) {
+  subBusyId.value = s.id
+  try {
+    await mediaService.unsubscribeSubject(s.id)
+    message.success(`已取消订阅「${subName(s)}」`)
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '操作失败')
+  } finally {
+    subBusyId.value = null
+  }
+}
+
+async function checkNow() {
+  checkNowBusy.value = true
+  try {
+    const hits = await mediaService.checkSubscriptionsNow()
+    message.success(hits > 0 ? `全量检索完成，新增 ${hits} 条命中` : '全量检索完成，暂无新命中')
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '检索失败')
+  } finally {
+    checkNowBusy.value = false
+    await refreshSubscriptionData()
+  }
+}
 
 const activeTasks = computed(() => tasks.value.filter((t) => !['completed', 'error'].includes(t.status)))
 const finishedTasks = computed(() => tasks.value.filter((t) => ['completed', 'error'].includes(t.status)))
@@ -356,6 +474,88 @@ onBeforeUnmount(() => {
       <NSpin v-else size="small" />
     </div>
 
+    <!-- v0.19 SU2 待确认命中（订阅自动化的命中默认人工把关） -->
+    <section v-if="serviceConfigured && pendingHits.length" class="dl-section sub-section">
+      <h3 class="dl-title">
+        待确认命中（{{ pendingHits.length }}）
+        <span class="sub-hint">订阅检索到的新资源——确认后才下载</span>
+      </h3>
+      <div v-for="h in pendingHits" :key="h.id" class="hit-row">
+        <div class="dl-main">
+          <div class="dl-name-line">
+            <NTag size="tiny" round :bordered="false" type="warning">第 {{ h.episodeSort ?? '?' }} 话</NTag>
+            <NTag v-if="h.fansub" size="tiny" round :bordered="false">{{ h.fansub }}</NTag>
+            <span class="hit-name" :title="h.title">{{ h.title }}</span>
+          </div>
+          <div class="dl-stat-line">
+            <span>{{ hitSubjectName(h) }}</span>
+            <span v-if="h.size">{{ h.size }}</span>
+            <span v-if="h.site">{{ h.site }}</span>
+            <span>{{ fmtWhen(h.createdAt) }}</span>
+          </div>
+        </div>
+        <div class="dl-ops hit-ops" @click.stop>
+          <NButton size="tiny" type="primary" secondary :loading="subBusyId === h.id" @click="acceptHit(h)">下载</NButton>
+          <NButton size="tiny" quaternary :disabled="subBusyId === h.id" @click="ignoreHit(h, false)">忽略</NButton>
+          <NPopconfirm
+            v-if="h.fansub"
+            @positive-click="ignoreHit(h, true)"
+          >
+            <template #trigger>
+              <NButton size="tiny" quaternary :disabled="subBusyId === h.id">忽略该字幕组</NButton>
+            </template>
+            后续订阅检索不再显示「{{ h.fansub }}」的命中，确定？
+          </NPopconfirm>
+        </div>
+      </div>
+    </section>
+
+    <!-- v0.19 SU1 订阅管理 -->
+    <section v-if="serviceConfigured" class="dl-section sub-section">
+      <h3 class="dl-title">
+        订阅（{{ subs.length }}）
+        <NButton size="tiny" quaternary :loading="checkNowBusy" class="check-now" @click="checkNow">立即全量检索</NButton>
+      </h3>
+      <div v-if="!subs.length" class="dl-none">
+        还没有订阅——在条目详情页剧集 Tab 打开「自动追下载」即可定时追新集
+      </div>
+      <div v-for="s in subs" :key="s.id" class="sub-row">
+        <div class="dl-main">
+          <div class="dl-name-line">
+            <span class="dl-name" :title="subName(s)">{{ subName(s) }}</span>
+            <NTag size="tiny" round :bordered="false" :type="s.auto ? 'success' : 'default'">
+              {{ s.auto ? '全自动' : '待确认' }}
+            </NTag>
+            <span class="sub-baseline">基线第 {{ s.minEpisode }} 话后</span>
+            <NTag v-for="f in s.ignoredFansubs.slice(0, 3)" :key="f" size="tiny" round :bordered="false" type="error">
+              屏蔽 {{ f }}
+            </NTag>
+          </div>
+          <div class="dl-stat-line">
+            <span>上次检索 {{ s.lastCheckedAt ? fmtWhen(s.lastCheckedAt) : '尚未执行' }}</span>
+            <span v-if="s.lastHitAt">最近命中 {{ fmtWhen(s.lastHitAt) }}</span>
+          </div>
+        </div>
+        <div class="dl-ops" @click.stop>
+          <span class="sub-auto-label">{{ s.auto ? '全自动' : '待确认' }}</span>
+          <NSwitch
+            size="small"
+            :value="s.auto"
+            :disabled="subBusyId === s.id"
+            @update:value="(v: boolean) => toggleSubAuto(s, v)"
+          />
+          <NPopconfirm @positive-click="removeSub(s)">
+            <template #trigger>
+              <NButton size="tiny" quaternary type="error" circle>
+                <template #icon><NIcon :component="TrashOutline" /></template>
+              </NButton>
+            </template>
+            取消订阅「{{ subName(s) }}」？（已生成的待确认命中保留）
+          </NPopconfirm>
+        </div>
+      </div>
+    </section>
+
     <div v-if="loading" class="dl-state"><NSpin size="medium" /></div>
 
     <EmptyHint
@@ -454,6 +654,28 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </template>
+
+    <!-- v0.19 SU2 订阅命中历史日志（时间/条目/命中标题/动作；独立于任务列表空态） -->
+    <NCollapse v-if="serviceConfigured && hitHistory.length" class="hit-history">
+      <NCollapseItem title="订阅命中历史" name="history">
+        <div v-for="h in hitHistory" :key="h.id" class="hit-row history-row">
+          <div class="dl-main">
+            <div class="dl-name-line">
+              <NTag size="tiny" round :bordered="false" :type="HIT_STATUS[h.status]?.type ?? 'default'">
+                {{ HIT_STATUS[h.status]?.label ?? h.status }}
+              </NTag>
+              <NTag v-if="h.episodeSort" size="tiny" round :bordered="false">第 {{ h.episodeSort }} 话</NTag>
+              <span class="hit-name" :title="h.title">{{ h.title }}</span>
+            </div>
+            <div class="dl-stat-line">
+              <span>{{ hitSubjectName(h) }}</span>
+              <span v-if="h.note">{{ h.note }}</span>
+              <span>{{ fmtWhen(h.decidedAt || h.createdAt) }}</span>
+            </div>
+          </div>
+        </div>
+      </NCollapseItem>
+    </NCollapse>
 
     <!-- 添加磁力弹窗 -->
     <NModal v-model:show="addOpen" transform-origin="center" preset="card" title="添加下载任务" class="add-modal">
@@ -670,6 +892,87 @@ onBeforeUnmount(() => {
 
 .dl-section {
   margin-bottom: 22px;
+}
+
+/* ── v0.19 订阅区（待确认命中 + 订阅管理 + 命中历史）── */
+
+.sub-section {
+  border: 1px solid var(--av-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.sub-section .dl-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sub-hint {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--av-text-tertiary);
+}
+
+.check-now {
+  margin-left: auto;
+}
+
+.hit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+
+.hit-row:hover {
+  background: var(--av-primary-soft);
+}
+
+.hit-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hit-ops {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sub-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+
+.sub-row:hover {
+  background: var(--av-primary-soft);
+}
+
+.sub-baseline {
+  font-size: 11.5px;
+  color: var(--av-text-tertiary);
+}
+
+.sub-auto-label {
+  font-size: 11.5px;
+  color: var(--av-text-tertiary);
+}
+
+.history-row {
+  padding: 5px 4px;
+}
+
+.hit-history {
+  margin-top: 4px;
 }
 
 .dl-title {

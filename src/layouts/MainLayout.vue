@@ -10,8 +10,10 @@ import {
   NTag,
   NIcon,
   NButton,
+  NBadge,
   NDrawer,
   NDrawerContent,
+  useMessage,
 } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
 import {
@@ -30,13 +32,63 @@ import {
 } from '@vicons/ionicons5'
 import { useSettingsStore } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
+import { mediaService } from '../api/mediaService'
 
 const route = useRoute()
 const router = useRouter()
 const settings = useSettingsStore()
 const library = useLibraryStore()
+const message = useMessage()
 
 const collapsed = ref(false)
+
+/* ── v0.19 SU3 应用内通知：60s 轮询 summary —— 待确认命中数 → 「下载」角标；新命中/新完成 → toast ── */
+const pendingHits = ref(0)
+let lastHitId = 0
+let lastCompletedKey = ''
+let notifyTimer: number | null = null
+
+async function pollSummary(silent = false) {
+  if (!mediaService.configured()) return
+  try {
+    const s = await mediaService.downloadSummary()
+    pendingHits.value = s.pendingHits
+    if (s.lastHit && s.lastHit.id > lastHitId) {
+      if (!silent) {
+        const subj = s.lastHit.subjectNameCn || s.lastHit.subjectName || `条目 ${s.lastHit.subjectId}`
+        message.info(
+          `订阅命中：${subj}${s.lastHit.episodeSort ? ` 第 ${s.lastHit.episodeSort} 话` : ''}——下载中心待确认`,
+          { duration: 6000 },
+        )
+      }
+      lastHitId = s.lastHit.id
+    }
+    if (s.lastCompleted) {
+      const key = `${s.lastCompleted.id}:${s.lastCompleted.completedAt ?? 0}`
+      if (key !== lastCompletedKey) {
+        if (!silent && lastCompletedKey) {
+          const c = s.lastCompleted
+          message.success(
+            `下载完成：${c.subjectNameCn || c.subjectName || c.name || `任务 #${c.id}`}——文件已进入媒体库匹配`,
+            { duration: 6000 },
+          )
+        }
+        lastCompletedKey = key
+      }
+    }
+  } catch {
+    // 服务不可达：静默（不打扰正常浏览）
+  }
+}
+
+onMounted(() => {
+  // 首轮静默建立基线，后续有新事件才 toast
+  void pollSummary(true)
+  notifyTimer = window.setInterval(() => void pollSummary(), 60000)
+})
+onBeforeUnmount(() => {
+  if (notifyTimer) window.clearInterval(notifyTimer)
+})
 
 /** v0.10 P4：≤768px 判定（JS 驱动布局切换，桌面布局不动） */
 const isMobile = ref(false)
@@ -65,7 +117,18 @@ const menuOptions = computed<MenuOption[]>(() => [
   { label: '搜索', key: 'search', icon: renderIcon(SearchOutline) },
   { label: `我的追番${library.count ? ` (${library.count})` : ''}`, key: 'library', icon: renderIcon(LibraryOutline) },
   { label: '播放历史', key: 'history', icon: renderIcon(TimeOutline) },
-  { label: '下载', key: 'downloads', icon: renderIcon(CloudDownloadOutline) },
+  {
+    // v0.19 SU3：待确认命中数角标（label 为渲染函数；折叠态 label 不显示，与追番计数同样局限）
+    label: () =>
+      h('span', { class: 'downloads-label' }, [
+        '下载',
+        pendingHits.value > 0
+          ? h(NBadge, { value: pendingHits.value, class: 'dl-badge' })
+          : null,
+      ]),
+    key: 'downloads',
+    icon: renderIcon(CloudDownloadOutline),
+  },
   { label: '设置', key: 'settings', icon: renderIcon(SettingsOutline) },
 ])
 
@@ -282,6 +345,17 @@ html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-icon) {
 
 .source-tag {
   align-self: flex-start;
+}
+
+/* v0.19 SU3 下载角标（菜单 label 内） */
+.downloads-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dl-badge :deep(.n-badge-sup) {
+  box-shadow: 0 0 0 2px var(--av-surface);
 }
 
 .content {

@@ -535,6 +535,125 @@ export const mediaService = {
   enqueueResource(req: SvcResourceAddRequest): Promise<SvcDownloadTask> {
     return post<SvcDownloadTask>('/api/resources/enqueue', req)
   },
+
+  /* ── v0.19 SU1/SU2/SU3 订阅自动化 ── */
+
+  subscriptions(): Promise<SvcSubscription[]> {
+    return request<{ items: SvcSubscription[] }>('/api/subscriptions').then((r) => r.items)
+  },
+  subscribeSubject(req: SvcSubscriptionAddRequest): Promise<SvcSubscription> {
+    return post<SvcSubscription>('/api/subscriptions', req)
+  },
+  updateSubscription(id: number, patch: { auto?: boolean; minEpisode?: number }): Promise<SvcSubscription> {
+    return request<SvcSubscription>(`/api/subscriptions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+  },
+  unsubscribeSubject(id: number): Promise<void> {
+    return request<void>(`/api/subscriptions/${id}`, { method: 'DELETE' })
+  },
+  /** 手动全量检索（忽略间隔到期判定）；返回本轮新命中数 */
+  checkSubscriptionsNow(): Promise<number> {
+    return post<{ hits: number }>('/api/subscriptions/check').then((r) => r.hits)
+  },
+  subHits(status?: string, limit = 50): Promise<SvcSubHit[]> {
+    const qs = new URLSearchParams({ limit: String(limit) })
+    if (status) qs.set('status', status)
+    return request<{ items: SvcSubHit[] }>(`/api/subscriptions/hits?${qs.toString()}`).then((r) => r.items)
+  },
+  acceptHit(id: number): Promise<SvcDownloadTask> {
+    return post<SvcDownloadTask>(`/api/subscriptions/hits/${id}/accept`)
+  },
+  ignoreHit(id: number, blockFansub: boolean): Promise<void> {
+    return post<void>(`/api/subscriptions/hits/${id}/ignore`, { blockFansub })
+  },
+  subscriptionSettings(): Promise<SvcSubscriptionSettings> {
+    return request<SvcSubscriptionSettings>('/api/subscriptions/settings')
+  },
+  saveSubscriptionSettings(s: SvcSubscriptionSettings): Promise<SvcSubscriptionSettings> {
+    return request<SvcSubscriptionSettings>('/api/subscriptions/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    })
+  },
+  /** SU3 通知汇总（待确认数角标 + 最近命中/完成 toast 判定），供全局 60s 轮询 */
+  downloadSummary(): Promise<SvcDownloadSummary> {
+    return request<SvcDownloadSummary>('/api/downloads/summary')
+  },
+}
+
+/* ── v0.19 SU1/SU2/SU3 订阅自动化（类型与服务端 Dtos.java 一一对应）── */
+
+export interface SvcSubscription {
+  id: number
+  subjectId: number
+  subjectName?: string
+  subjectNameCn?: string
+  /** 全自动入队（默认 false = 命中入待确认队列） */
+  auto: boolean
+  /** 过滤基线：第 N 话及以下不再命中（观看进度抬升，只升不降） */
+  minEpisode: number
+  ignoredFansubs: string[]
+  lastCheckedAt?: number
+  lastHitAt?: number
+  createdAt: number
+}
+
+export interface SvcSubscriptionAddRequest {
+  subjectId: number
+  subjectName?: string
+  subjectNameCn?: string
+  /** 观看进度基线（maxWatched 结果） */
+  minEpisode?: number
+  auto?: boolean
+}
+
+export interface SvcSubHit {
+  id: number
+  subjectId: number
+  subjectName?: string
+  subjectNameCn?: string
+  episodeSort?: number
+  title: string
+  fansub?: string
+  magnet: string
+  infoHash?: string
+  site?: string
+  size?: string
+  pubDate?: number
+  status: 'pending' | 'enqueued' | 'ignored' | 'auto'
+  note?: string
+  createdAt: number
+  decidedAt?: number
+}
+
+export interface SvcSubscriptionSettings {
+  /** 定时检索间隔（30~360 分钟） */
+  intervalMinutes: number
+  /** 资源大小下限（MB，0 = 不限），滤广告 */
+  minSizeMb: number
+  /** 全自动保护 I：每日自动入队上限 */
+  autoDailyLimit: number
+  /** 全自动保护 II：单任务大小上限（MB，0 = 不限） */
+  autoMaxSizeMb: number
+  /** 全自动保护 III：仅已匹配条目（媒体库无绑定的全自动命中降级待确认） */
+  autoOnlyMatched: boolean
+}
+
+export interface SvcDownloadSummary {
+  pendingHits: number
+  activeTasks: number
+  lastHit?: SvcSubHit
+  lastCompleted?: { id: number; name?: string; subjectName?: string; subjectNameCn?: string; completedAt?: number }
+}
+
+/** 观看进度基线（纯函数）：订阅时以「已看最大话数」初始化过滤基线（只看本篇 sort，已看列表为空返回 0） */
+export function maxWatched(watchedEps?: number[] | null): number {
+  if (!watchedEps || !watchedEps.length) return 0
+  return Math.max(...watchedEps.filter((n) => Number.isFinite(n) && n > 0), 0)
 }
 
 /* ── v0.17 R1/R2 资源发现（类型与服务端 Dtos.java 一一对应）── */
