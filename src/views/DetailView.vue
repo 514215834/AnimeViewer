@@ -224,13 +224,20 @@ async function refreshSubscription() {
   try {
     const list = await mediaService.subscriptions()
     subscription.value = list.find((s) => s.subjectId === id.value) ?? null
-    // 观看进度越过基线时静默抬升过滤基线（只升不降，服务端已做同值防御）
-    const watchedMax = maxWatched(entry.value?.watchedEps)
-    if (subscription.value && watchedMax > subscription.value.minEpisode) {
-      subscription.value = await mediaService.updateSubscription(subscription.value.id, { minEpisode: watchedMax })
-    }
+    await liftBaseline()
   } catch {
     // 服务不可达：静默降级为无开关干扰
+  }
+}
+
+/** 观看进度越过基线时静默抬升订阅过滤基线（只升不降，服务端同值防御）。
+ *  缺陷修复：此前基线抬升仅挂在「切到剧集 Tab/条目切换」，Tab 内勾选单集/沉浸标记/
+ *  全部看过均不上报，已看过的集会继续被订阅命中。 */
+async function liftBaseline() {
+  if (!settings.svcEnabled || !subscription.value || !entry.value) return
+  const watchedMax = maxWatched(entry.value?.watchedEps)
+  if (watchedMax > subscription.value.minEpisode) {
+    subscription.value = await mediaService.updateSubscription(subscription.value.id, { minEpisode: watchedMax })
   }
 }
 
@@ -275,6 +282,14 @@ async function updateSubScore(value: number | null) {
     subBusy.value = false
   }
 }
+
+// 观看进度变更（单集勾选/沉浸标记/全部看过/清空）→ 实时抬升订阅基线
+watch(
+  () => entry.value?.watchedEps?.length,
+  () => {
+    void liftBaseline()
+  },
+)
 
 // 剧集 Tab 激活 / 条目切换时刷新绑定状态
 watch([id, activeTab], ([, tab]) => {
