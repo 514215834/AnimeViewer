@@ -544,7 +544,7 @@ export const mediaService = {
   subscribeSubject(req: SvcSubscriptionAddRequest): Promise<SvcSubscription> {
     return post<SvcSubscription>('/api/subscriptions', req)
   },
-  updateSubscription(id: number, patch: { auto?: boolean; minEpisode?: number }): Promise<SvcSubscription> {
+  updateSubscription(id: number, patch: { autoScore?: number; minEpisode?: number }): Promise<SvcSubscription> {
     return request<SvcSubscription>(`/api/subscriptions/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -604,11 +604,15 @@ export interface SvcSubscription {
   subjectId: number
   subjectName?: string
   subjectNameCn?: string
-  /** 全自动入队（默认 false = 命中入待确认队列） */
+  /** v0.20 起弃用：自动入队阈值 autoScore 取代二值开关（存量保留，勿再读写） */
   auto: boolean
   /** 过滤基线：第 N 话及以下不再命中（观看进度抬升，只升不降） */
   minEpisode: number
   ignoredFansubs: string[]
+  /** v0.20 自动入队阈值：0=特殊值（全部命中需手动确认，默认）；1~100=匹配度达阈值自动入队（三重保护仍兜底） */
+  autoScore: number
+  /** v0.20 SU8 最近一轮检索失败摘要（null=成功），驱动订阅行「检索失败」红标 */
+  lastCheckError?: string
   lastCheckedAt?: number
   lastHitAt?: number
   createdAt: number
@@ -620,7 +624,8 @@ export interface SvcSubscriptionAddRequest {
   subjectNameCn?: string
   /** 观看进度基线（maxWatched 结果） */
   minEpisode?: number
-  auto?: boolean
+  /** v0.20 自动入队阈值：0=手动确认（默认），1~100=评分达标自动入队 */
+  autoScore?: number
 }
 
 export interface SvcSubHit {
@@ -638,6 +643,10 @@ export interface SvcSubHit {
   pubDate?: number
   status: 'pending' | 'enqueued' | 'ignored' | 'auto'
   note?: string
+  /** v0.20 匹配度评分 0~100（服务端落库口径；存量 null = 未评分） */
+  score?: number | null
+  /** 评分明细 JSON：{"total":N,"parts":["维度 得分",…]} */
+  scoreDetail?: string | null
   createdAt: number
   decidedAt?: number
 }
@@ -653,6 +662,12 @@ export interface SvcSubscriptionSettings {
   autoMaxSizeMb: number
   /** 全自动保护 III：仅已匹配条目（媒体库无绑定的全自动命中降级待确认） */
   autoOnlyMatched: boolean
+  /** v0.20 SU4 新订阅匹配度阈值默认值（0=手动确认特殊值，1~100） */
+  defaultAutoScore: number
+  /** v0.20 SU5 全局字幕组偏好（评分加权，与订阅级屏蔽互补） */
+  globalFansubs: string[]
+  /** v0.20 SU6 已入队同集忽略后续命中（关闭可补收其他字幕组/编码版本） */
+  skipEnqueuedEpisode: boolean
 }
 
 export interface SvcDownloadSummary {

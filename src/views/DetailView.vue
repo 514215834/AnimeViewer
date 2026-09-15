@@ -258,6 +258,24 @@ async function toggleSubscription(on: boolean) {
   }
 }
 
+/** v0.20 自动入队阈值：0=特殊值全手动确认（默认）；1~100=匹配度达阈值自动入队（三重保护仍兜底） */
+async function updateSubScore(value: number | null) {
+  if (!subscription.value || subBusy.value) return
+  const v = Math.max(0, Math.min(100, Math.floor(value ?? 0)))
+  if (v === (subscription.value.autoScore ?? 0)) return
+  subBusy.value = true
+  try {
+    subscription.value = await mediaService.updateSubscription(subscription.value.id, { autoScore: v })
+    message.success(v > 0
+      ? `已设置自动入队阈值 ${v}：匹配度达标的命中直接入队`
+      : '已切换为手动确认模式：所有命中需人工确认后才下载')
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '操作失败')
+  } finally {
+    subBusy.value = false
+  }
+}
+
 // 剧集 Tab 激活 / 条目切换时刷新绑定状态
 watch([id, activeTab], ([, tab]) => {
   if (tab === 'eps') {
@@ -759,9 +777,24 @@ onBeforeUnmount(() => {
                   @update:value="toggleSubscription"
                 />
               </span>
-              <span v-if="subscribed" class="eps-sub-state">
-                已订阅 · 基线第 {{ subscription?.minEpisode ?? 0 }} 话后 · 命中在下载中心待确认
-              </span>
+              <template v-if="subscribed">
+                <NInputNumber
+                  size="tiny"
+                  class="eps-sub-score"
+                  :value="subscription?.autoScore ?? 0"
+                  :min="0"
+                  :max="100"
+                  :loading="subBusy"
+                  placeholder="0=手动"
+                  @update:value="updateSubScore"
+                >
+                  <template #prefix>阈值</template>
+                </NInputNumber>
+                <span class="eps-sub-state">
+                  已订阅 · 基线第 {{ subscription?.minEpisode ?? 0 }} 话后 ·
+                  {{ (subscription?.autoScore ?? 0) > 0 ? '匹配度达标自动入队' : '命中在下载中心待确认' }}
+                </span>
+              </template>
             </div>
             <EmptyHint v-if="!inLibrary" text="加入追番后，可在这里勾选单集记录进度" />
             <!-- E1 沉浸观剧模式：逐集「标记并下一集」，单集增量同步 -->
@@ -1412,6 +1445,11 @@ html.light .detail-poster :deep(.poster-frame) {
 .eps-sub-state {
   font-size: 11.5px;
   color: var(--av-text-tertiary);
+}
+
+/* v0.20 阈值输入：紧凑宽度 */
+.eps-sub-score {
+  width: 128px;
 }
 
 /* H2 章节过滤框：固定宽度避免挤压计数 */

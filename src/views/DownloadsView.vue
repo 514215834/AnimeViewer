@@ -25,7 +25,6 @@ import {
   NProgress,
   NSelect,
   NSpin,
-  NSwitch,
   NTag,
   NTooltip,
   useMessage,
@@ -289,18 +288,43 @@ async function clearHistoryAll() {
   }
 }
 
-async function toggleSubAuto(s: SvcSubscription, auto: boolean) {
+/** v0.20 阈值取代全自动开关：0=特殊值全手动确认；1~100=匹配度达阈值自动入队（三重保护仍兜底） */
+async function setSubScore(s: SvcSubscription, value: number) {
+  const v = Math.max(0, Math.min(100, Math.floor(value || 0)))
+  if (v === (s.autoScore ?? 0)) return
   subBusyId.value = s.id
   try {
-    await mediaService.updateSubscription(s.id, { auto })
-    message.success(auto
-      ? '已开启全自动：命中直接入下载队列（受每日上限/大小上限/仅已匹配三重保护约束）'
-      : '已切换为待确认模式：命中需人工确认后才下载')
+    await mediaService.updateSubscription(s.id, { autoScore: v })
+    message.success(v > 0
+      ? `已设置自动入队阈值 ${v}：匹配度达标的命中直接入队（受每日上限/大小上限/仅已匹配三重保护约束）`
+      : '已切换为手动确认模式：所有命中需人工确认后才下载')
     await refreshSubscriptionData()
   } catch (e) {
     message.error(e instanceof ServiceError ? e.message : '操作失败')
   } finally {
     subBusyId.value = null
+  }
+}
+
+/** 待确认命中按匹配度降序（未评分排最后——纯展示排序，不动服务端顺序） */
+const sortedPendingHits = computed(() =>
+  [...pendingHits.value].sort((a, b) => (b.score ?? -1) - (a.score ?? -1)))
+
+/** 命中是否达到所属订阅的自动入队阈值（阈值 0 = 全手动，一律灰标） */
+function hitMeetsThreshold(h: SvcSubHit): boolean {
+  const sub = subs.value.find((x) => x.subjectId === h.subjectId)
+  if (!sub || !sub.autoScore) return false
+  return (h.score ?? 0) >= sub.autoScore
+}
+
+/** 评分明细 JSON → 逐维度行 */
+function scoreParts(h: SvcSubHit): string[] {
+  if (!h.scoreDetail) return []
+  try {
+    const parsed = JSON.parse(h.scoreDetail) as { parts?: string[] }
+    return parsed.parts ?? []
+  } catch {
+    return []
   }
 }
 
@@ -607,7 +631,7 @@ onBeforeUnmount(() => {
           将选中的 {{ selectedCount }} 条命中标记为已忽略（资源不入队），确定？
         </NPopconfirm>
       </h3>
-      <div v-for="h in pendingHits" :key="h.id" class="hit-row">
+      <div v-for="h in sortedPendingHits" :key="h.id" class="hit-row">
         <NCheckbox
           class="hit-select"
           size="small"
@@ -616,6 +640,24 @@ onBeforeUnmount(() => {
         />
         <div class="dl-main">
           <div class="dl-name-line">
+            <NTooltip trigger="hover" placement="top">
+              <template #trigger>
+                <NTag
+                  size="tiny"
+                  round
+                  :bordered="false"
+                  :type="h.score == null ? 'default' : hitMeetsThreshold(h) ? 'success' : 'default'"
+                  class="hit-score-tag"
+                >
+                  {{ h.score == null ? '未评分' : `匹配 ${h.score}` }}
+                </NTag>
+              </template>
+              <div class="score-tip">
+                <div class="score-tip-total">匹配度 {{ h.score ?? '—' }} / 100</div>
+                <div v-for="(p, i) in scoreParts(h)" :key="i" class="score-tip-row">{{ p }}</div>
+                <div v-if="!scoreParts(h).length" class="score-tip-row dim">暂无评分明细</div>
+              </div>
+            </NTooltip>
             <NTag size="tiny" round :bordered="false" type="warning">第 {{ h.episodeSort ?? '?' }} 话</NTag>
             <NTag v-if="h.fansub" size="tiny" round :bordered="false">{{ h.fansub }}</NTag>
             <span class="hit-name" :title="h.title">{{ h.title }}</span>
@@ -656,8 +698,8 @@ onBeforeUnmount(() => {
         <div class="dl-main">
           <div class="dl-name-line">
             <span class="dl-name" :title="subName(s)">{{ subName(s) }}</span>
-            <NTag size="tiny" round :bordered="false" :type="s.auto ? 'success' : 'default'">
-              {{ s.auto ? '全自动' : '待确认' }}
+            <NTag size="tiny" round :bordered="false" :type="s.autoScore > 0 ? 'success' : 'default'">
+              {{ s.autoScore > 0 ? `自动阈值 ${s.autoScore}` : '手动确认' }}
             </NTag>
             <span class="sub-baseline">基线第 {{ s.minEpisode }} 话后</span>
             <NTag v-for="f in s.ignoredFansubs.slice(0, 3)" :key="f" size="tiny" round :bordered="false" type="error">
@@ -667,16 +709,22 @@ onBeforeUnmount(() => {
           <div class="dl-stat-line">
             <span>上次检索 {{ s.lastCheckedAt ? fmtWhen(s.lastCheckedAt) : '尚未执行' }}</span>
             <span v-if="s.lastHitAt">最近命中 {{ fmtWhen(s.lastHitAt) }}</span>
+            <span v-if="s.lastCheckError" class="sub-error" :title="s.lastCheckError">上次检索失败：{{ s.lastCheckError }}</span>
           </div>
         </div>
         <div class="dl-ops" @click.stop>
-          <span class="sub-auto-label">{{ s.auto ? '全自动' : '待确认' }}</span>
-          <NSwitch
-            size="small"
-            :value="s.auto"
+          <NInputNumber
+            size="tiny"
+            class="sub-score-input"
+            :value="s.autoScore"
+            :min="0"
+            :max="100"
             :disabled="subBusyId === s.id"
-            @update:value="(v: boolean) => toggleSubAuto(s, v)"
-          />
+            placeholder="0=手动"
+            @update:value="(v: number | null) => setSubScore(s, v ?? 0)"
+          >
+            <template #prefix>阈值</template>
+          </NInputNumber>
           <NPopconfirm @positive-click="removeSub(s)">
             <template #trigger>
               <NButton size="tiny" quaternary type="error" circle>
@@ -837,6 +885,9 @@ onBeforeUnmount(() => {
             <div class="dl-name-line">
               <NTag size="tiny" round :bordered="false" :type="HIT_STATUS[h.status]?.type ?? 'default'">
                 {{ HIT_STATUS[h.status]?.label ?? h.status }}
+              </NTag>
+              <NTag v-if="h.score != null" size="tiny" round :bordered="false" type="default" class="hit-score-tag">
+                匹配 {{ h.score }}
               </NTag>
               <NTag v-if="h.episodeSort" size="tiny" round :bordered="false">第 {{ h.episodeSort }} 话</NTag>
               <span class="hit-name" :title="h.title">{{ h.title }}</span>
@@ -1160,6 +1211,37 @@ onBeforeUnmount(() => {
 .sub-baseline {
   font-size: 11.5px;
   color: var(--av-text-tertiary);
+}
+
+/* v0.20 匹配度徽章 + 评分明细 tooltip + 订阅阈值编辑 + 检索失败红标 */
+.hit-score-tag {
+  cursor: default;
+}
+
+.score-tip {
+  max-width: 320px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.score-tip-total {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.score-tip-row.dim {
+  opacity: 0.6;
+}
+
+.sub-score-input {
+  width: 128px;
+}
+
+.sub-error {
+  color: var(--av-danger, #d64a4a);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sub-auto-label {

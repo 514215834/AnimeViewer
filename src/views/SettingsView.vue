@@ -4,6 +4,7 @@ import { useMessage } from 'naive-ui'
 import {
   NAlert,
   NButton,
+  NDynamicTags,
   NForm,
   NFormItem,
   NIcon,
@@ -308,6 +309,9 @@ const sub = reactive({
   autoDailyLimit: 5,
   autoMaxSizeMb: 0,
   autoOnlyMatched: true,
+  defaultAutoScore: 0,
+  globalFansubs: [] as string[],
+  skipEnqueuedEpisode: true,
 })
 
 async function loadSubscriptionSettings() {
@@ -330,6 +334,9 @@ async function saveSubscriptionSettings() {
       autoDailyLimit: Number(sub.autoDailyLimit) || 0,
       autoMaxSizeMb: Number(sub.autoMaxSizeMb) || 0,
       autoOnlyMatched: sub.autoOnlyMatched,
+      defaultAutoScore: Math.max(0, Math.min(100, Number(sub.defaultAutoScore) || 0)),
+      globalFansubs: sub.globalFansubs ?? [],
+      skipEnqueuedEpisode: sub.skipEnqueuedEpisode,
     })
     Object.assign(sub, s)
     message.success('订阅设置已保存')
@@ -732,20 +739,32 @@ async function onImportFile(ev: Event) {
                   <template #prefix>单限</template>
                 </NInputNumber>
               </div>
+              <div class="sub-row2">
+                <NInputNumber v-model:value="sub.defaultAutoScore" :min="0" :max="100" placeholder="新订阅匹配度阈值（0=手动确认）">
+                  <template #prefix>阈值</template>
+                </NInputNumber>
+                <div class="dl-switches" style="margin: 0">
+                  <span class="dl-switch-item">已入队集数忽略后续命中 <NSwitch v-model:value="sub.skipEnqueuedEpisode" size="small" /></span>
+                </div>
+              </div>
+              <div class="sub-row2" style="grid-column: 1 / -1">
+                <NDynamicTags v-model:value="sub.globalFansubs" size="small" placeholder="输入字幕组名回车添加（全局偏好，评分+15）" />
+              </div>
               <div class="dl-switches">
                 <span class="dl-switch-item">全自动仅限已匹配条目 <NSwitch v-model:value="sub.autoOnlyMatched" size="small" /></span>
               </div>
             </div>
             <div class="svc-status">
               <template v-if="subError"><span class="svc-err">{{ subError }}</span></template>
-              <span v-else class="svc-muted">命中默认进入下载中心「待确认命中」队列，人工把关后才下载</span>
+              <span v-else class="svc-muted">命中默认进入下载中心「待确认命中」队列人工把关；条目阈值>0 时，匹配度达标的命中自动入队</span>
               <div class="btn-row">
                 <NButton secondary size="small" :loading="subSaving" :disabled="!settings.svcEnabled" @click="saveSubscriptionSettings">保存订阅设置</NButton>
               </div>
             </div>
             <div class="svc-tip">
-              服务端按间隔检索已订阅条目的 RSS 新集资源（过滤已下载/已看过的集数与历史命中）；「全自动」为条目级开关，
-              三重保护 = 每日自动入队上限 + 单任务大小上限 + 仅已匹配条目（保护不满足时降级待确认）。
+              服务端按间隔检索已订阅条目的 RSS 新集资源（过滤已下载/已看过的集数与历史命中）；v0.20 起自动入队改为
+              「匹配度阈值」（条目级，0=全手动），三重保护 = 每日自动入队上限 + 单任务大小上限 + 仅已匹配条目（保护不满足时降级待确认）；
+              匹配度评分 = 标题匹配/季号一致/字幕组偏好/清晰度/字幕标记加权，明细在命中徽章 Tooltip 可见。
             </div>
           </div>
         </NFormItem>
