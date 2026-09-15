@@ -569,6 +569,18 @@ export const mediaService = {
   ignoreHit(id: number, blockFansub: boolean): Promise<void> {
     return post<void>(`/api/subscriptions/hits/${id}/ignore`, { blockFansub })
   },
+  /** 批量忽略（多选/全选取消）；返回 { ignored, skipped }（skipped=不存在或已处理的条数） */
+  batchIgnoreHits(ids: number[]): Promise<{ ignored: number; skipped: number }> {
+    return post<{ ignored: number; skipped: number }>('/api/subscriptions/hits/batch-ignore', { ids })
+  },
+  /** 批量删除命中历史（多选）；仅删除已处理命中，待确认跳过 */
+  batchDeleteHits(ids: number[]): Promise<{ deleted: number; skipped: number }> {
+    return post<{ deleted: number; skipped: number }>('/api/subscriptions/hits/batch-delete', { ids })
+  },
+  /** 清空命中历史（全部非待确认命中）；返回删除条数 */
+  clearHitHistory(): Promise<{ deleted: number }> {
+    return post<{ deleted: number }>('/api/subscriptions/hits/clear-history')
+  },
   subscriptionSettings(): Promise<SvcSubscriptionSettings> {
     return request<SvcSubscriptionSettings>('/api/subscriptions/settings')
   },

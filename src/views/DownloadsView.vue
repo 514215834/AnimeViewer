@@ -144,6 +144,16 @@ async function refreshSubscriptionData(silent = true) {
     pendingHits.value = pending
     hitHistory.value = history.filter((h) => h.status !== 'pending')
     subs.value = list
+    // 选择集只保留仍处于待确认的命中（轮询刷新后自动清理已处理项）
+    const pendingIds = new Set(pending.map((h) => h.id))
+    if ([...selectedHits.value].some((id) => !pendingIds.has(id))) {
+      selectedHits.value = new Set([...selectedHits.value].filter((id) => pendingIds.has(id)))
+    }
+    // 命中历史选择集同理：仅保留当前列表里仍存在的记录
+    const histIds = new Set(hitHistory.value.map((h) => h.id))
+    if ([...selectedHistory.value].some((id) => !histIds.has(id))) {
+      selectedHistory.value = new Set([...selectedHistory.value].filter((id) => histIds.has(id)))
+    }
   } catch (e) {
     if (!silent) message.error(e instanceof ServiceError ? e.message : '订阅数据加载失败')
   }
@@ -162,6 +172,7 @@ async function acceptHit(h: SvcSubHit) {
   try {
     await mediaService.acceptHit(h.id)
     message.success(h.episodeSort ? `第 ${h.episodeSort} 话资源已加入下载队列` : '资源已加入下载队列')
+    selectedHits.value.delete(h.id)
     await Promise.all([refreshSubscriptionData(), refreshTasks()])
   } catch (e) {
     message.error(e instanceof ServiceError ? e.message : '入队失败')
@@ -176,12 +187,105 @@ async function ignoreHit(h: SvcSubHit, blockFansub: boolean) {
   try {
     await mediaService.ignoreHit(h.id, blockFansub)
     message.success(blockFansub && h.fansub ? `已忽略，且后续不再显示「${h.fansub}」的命中` : '已忽略该命中')
+    selectedHits.value.delete(h.id)
     await refreshSubscriptionData()
   } catch (e) {
     message.error(e instanceof ServiceError ? e.message : '操作失败')
     await refreshSubscriptionData()
   } finally {
     subBusyId.value = null
+  }
+}
+
+/* ── v0.19 待确认命中多选/全选批量忽略 ── */
+const selectedHits = ref(new Set<number>())
+const batchBusy = ref(false)
+
+const selectedCount = computed(() => selectedHits.value.size)
+const allSelected = computed(() => pendingHits.value.length > 0 && selectedCount.value === pendingHits.value.length)
+const someSelected = computed(() => selectedCount.value > 0 && selectedCount.value < pendingHits.value.length)
+
+function toggleSelect(id: number, checked: boolean) {
+  const next = new Set(selectedHits.value)
+  if (checked) next.add(id)
+  else next.delete(id)
+  selectedHits.value = next
+}
+
+function toggleSelectAll(checked: boolean) {
+  selectedHits.value = checked ? new Set(pendingHits.value.map((h) => h.id)) : new Set()
+}
+
+async function batchIgnore() {
+  if (!selectedCount.value || batchBusy.value) return
+  batchBusy.value = true
+  try {
+    const r = await mediaService.batchIgnoreHits([...selectedHits.value])
+    message.success(
+      r.skipped > 0 ? `已忽略 ${r.ignored} 条命中（${r.skipped} 条已处理被跳过）` : `已忽略 ${r.ignored} 条命中`,
+    )
+    selectedHits.value = new Set()
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '批量忽略失败')
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+/* ── v0.19 命中历史多选/全选/清空 ── */
+const selectedHistory = ref(new Set<number>())
+const histBatchBusy = ref(false)
+const histClearBusy = ref(false)
+
+const selectedHistCount = computed(() => selectedHistory.value.size)
+const allHistSelected = computed(
+  () => hitHistory.value.length > 0 && selectedHistCount.value === hitHistory.value.length,
+)
+const someHistSelected = computed(
+  () => selectedHistCount.value > 0 && selectedHistCount.value < hitHistory.value.length,
+)
+
+function toggleSelectHist(id: number, checked: boolean) {
+  const next = new Set(selectedHistory.value)
+  if (checked) next.add(id)
+  else next.delete(id)
+  selectedHistory.value = next
+}
+
+function toggleSelectHistAll(checked: boolean) {
+  selectedHistory.value = checked ? new Set(hitHistory.value.map((h) => h.id)) : new Set()
+}
+
+async function batchDeleteHistory() {
+  if (!selectedHistCount.value || histBatchBusy.value) return
+  histBatchBusy.value = true
+  try {
+    const r = await mediaService.batchDeleteHits([...selectedHistory.value])
+    message.success(
+      r.skipped > 0 ? `已删除 ${r.deleted} 条历史（${r.skipped} 条不可删除被跳过）` : `已删除 ${r.deleted} 条命中历史`,
+    )
+    selectedHistory.value = new Set()
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '批量删除失败')
+  } finally {
+    histBatchBusy.value = false
+  }
+}
+
+async function clearHistoryAll() {
+  if (histClearBusy.value) return
+  histClearBusy.value = true
+  try {
+    const r = await mediaService.clearHitHistory()
+    message.success(r.deleted > 0 ? `已清空 ${r.deleted} 条命中历史` : '命中历史已为空')
+    selectedHistory.value = new Set()
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '清空失败')
+  } finally {
+    histClearBusy.value = false
   }
 }
 
@@ -474,13 +578,42 @@ onBeforeUnmount(() => {
       <NSpin v-else size="small" />
     </div>
 
-    <!-- v0.19 SU2 待确认命中（订阅自动化的命中默认人工把关） -->
+    <!-- v0.19 SU2 待确认命中（订阅自动化的命中默认人工把关；支持多选/全选批量忽略） -->
     <section v-if="serviceConfigured && pendingHits.length" class="dl-section sub-section">
       <h3 class="dl-title">
         待确认命中（{{ pendingHits.length }}）
         <span class="sub-hint">订阅检索到的新资源——确认后才下载</span>
+        <NCheckbox
+          class="hit-select-all"
+          size="small"
+          :checked="allSelected"
+          :indeterminate="someSelected"
+          @update:checked="toggleSelectAll"
+        >
+          全选
+        </NCheckbox>
+        <NPopconfirm @positive-click="batchIgnore">
+          <template #trigger>
+            <NButton
+              size="tiny"
+              type="error"
+              secondary
+              :disabled="!selectedCount"
+              :loading="batchBusy"
+            >
+              忽略选中（{{ selectedCount }}）
+            </NButton>
+          </template>
+          将选中的 {{ selectedCount }} 条命中标记为已忽略（资源不入队），确定？
+        </NPopconfirm>
       </h3>
       <div v-for="h in pendingHits" :key="h.id" class="hit-row">
+        <NCheckbox
+          class="hit-select"
+          size="small"
+          :checked="selectedHits.has(h.id)"
+          @update:checked="(v: boolean) => toggleSelect(h.id, v)"
+        />
         <div class="dl-main">
           <div class="dl-name-line">
             <NTag size="tiny" round :bordered="false" type="warning">第 {{ h.episodeSort ?? '?' }} 话</NTag>
@@ -655,10 +788,51 @@ onBeforeUnmount(() => {
       </section>
     </template>
 
-    <!-- v0.19 SU2 订阅命中历史日志（时间/条目/命中标题/动作；独立于任务列表空态） -->
+    <!-- v0.19 SU2 订阅命中历史日志（时间/条目/命中标题/动作；独立于任务列表空态；支持多选/全选删除与一键清空） -->
     <NCollapse v-if="serviceConfigured && hitHistory.length" class="hit-history">
-      <NCollapseItem title="订阅命中历史" name="history">
+      <NCollapseItem name="history">
+        <template #header>
+          <span class="hist-head">
+            订阅命中历史（{{ hitHistory.length }}）
+            <span class="hist-ctl" @click.stop>
+              <NCheckbox
+                size="small"
+                :checked="allHistSelected"
+                :indeterminate="someHistSelected"
+                @update:checked="toggleSelectHistAll"
+              >
+                全选
+              </NCheckbox>
+              <NPopconfirm @positive-click="batchDeleteHistory">
+                <template #trigger>
+                  <NButton
+                    size="tiny"
+                    type="error"
+                    secondary
+                    :disabled="!selectedHistCount"
+                    :loading="histBatchBusy"
+                  >
+                    删除选中（{{ selectedHistCount }}）
+                  </NButton>
+                </template>
+                将删除选中的 {{ selectedHistCount }} 条命中记录（待确认的自动跳过），确定？
+              </NPopconfirm>
+              <NPopconfirm @positive-click="clearHistoryAll">
+                <template #trigger>
+                  <NButton size="tiny" quaternary :loading="histClearBusy">清空历史</NButton>
+                </template>
+                将删除全部 {{ hitHistory.length }} 条已处理记录（待确认命中不受影响；同一资源再次发布可能重新命中），确定？
+              </NPopconfirm>
+            </span>
+          </span>
+        </template>
         <div v-for="h in hitHistory" :key="h.id" class="hit-row history-row">
+          <NCheckbox
+            class="hit-select"
+            size="small"
+            :checked="selectedHistory.has(h.id)"
+            @update:checked="(v: boolean) => toggleSelectHist(h.id, v)"
+          />
           <div class="dl-main">
             <div class="dl-name-line">
               <NTag size="tiny" round :bordered="false" :type="HIT_STATUS[h.status]?.type ?? 'default'">
@@ -926,6 +1100,37 @@ onBeforeUnmount(() => {
   border-radius: 10px;
 }
 
+.hit-select {
+  flex: none;
+}
+
+.hit-select-all {
+  margin-left: auto;
+}
+
+.hist-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--av-text-secondary);
+}
+
+.hist-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.hit-ops {
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .hit-row:hover {
   background: var(--av-primary-soft);
 }
@@ -938,11 +1143,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.hit-ops {
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .sub-row {
