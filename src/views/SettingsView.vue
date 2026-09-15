@@ -716,23 +716,20 @@ async function onImportFile(ev: Event) {
         <NFormItem label="订阅自动化（追番自动下载 Sonarr-lite；条目在详情页剧集 Tab 开启「自动追下载」）">
           <div class="svc-box">
             <div class="svc-grid dl-grid">
-              <div class="dl-row2">
-                <NInputNumber v-model:value="sub.intervalMinutes" :min="30" :max="360" placeholder="检索间隔">
+              <div class="sub-row2">
+                <NInputNumber v-model:value="sub.intervalMinutes" :min="30" :max="360" placeholder="检索间隔（分钟，30~360）">
                   <template #prefix>间隔</template>
-                  <template #suffix>分钟</template>
                 </NInputNumber>
-                <NInputNumber v-model:value="sub.minSizeMb" :min="0" placeholder="大小下限">
+                <NInputNumber v-model:value="sub.minSizeMb" :min="0" placeholder="资源大小下限（MB，0=不限）">
                   <template #prefix>下限</template>
-                  <template #suffix>MB</template>
                 </NInputNumber>
               </div>
-              <div class="dl-row2">
+              <div class="sub-row2">
                 <NInputNumber v-model:value="sub.autoDailyLimit" :min="0" :max="1000" placeholder="每日自动入队上限">
                   <template #prefix>日限</template>
                 </NInputNumber>
-                <NInputNumber v-model:value="sub.autoMaxSizeMb" :min="0" placeholder="单任务大小上限">
+                <NInputNumber v-model:value="sub.autoMaxSizeMb" :min="0" placeholder="单任务大小上限（MB，0=不限）">
                   <template #prefix>单限</template>
-                  <template #suffix>MB</template>
                 </NInputNumber>
               </div>
               <div class="dl-switches">
@@ -968,6 +965,13 @@ async function onImportFile(ev: Event) {
   grid-column: 1 / -1;
 }
 
+/* v0.19 订阅设置两列均分（不用 .dl-row2 四列模板——其窄列下 prefix+suffix 会把数值输入区挤到 0 宽） */
+.sub-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
 .dl-row2 {
   display: grid;
   grid-template-columns: 1.2fr 1fr 1fr 1.5fr;
