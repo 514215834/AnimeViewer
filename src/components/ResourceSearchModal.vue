@@ -57,6 +57,43 @@ const sites = ref<SvcResourceSite[]>([])
 const searchError = ref('')
 const partialError = ref('')
 
+/* ── v0.21 RS1 站点选择器：null=全部混合搜索（默认）；数组=指定站点（单选/多选子集）── */
+
+const siteList = ref<SvcResourceSite[]>([])
+const selectedSiteKeys = ref<string[] | null>(null)
+
+/** 传给服务端的站点参数：null 或全选 = 不传（混合）；选中子集 = 指定站点 */
+function siteKeysParam(): string[] | undefined {
+  if (!selectedSiteKeys.value?.length) return undefined
+  if (selectedSiteKeys.value.length === siteList.value.length) return undefined
+  return selectedSiteKeys.value
+}
+
+async function loadSites() {
+  if (siteList.value.length) return
+  try {
+    siteList.value = await mediaService.resourceSites()
+  } catch {
+    // RS3 容错：站点列表拉取失败静默降级（仅「全部」态可用）
+    siteList.value = []
+  }
+}
+
+/** 选择语义：全部态（null）点站点 = 从空集起指定；子集增减；子集扩大到全集时退化为全部态 */
+function toggleSite(key: string | null) {
+  if (!key) {
+    selectedSiteKeys.value = null
+  } else {
+    const cur = new Set(selectedSiteKeys.value ?? [])
+    if (cur.has(key)) cur.delete(key)
+    else cur.add(key)
+    if (cur.size === 0 || cur.size === siteList.value.length) selectedSiteKeys.value = null
+    else selectedSiteKeys.value = [...cur]
+  }
+  // RS2 联动重搜：有关键词即以当前关键词重搜
+  if (keyword.value.trim()) void runSearch(keyword.value)
+}
+
 /** 字幕组偏好记忆（localStorage：点选过的组名置顶排序） */
 const FANSUB_KEY = 'animeviewer:resource-fansub'
 const preferredFansubs = ref<string[]>(loadJson<string[]>(FANSUB_KEY, []))
@@ -170,7 +207,7 @@ async function runSearch(kw: string) {
   activeFansub.value = null
   filterText.value = ''
   try {
-    const res = await mediaService.resourceSearch(q)
+    const res = await mediaService.resourceSearch(q, siteKeysParam())
     items.value = res.items
     sites.value = res.sites
     partialError.value = res.error ?? ''
@@ -193,7 +230,7 @@ async function autoDualSearch(kws: string[]) {
     for (const kw of kws) {
       keyword.value = kw
       try {
-        const res = await mediaService.resourceSearch(kw)
+        const res = await mediaService.resourceSearch(kw, siteKeysParam())
         collected.push(...res.items)
         lastSites = res.sites
         if (res.error) lastError = res.error
@@ -230,6 +267,8 @@ watch(
     partialError.value = ''
     activeFansub.value = null
     filterText.value = ''
+    // v0.21 RS1：弹窗打开时与搜索并行拉取站点列表（失败静默降级为仅「全部」态）
+    void loadSites()
     // 首开自动按关键词策略搜索（中文名优先，原名兜底）
     const kws = searchKeywords(props.subjectNameCn, props.subjectName)
     if (!kws.length) return
@@ -271,6 +310,33 @@ defineExpose({ runSearch })
         <template #prefix><NIcon :component="SearchOutline" /></template>
       </NInput>
       <NButton type="primary" secondary :loading="searching" @click="runSearch(keyword)">搜索</NButton>
+    </div>
+
+    <!-- v0.21 RS1 站点选择器：全部=混合搜索；单选/多选=指定站点 -->
+    <div v-if="siteList.length" class="rs-sites">
+      <NButton
+        size="tiny"
+        round
+        :secondary="selectedSiteKeys == null"
+        :type="selectedSiteKeys == null ? 'primary' : 'default'"
+        class="rs-site-chip"
+        @click="toggleSite(null)"
+      >
+        全部
+      </NButton>
+      <NButton
+        v-for="s in siteList"
+        :key="s.key"
+        size="tiny"
+        round
+        :secondary="selectedSiteKeys != null && selectedSiteKeys.includes(s.key)"
+        :type="selectedSiteKeys != null && selectedSiteKeys.includes(s.key) ? 'primary' : 'default'"
+        class="rs-site-chip"
+        :title="s.builtin ? `${s.name}（内置站点）` : s.name"
+        @click="toggleSite(s.key)"
+      >
+        {{ s.key }}{{ s.builtin ? '' : '（自定义）' }}
+      </NButton>
     </div>
 
     <NSpin :show="searching">
@@ -389,6 +455,17 @@ defineExpose({ runSearch })
 .rs-modal {
   width: 680px;
   max-width: calc(100vw - 32px);
+}
+
+.rs-sites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+
+.rs-site-chip {
+  user-select: none;
 }
 
 .rs-search-bar {
