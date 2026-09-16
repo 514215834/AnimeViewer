@@ -283,7 +283,11 @@ async function aiAnalyze(f: SvcFile) {
   aiBusyId.value = f.id
   try {
     const r = await mediaService.aiAnalyzeFile(f.id)
-    message.success(r.message || `AI 解析：《${r.title}》${r.episode ? `第 ${r.episode} 话` : ''}（待人工确认绑定）`)
+    if (r.subjectId) {
+      message.success(r.message || `AI 解析：《${r.title}》第 ${r.episode} 话，已关联《${r.subjectName}》（待确认绑定）`)
+    } else {
+      message.info(r.message || `AI 解析：《${r.title}》${r.episode ? `第 ${r.episode} 话` : ''}（未找到相近条目，可人工绑定）`)
+    }
     await Promise.all([refreshFiles(), refreshStatusOnly()])
   } catch (e) {
     message.error(e instanceof Error ? e.message : 'AI 解析失败（需先在设置页启用 AI）')

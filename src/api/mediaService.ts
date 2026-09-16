@@ -562,8 +562,8 @@ export const mediaService = {
   generateAiKeywords(id: number): Promise<SvcSubscription> {
     return post<SvcSubscription>(`/api/subscriptions/${id}/ai-keywords`)
   },
-  /** v0.22 AI3：文件名语义解析兜底（LLM 判定标题/集数 → pending 待人工复核绑定） */
-  aiAnalyzeFile(id: number): Promise<{ title: string; episode: number; message?: string }> {
+  /** v0.22 AI3：文件名语义解析兜底（LLM 判定标题/集数并预填关联条目 → pending 待人工确认绑定） */
+  aiAnalyzeFile(id: number): Promise<{ title: string; episode: number; subjectId?: number; subjectName?: string; message?: string }> {
     return post(`/api/files/${id}/ai-analyze`)
   },
   unsubscribeSubject(id: number): Promise<void> {
