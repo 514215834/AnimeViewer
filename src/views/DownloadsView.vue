@@ -292,7 +292,23 @@ async function clearHistoryAll() {
   }
 }
 
-/** v0.20 阈值取代全自动开关：0=特殊值全手动确认；1~100=匹配度达阈值自动入队（三重保护仍兜底） */
+/** v0.20 阈值取代全自动开关：0=特殊值全手动确认；1~100=匹配度达阈值自动入队（三重保护仍兜底）。
+ *  v0.22 实测修复：NInputNumber update:value 逐位触发（输入 30 会连发 3/30 两次 PUT）——
+ *  用户定案：无防抖，失焦/回车才提交（输入期间只暂存草稿）。 */
+const scoreDrafts = new Map<number, number>()
+
+function onScoreInput(s: SvcSubscription, value: number | null) {
+  const v = Math.max(0, Math.min(100, Math.floor(value ?? 0)))
+  if (v === (s.autoScore ?? 0)) scoreDrafts.delete(s.id)
+  else scoreDrafts.set(s.id, v)
+}
+
+function flushScore(s: SvcSubscription) {
+  const draft = scoreDrafts.get(s.id)
+  scoreDrafts.delete(s.id)
+  if (draft !== undefined && draft !== (s.autoScore ?? 0)) void setSubScore(s, draft)
+}
+
 async function setSubScore(s: SvcSubscription, value: number) {
   const v = Math.max(0, Math.min(100, Math.floor(value || 0)))
   if (v === (s.autoScore ?? 0)) return
@@ -799,7 +815,7 @@ onBeforeUnmount(() => {
         <NButton size="tiny" quaternary :loading="checkNowBusy" class="check-now" @click="checkNow">立即全量检索</NButton>
       </h3>
       <div v-if="!subs.length" class="dl-none">
-        还没有订阅——在条目详情页剧集 Tab 打开「自动追下载」即可定时追新集
+        还没有订阅——在条目详情页剧集 Tab 打开「追番下载」即可定时追新集
       </div>
       <div v-for="s in subs" :key="s.id" class="sub-row">
         <div class="dl-main">
@@ -826,9 +842,11 @@ onBeforeUnmount(() => {
             :value="s.autoScore"
             :min="0"
             :max="100"
-            :disabled="subBusyId === s.id"
+              :disabled="subBusyId === s.id"
             placeholder="0=手动"
-            @update:value="(v: number | null) => setSubScore(s, v ?? 0)"
+            @update:value="(v: number | null) => onScoreInput(s, v)"
+            @blur="flushScore(s)"
+            @keyup.enter="flushScore(s)"
           >
             <template #prefix>阈值</template>
           </NInputNumber>

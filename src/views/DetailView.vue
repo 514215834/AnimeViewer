@@ -214,7 +214,7 @@ function onResourceEnqueued(payload: { episodeSort?: number }) {
   if (payload.episodeSort) message.info(`第 ${payload.episodeSort} 话资源已入队，可在「下载」页查看进度`)
 }
 
-/* ── v0.19 SU1 条目级「自动追下载」订阅：服务已配置才可见；开启即后台定时检索（默认命中入待确认队列） ── */
+/* ── v0.19 SU1 条目级「追番下载」订阅：服务已配置才可见；开启即后台定时检索（默认命中入待确认队列） ── */
 const subscription = ref<SvcSubscription | null>(null)
 const subscribed = computed(() => subscription.value !== null)
 const subBusy = ref(false)
@@ -265,7 +265,24 @@ async function toggleSubscription(on: boolean) {
   }
 }
 
-/** v0.20 自动入队阈值：0=特殊值全手动确认（默认）；1~100=匹配度达阈值自动入队（三重保护仍兜底） */
+/** v0.20 自动入队阈值：0=特殊值全手动确认（默认）；1~100=匹配度达阈值自动入队（三重保护仍兜底）。
+ *  v0.22 实测修复：NInputNumber update:value 逐位触发（输入 30 会连发 3/30 两次 PUT）——
+ *  用户定案：无防抖，失焦/回车才提交（输入期间只暂存草稿）。 */
+let subScoreDraft: number | null = null
+
+function onSubScoreInput(value: number | null) {
+  const v = Math.max(0, Math.min(100, Math.floor(value ?? 0)))
+  if (!subscription.value || v === (subscription.value.autoScore ?? 0)) subScoreDraft = null
+  else subScoreDraft = v
+}
+
+function flushSubScore() {
+  if (subScoreDraft !== null) {
+    void updateSubScore(subScoreDraft)
+    subScoreDraft = null
+  }
+}
+
 async function updateSubScore(value: number | null) {
   if (!subscription.value || subBusy.value) return
   const v = Math.max(0, Math.min(100, Math.floor(value ?? 0)))
@@ -778,13 +795,13 @@ onBeforeUnmount(() => {
 
           <NTabPane name="eps" tab="剧集">
             <NAlert v-if="tabError" type="error" size="small">{{ tabError }}</NAlert>
-            <!-- v0.19 SU1 自动追下载订阅：独立行，不依赖加入追番（服务已配置即可订阅） -->
+            <!-- v0.19 SU1 追番下载订阅：独立行，不依赖加入追番（服务已配置即可订阅） -->
             <div v-if="settings.svcEnabled && subject" class="eps-sub-row">
               <span
                 class="eps-sub"
                 :title="subscribed ? '已订阅：定时检索新集资源；在下载中心管理订阅与待确认命中' : '开启后服务端定时检索本条目新集资源（默认命中后人工确认）'"
               >
-                自动追下载
+                追番下载
                 <NSwitch
                   size="small"
                   :value="subscribed"
@@ -801,7 +818,9 @@ onBeforeUnmount(() => {
                   :max="100"
                   :loading="subBusy"
                   placeholder="0=手动"
-                  @update:value="updateSubScore"
+                  @update:value="onSubScoreInput"
+                  @blur="flushSubScore"
+                  @keyup.enter="flushSubScore"
                 >
                   <template #prefix>阈值</template>
                 </NInputNumber>
@@ -1437,7 +1456,7 @@ html.light .detail-poster :deep(.poster-frame) {
   opacity: 0.6;
 }
 
-/* v0.19 SU1 自动追下载订阅行 */
+/* v0.19 SU1 追番下载订阅行 */
 .eps-sub-row {
   display: flex;
   align-items: center;

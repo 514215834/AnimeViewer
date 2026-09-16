@@ -772,7 +772,7 @@ async function onImportFile(ev: Event) {
         </NFormItem>
 
         <!-- v0.19 SU1 订阅自动化 -->
-        <NFormItem label="订阅自动化（追番自动下载 Sonarr-lite；条目在详情页剧集 Tab 开启「自动追下载」）">
+        <NFormItem label="订阅自动化（追番自动下载 Sonarr-lite；条目在详情页剧集 Tab 开启「追番下载」）">
           <div class="svc-box">
             <div class="svc-grid dl-grid">
               <div class="sub-row2">
