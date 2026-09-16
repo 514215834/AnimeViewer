@@ -849,11 +849,11 @@ async function onImportFile(ev: Event) {
                 </NInputNumber>
               </div>
             </div>
-            <div class="svc-status">
+            <div class="svc-status ai-status">
               <template v-if="aiError"><span class="svc-err">{{ aiError }}</span></template>
               <span v-else-if="ai.ready" class="svc-ok">AI 已就绪（{{ ai.model }}）· 本小时调用 {{ ai.callsThisHour }} 次</span>
               <span v-else class="svc-muted">未就绪——开启开关并填写 OpenAI 兼容接口地址与模型名；判定一次落库缓存，失败静默降级为启发式</span>
-              <div class="btn-row">
+              <div class="btn-row ai-btn-row">
                 <NButton secondary size="small" :loading="aiSaving" :disabled="!settings.svcEnabled" @click="saveAiSettings">保存 AI 设置</NButton>
               </div>
             </div>
@@ -1122,6 +1122,17 @@ async function onImportFile(ev: Event) {
   flex-wrap: wrap;
   font-size: 12px;
   color: var(--av-text-secondary);
+}
+
+/* v0.22 AI 区块状态行：长文案 + 按钮纵向堆叠（横向 flex 会把就绪文字与保存按钮挤同一行） */
+.svc-status.ai-status {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.svc-status.ai-status .ai-btn-row {
+  margin: 0;
 }
 
 .svc-err {
