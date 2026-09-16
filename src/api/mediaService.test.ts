@@ -132,6 +132,38 @@ describe('v0.17 资源标题集数猜测', () => {
   it('无数字返回 null', () => {
     expect(guessEpisodeSortFromTitle('完整季播合集')).toBeNull()
   })
+
+  // v0.21 补记（2026-09-16 订阅 #29 实测事故，与服务端 SubscriptionFilter.parseEpisode 同夹具逐字对齐）：
+  // LoliHouse 裸数字集数标题（无「第N话」）此前被尾部 HEVC-10bit 劫持——11 条全解析成 10，
+  // 配合同集数 pending 占位唯一把其余 10 条全挡掉
+  it('v0.21 修复：单位尾数（10bit/48kHz/60fps）不再劫持裸数字集数', () => {
+    expect(guessEpisodeSortFromTitle('[LoliHouse] 孤独摇滚！ - 08 [WebRip 1080p HEVC-10bit]')).toBe(8)
+    expect(guessEpisodeSortFromTitle(
+      '[LoliHouse] 转校生美少女竟是我曾经认为是男孩子的青梅竹马 / 轉學後班上的清純可愛美少女，竟是小時候玩在一起的哥兒們'
+      + ' / 転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件 / てんびん - 11'
+      + ' [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]')).toBe(11)
+    expect(guessEpisodeSortFromTitle(
+      '[LoliHouse] 転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件 / てんびん - 09'
+      + ' [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]')).toBe(9)
+    expect(guessEpisodeSortFromTitle(
+      '[LoliHouse] 転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件 / てんびん - 01'
+      + ' [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]')).toBe(1)
+    expect(guessEpisodeSortFromTitle('[Group] Title - 05 [1080p 60fps]')).toBe(5)
+  })
+
+  it('v0.21 修复：点分日期/H.264/Vol.12 与连字符范围包作废为 null', () => {
+    expect(guessEpisodeSortFromTitle(
+      '[JMAX] [2026.07.08] TVアニメ「転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件」'
+      + 'EDテーマ「Tilt」／harmoe [FLAC 48kHz/24bit]')).toBeNull()
+    expect(guessEpisodeSortFromTitle(
+      '[JMAX] [2026.07.08] TVアニメ「転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件」'
+      + 'OPテーマ「夏に重ねて」／DIALOGUE+ [FLAC 96kHz/24bit]')).toBeNull()
+    expect(guessEpisodeSortFromTitle(
+      '転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件 raw 第01-04巻')).toBeNull()
+    expect(guessEpisodeSortFromTitle(
+      '(ラノベ)[雲雀湯] 転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件 1-3 epub')).toBeNull()
+    expect(guessEpisodeSortFromTitle('孤独摇滚 Vol.12 2026 H.264')).toBeNull()
+  })
 })
 
 import { maxWatched } from './mediaService'

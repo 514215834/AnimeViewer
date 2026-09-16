@@ -741,18 +741,30 @@ export function searchKeywords(nameCn?: string, name?: string): string[] {
 }
 
 /** 资源标题集数猜测（纯函数，确认弹窗预填用）：
- *  优先 EP33 / 第33话 等显式标记，退化为「最后一个非年份、非分辨率后缀的独立数字」 */
+ *  优先 EP33 / 第33话 等显式标记，退化为「最后一个独立数字」。
+ *  v0.21 补记（2026-09-16 与服务端 SubscriptionFilter.parseEpisode 同步修）：独立数字退化排除
+ *  年份 / 1080p 后缀 / 单位尾数（24bit·48kHz·60fps·192kbps）/ 点分邻接（2026.07.08 日期段、
+ *  H.264 编码名、Vol.12 卷号）/ 连字符范围包（第01-04巻、1-3 epub）——此前 LoliHouse「てんびん - 11」
+ *  裸数字集数标题被尾部 HEVC-10bit 劫持成 10（订阅 #29 实测 11 条全解析成 10）。 */
 export function guessEpisodeSortFromTitle(title: string): number | null {
   const explicit = title.match(/EP?\s*(\d{1,4})(?!\d)/i) ?? title.match(/第\s*(\d{1,4})\s*[话話集]/)
   if (explicit) {
     const n = Number(explicit[1])
     if (n >= 1 && n <= 999) return n
   }
+  const UNIT_TAIL = /^(bit|khz|hz|kbps|mbps|fps)/
   let guess: number | null = null
   for (const m of title.matchAll(/\d{1,4}(?!\d)/g)) {
     const n = Number(m[0])
-    const next = title[m.index + m[0].length]?.toLowerCase()
-    if (n >= 1 && n <= 999 && next !== 'p' && !(n >= 1900 && n <= 2099)) guess = n
+    const i = m.index!
+    const tail = title.slice(i + m[0].length).toLowerCase()
+    const before = title.slice(0, i)
+    if (n < 1 || n > 999) continue
+    if (n >= 1900 && n <= 2099) continue
+    if (tail.startsWith('p') || UNIT_TAIL.test(tail)) continue
+    if (before.endsWith('.') || tail.startsWith('.')) continue
+    if ((before.endsWith('-') && /\d$/.test(before.slice(0, -1))) || /^-\d/.test(tail)) continue
+    guess = n
   }
   return guess
 }
