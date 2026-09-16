@@ -727,6 +727,8 @@ export interface SvcAiSettings {
   ready: boolean
   /** 服务端只读回显：本小时已用调用数 */
   callsThisHour: number
+  /** v0.22 逐请求附加头（每行「Name: Value」，如 opencode zen 需 x-opencode-session） */
+  extraHeaders: string
 }
 
 /** AI1 命中语义判定（纯函数视图）：解析 aiVerdict JSON，损坏/未判定返回 null */

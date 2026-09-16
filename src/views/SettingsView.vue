@@ -360,6 +360,7 @@ const ai = reactive({
   autoIgnoreNonEpisode: false,
   ready: false,
   callsThisHour: 0,
+  extraHeaders: '',
 })
 
 async function loadAiSettings() {
@@ -386,6 +387,7 @@ async function saveAiSettings() {
       autoIgnoreNonEpisode: ai.autoIgnoreNonEpisode,
       ready: false,
       callsThisHour: 0,
+      extraHeaders: ai.extraHeaders,
     })
     Object.assign(ai, s)
     message.success(s.ready ? 'AI 设置已保存，服务就绪' : '设置已保存（未就绪：需开启开关并填写接口地址与模型）')
@@ -836,6 +838,10 @@ async function onImportFile(ev: Event) {
                 <NInputNumber v-model:value="ai.maxCallsPerHour" :min="0" :max="10000" placeholder="每小时调用上限（0=不限）">
                   <template #prefix>配额</template>
                 </NInputNumber>
+              </div>
+              <div class="sub-row2" style="grid-column: 1 / -1">
+                <NInput v-model:value="ai.extraHeaders" type="textarea" :rows="2"
+                        placeholder="自定义请求头（每行「名称: 值」，如非标网关通道需 x-opencode-session: 会话标识；普通 OpenAI/Ollama 留空）" />
               </div>
               <div class="sub-row2" style="grid-column: 1 / -1">
                 <NInputNumber v-model:value="ai.timeoutSeconds" :min="5" :max="120" placeholder="单次请求超时（秒）">
