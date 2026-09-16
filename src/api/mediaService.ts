@@ -544,12 +544,27 @@ export const mediaService = {
   subscribeSubject(req: SvcSubscriptionAddRequest): Promise<SvcSubscription> {
     return post<SvcSubscription>('/api/subscriptions', req)
   },
-  updateSubscription(id: number, patch: { autoScore?: number; minEpisode?: number }): Promise<SvcSubscription> {
+  updateSubscription(
+    id: number,
+    patch: { autoScore?: number; minEpisode?: number; aiKeywords?: string[] },
+  ): Promise<SvcSubscription> {
     return request<SvcSubscription>(`/api/subscriptions/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     })
+  },
+  /** v0.22 AI1：手动判定命中语义（存量无判定/复核用）；返回判定后的命中 */
+  aiJudgeHit(id: number): Promise<SvcSubHit> {
+    return post<SvcSubHit>(`/api/subscriptions/hits/${id}/ai-judge`)
+  },
+  /** v0.22 AI2：AI 生成订阅扩展检索词（LLM 候选缓存到订阅行，可再人工编辑） */
+  generateAiKeywords(id: number): Promise<SvcSubscription> {
+    return post<SvcSubscription>(`/api/subscriptions/${id}/ai-keywords`)
+  },
+  /** v0.22 AI3：文件名语义解析兜底（LLM 判定标题/集数 → pending 待人工复核绑定） */
+  aiAnalyzeFile(id: number): Promise<{ title: string; episode: number; message?: string }> {
+    return post(`/api/files/${id}/ai-analyze`)
   },
   unsubscribeSubject(id: number): Promise<void> {
     return request<void>(`/api/subscriptions/${id}`, { method: 'DELETE' })
@@ -595,6 +610,19 @@ export const mediaService = {
   downloadSummary(): Promise<SvcDownloadSummary> {
     return request<SvcDownloadSummary>('/api/downloads/summary')
   },
+
+  /* ── v0.22 AI 分析剧集 ── */
+
+  aiSettings(): Promise<SvcAiSettings> {
+    return request<SvcAiSettings>('/api/ai/settings')
+  },
+  saveAiSettings(s: SvcAiSettings): Promise<SvcAiSettings> {
+    return request<SvcAiSettings>('/api/ai/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    })
+  },
 }
 
 /* ── v0.19 SU1/SU2/SU3 订阅自动化（类型与服务端 Dtos.java 一一对应）── */
@@ -616,6 +644,8 @@ export interface SvcSubscription {
   lastCheckedAt?: number
   lastHitAt?: number
   createdAt: number
+  /** v0.22 AI2 扩展检索词（LLM 生成缓存/人工编辑；null=从未生成，首轮 AI 就绪时懒生成） */
+  aiKeywords?: string[] | null
 }
 
 export interface SvcSubscriptionAddRequest {
@@ -649,6 +679,8 @@ export interface SvcSubHit {
   scoreDetail?: string | null
   createdAt: number
   decidedAt?: number
+  /** v0.22 AI1 语义判定 JSON：{"type":"episode|op|ed|other","episode":N|null,"isMainline":bool,"reason"}（null=未判定） */
+  aiVerdict?: string | null
 }
 
 export interface SvcSubscriptionSettings {
@@ -675,6 +707,54 @@ export interface SvcDownloadSummary {
   activeTasks: number
   lastHit?: SvcSubHit
   lastCompleted?: { id: number; name?: string; subjectName?: string; subjectNameCn?: string; completedAt?: number }
+}
+
+/* ── v0.22 AI 分析剧集（类型与服务端 Dtos.java 一一对应）── */
+
+export interface SvcAiSettings {
+  enabled: boolean
+  /** OpenAI 兼容接口根地址（可含 /v1；本地 Ollama 形如 http://127.0.0.1:11434/v1） */
+  baseUrl: string
+  model: string
+  apiKey: string
+  /** 单次请求超时（秒，5~120） */
+  timeoutSeconds: number
+  /** 小时滚动配额护栏（0=不限） */
+  maxCallsPerHour: number
+  /** AI1 判定非本篇时自动忽略（默认关，误判可清历史重评） */
+  autoIgnoreNonEpisode: boolean
+  /** 服务端只读回显：enabled 且地址与模型齐备 */
+  ready: boolean
+  /** 服务端只读回显：本小时已用调用数 */
+  callsThisHour: number
+}
+
+/** AI1 命中语义判定（纯函数视图）：解析 aiVerdict JSON，损坏/未判定返回 null */
+export interface HitAiVerdict {
+  type: 'episode' | 'op' | 'ed' | 'other'
+  /** 判定集数（与启发式解析不一致时前端展示「建议第 N 话」） */
+  episode: number | null
+  isMainline: boolean
+  reason?: string
+}
+
+export function hitAiVerdict(json: string | null | undefined): HitAiVerdict | null {
+  if (!json) return null
+  try {
+    const n = JSON.parse(json) as Partial<HitAiVerdict>
+    const type = n.type === 'episode' || n.type === 'op' || n.type === 'ed' ? n.type : 'other'
+    const episode = typeof n.episode === 'number' && n.episode > 0 && n.episode <= 999 ? n.episode : null
+    return { type, episode, isMainline: n.isMainline === undefined ? type === 'episode' : !!n.isMainline, reason: n.reason }
+  } catch {
+    return null
+  }
+}
+
+/** 徽章短文案：AI 本篇 / AI 主题曲 / AI 非本篇 */
+export function hitAiLabel(v: HitAiVerdict): string {
+  if (v.type === 'episode') return 'AI 本篇'
+  if (v.type === 'op' || v.type === 'ed') return 'AI 主题曲'
+  return 'AI 非本篇'
 }
 
 /** 观看进度基线（纯函数）：订阅时以「已看最大话数」初始化过滤基线（只看本篇 sort，已看列表为空返回 0） */

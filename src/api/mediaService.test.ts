@@ -115,7 +115,7 @@ describe('v0.17 资源发现纯函数', () => {
   })
 })
 
-import { guessEpisodeSortFromTitle } from './mediaService'
+import { guessEpisodeSortFromTitle, hitAiLabel, hitAiVerdict } from './mediaService'
 
 describe('v0.17 资源标题集数猜测', () => {
   it('EP33 / 第33话 显式标记优先', () => {
@@ -163,6 +163,33 @@ describe('v0.17 资源标题集数猜测', () => {
     expect(guessEpisodeSortFromTitle(
       '(ラノベ)[雲雀湯] 転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件 1-3 epub')).toBeNull()
     expect(guessEpisodeSortFromTitle('孤独摇滚 Vol.12 2026 H.264')).toBeNull()
+  })
+})
+
+describe('v0.22 AI1 命中语义判定徽章（hitAiVerdict 纯函数）', () => {
+  it('标准判定 JSON → 视图对象', () => {
+    const v = hitAiVerdict('{"type":"episode","episode":11,"isMainline":true,"reason":"标题含 第11话"}')
+    expect(v?.type).toBe('episode')
+    expect(v?.episode).toBe(11)
+    expect(v?.isMainline).toBe(true)
+    expect(hitAiLabel(v!)).toBe('AI 本篇')
+  })
+
+  it('非本篇判定：op/ed → 主题曲警示，other → 非本篇红标', () => {
+    expect(hitAiLabel(hitAiVerdict('{"type":"op","isMainline":false}')!)).toBe('AI 主题曲')
+    const other = hitAiVerdict('{"type":"whatever","isMainline":false,"reason":"轻小说 epub"}')
+    expect(other?.type).toBe('other')
+    expect(hitAiLabel(other!)).toBe('AI 非本篇')
+    expect(other?.reason).toBe('轻小说 epub')
+  })
+
+  it('损坏/空判定返回 null；episode 越界归 null；type 非法归一 other', () => {
+    expect(hitAiVerdict(null)).toBeNull()
+    expect(hitAiVerdict('')).toBeNull()
+    expect(hitAiVerdict('{broken')).toBeNull()
+    expect(hitAiVerdict('{"type":"episode","episode":1080}')?.episode).toBeNull()
+    expect(hitAiVerdict('{"type":"unknown"}')?.type).toBe('other')
+    expect(hitAiVerdict('{"type":"other"}')?.isMainline).toBe(false)
   })
 })
 

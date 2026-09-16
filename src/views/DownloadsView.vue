@@ -16,12 +16,14 @@ import {
   NCollapseItem,
   NDrawer,
   NDrawerContent,
+  NDynamicTags,
   NEmpty,
   NIcon,
   NInput,
   NInputNumber,
   NModal,
   NPopconfirm,
+  NPopover,
   NProgress,
   NSelect,
   NSpin,
@@ -43,6 +45,8 @@ import { clipboard } from '../utils/clipboard'
 import {
   formatBytes,
   formatSpeed,
+  hitAiLabel,
+  hitAiVerdict,
   mediaService,
   parseMagnet,
   ServiceError,
@@ -325,6 +329,98 @@ function scoreParts(h: SvcSubHit): string[] {
     return parsed.parts ?? []
   } catch {
     return []
+  }
+}
+
+/* ── v0.22 AI1 命中语义徽章 / 手动判定 ── */
+
+/** AI 判定徽章 NTag type：本篇=success、主题曲=warning、非本篇=error；未判定不渲染 */
+function hitAiTag(h: SvcSubHit): { label: string; type: 'success' | 'warning' | 'error' } | null {
+  const v = hitAiVerdict(h.aiVerdict)
+  if (!v) return null
+  if (v.isMainline) return { label: hitAiLabel(v), type: 'success' }
+  if (v.type === 'op' || v.type === 'ed') return { label: hitAiLabel(v), type: 'warning' }
+  return { label: hitAiLabel(v), type: 'error' }
+}
+
+/** AI 判定明细 tooltip 行：类型/建议集数/判定依据 */
+function hitAiTip(h: SvcSubHit): string[] {
+  const v = hitAiVerdict(h.aiVerdict)
+  if (!v) return []
+  const typeText = { episode: '本篇正片', op: 'OP 主题曲', ed: 'ED 主题曲', other: '非本篇（书籍/特典/无关资源）' }[v.type]
+  const rows = [`类型：${typeText}`]
+  if (v.episode != null && v.episode !== h.episodeSort) rows.push(`建议集数：第 ${v.episode} 话（启发式解析第 ${h.episodeSort ?? '?'} 话）`)
+  if (v.reason) rows.push(`依据：${v.reason}`)
+  return rows
+}
+
+async function aiJudge(h: SvcSubHit) {
+  subBusyId.value = h.id
+  try {
+    const updated = await mediaService.aiJudgeHit(h.id)
+    const idx = pendingHits.value.findIndex((x) => x.id === updated.id)
+    if (idx >= 0) pendingHits.value.splice(idx, 1, updated)
+    const v = hitAiVerdict(updated.aiVerdict)
+    message.success(v && !v.isMainline ? `AI 判定：${hitAiLabel(v)}（建议复核）` : 'AI 判定完成')
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : 'AI 判定失败')
+  } finally {
+    subBusyId.value = null
+  }
+}
+
+/* ── v0.22 AI2 订阅扩展检索词（AI 生成缓存 + 人工编辑，PUT 全量覆盖） ── */
+
+const kwEditId = ref<number | null>(null)
+const kwDraft = ref<string[]>([])
+const kwSaving = ref(false)
+
+function openKeywordEditor(s: SvcSubscription) {
+  kwEditId.value = s.id
+  kwDraft.value = [...(s.aiKeywords ?? [])]
+}
+
+function closeKeywordEditor() {
+  kwEditId.value = null
+}
+
+async function saveKeywords(s: SvcSubscription) {
+  if (kwSaving.value) return
+  const cur = s.aiKeywords ?? []
+  const next = kwDraft.value.map((x) => x.trim()).filter(Boolean)
+  if (next.length === cur.length && next.every((x, i) => x === cur[i])) {
+    closeKeywordEditor()
+    return
+  }
+  kwSaving.value = true
+  try {
+    await mediaService.updateSubscription(s.id, { aiKeywords: next })
+    message.success('扩展检索词已保存，下次检索生效')
+    closeKeywordEditor()
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '保存失败')
+  } finally {
+    kwSaving.value = false
+  }
+}
+
+async function aiGenerateKeywords(s: SvcSubscription) {
+  if (kwSaving.value) return
+  kwSaving.value = true
+  try {
+    const updated = await mediaService.generateAiKeywords(s.id)
+    message.success(
+      (updated.aiKeywords?.length ?? 0) > 0
+        ? `AI 已生成 ${updated.aiKeywords!.length} 个扩展检索词（罗马字/英文名候选）`
+        : 'AI 未生成出候选词（可手动添加）',
+    )
+    closeKeywordEditor()
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : 'AI 生成失败（需先在设置页启用 AI）')
+  } finally {
+    kwSaving.value = false
   }
 }
 
@@ -658,6 +754,16 @@ onBeforeUnmount(() => {
                 <div v-if="!scoreParts(h).length" class="score-tip-row dim">暂无评分明细</div>
               </div>
             </NTooltip>
+            <NTooltip v-if="hitAiTag(h)" trigger="hover" placement="top">
+              <template #trigger>
+                <NTag size="tiny" round :bordered="false" :type="hitAiTag(h)!.type" class="hit-score-tag">
+                  {{ hitAiTag(h)!.label }}
+                </NTag>
+              </template>
+              <div class="score-tip">
+                <div v-for="(p, i) in hitAiTip(h)" :key="i" class="score-tip-row">{{ p }}</div>
+              </div>
+            </NTooltip>
             <NTag size="tiny" round :bordered="false" type="warning">第 {{ h.episodeSort ?? '?' }} 话</NTag>
             <NTag v-if="h.fansub" size="tiny" round :bordered="false">{{ h.fansub }}</NTag>
             <span class="hit-name" :title="h.title">{{ h.title }}</span>
@@ -681,6 +787,7 @@ onBeforeUnmount(() => {
             </template>
             后续订阅检索不再显示「{{ h.fansub }}」的命中，确定？
           </NPopconfirm>
+          <NButton v-if="!h.aiVerdict" size="tiny" quaternary :loading="subBusyId === h.id" @click="aiJudge(h)">AI 判定</NButton>
         </div>
       </div>
     </section>
@@ -725,6 +832,21 @@ onBeforeUnmount(() => {
           >
             <template #prefix>阈值</template>
           </NInputNumber>
+          <NPopover trigger="click" placement="bottom-end" :show="kwEditId === s.id" @update:show="(v: boolean) => (v ? openKeywordEditor(s) : closeKeywordEditor())">
+            <template #trigger>
+              <NButton size="tiny" quaternary>
+                扩展词{{ s.aiKeywords?.length ? ` ${s.aiKeywords.length}` : '' }}
+              </NButton>
+            </template>
+            <div class="kw-editor" @click.stop>
+              <div class="kw-title">扩展检索词（罗马字/英文名候选，RSS 子串匹配用；中文名全句常查不到）</div>
+              <NDynamicTags v-model:value="kwDraft" size="small" placeholder="输入词回车添加" />
+              <div class="kw-ops">
+                <NButton size="tiny" secondary :loading="kwSaving" @click="aiGenerateKeywords(s)">AI 生成</NButton>
+                <NButton size="tiny" type="primary" secondary :loading="kwSaving" @click="saveKeywords(s)">保存</NButton>
+              </div>
+            </div>
+          </NPopover>
           <NPopconfirm @positive-click="removeSub(s)">
             <template #trigger>
               <NButton size="tiny" quaternary type="error" circle>
@@ -888,6 +1010,9 @@ onBeforeUnmount(() => {
               </NTag>
               <NTag v-if="h.score != null" size="tiny" round :bordered="false" type="default" class="hit-score-tag">
                 匹配 {{ h.score }}
+              </NTag>
+              <NTag v-if="hitAiTag(h)" size="tiny" round :bordered="false" :type="hitAiTag(h)!.type" class="hit-score-tag">
+                {{ hitAiTag(h)!.label }}
               </NTag>
               <NTag v-if="h.episodeSort" size="tiny" round :bordered="false">第 {{ h.episodeSort }} 话</NTag>
               <span class="hit-name" :title="h.title">{{ h.title }}</span>
@@ -1235,6 +1360,24 @@ onBeforeUnmount(() => {
 
 .sub-score-input {
   width: 128px;
+}
+
+/* v0.22 AI2 订阅扩展检索词编辑弹层 */
+.kw-editor {
+  width: 300px;
+}
+
+.kw-title {
+  font-size: 12px;
+  opacity: 0.65;
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+
+.kw-ops {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .sub-error {

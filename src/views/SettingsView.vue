@@ -347,6 +347,55 @@ async function saveSubscriptionSettings() {
   }
 }
 
+/* ── v0.22 AI 分析剧集（AI0 Provider 设置：OpenAI 兼容接口 + 配额护栏 + 自动忽略开关） ── */
+const aiSaving = ref(false)
+const aiError = ref('')
+const ai = reactive({
+  enabled: false,
+  baseUrl: 'https://api.openai.com/v1',
+  model: '',
+  apiKey: '',
+  timeoutSeconds: 30,
+  maxCallsPerHour: 60,
+  autoIgnoreNonEpisode: false,
+  ready: false,
+  callsThisHour: 0,
+})
+
+async function loadAiSettings() {
+  if (!settings.svcEnabled) return
+  aiError.value = ''
+  try {
+    Object.assign(ai, await mediaService.aiSettings())
+  } catch (e) {
+    aiError.value = e instanceof ServiceError ? e.message : String(e)
+  }
+}
+
+async function saveAiSettings() {
+  aiSaving.value = true
+  aiError.value = ''
+  try {
+    const s = await mediaService.saveAiSettings({
+      enabled: ai.enabled,
+      baseUrl: ai.baseUrl.trim().replace(/\/+$/, ''),
+      model: ai.model.trim(),
+      apiKey: ai.apiKey.trim(),
+      timeoutSeconds: Number(ai.timeoutSeconds) || 30,
+      maxCallsPerHour: Math.max(0, Number(ai.maxCallsPerHour) || 0),
+      autoIgnoreNonEpisode: ai.autoIgnoreNonEpisode,
+      ready: false,
+      callsThisHour: 0,
+    })
+    Object.assign(ai, s)
+    message.success(s.ready ? 'AI 设置已保存，服务就绪' : '设置已保存（未就绪：需开启开关并填写接口地址与模型）')
+  } catch (e) {
+    aiError.value = e instanceof ServiceError ? e.message : String(e)
+  } finally {
+    aiSaving.value = false
+  }
+}
+
 /** E5 资料卡：优先取云端资料，回退到同步缓存的 me */
 const profile = computed(() => {
   if (sync.profile) return sync.profile
@@ -374,6 +423,7 @@ onMounted(() => {
   if (settings.svcEnabled) void testService(true)
   void loadDownloadSettings()
   void loadSubscriptionSettings()
+  void loadAiSettings()
 })
 
 function save() {
@@ -769,6 +819,46 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
+        <!-- v0.22 AI 分析剧集（AI0 Provider 抽象：OpenAI 兼容接口；关闭/失败时全链路行为与启发式一致） -->
+        <NFormItem label="AI 分析（OpenAI 兼容接口，语义判定命中与解析文件名；关闭时零影响）">
+          <div class="svc-box">
+            <div class="svc-grid dl-grid">
+              <div class="dl-switches" style="margin: 0">
+                <span class="dl-switch-item">启用 AI <NSwitch v-model:value="ai.enabled" size="small" /></span>
+                <span class="dl-switch-item">非本篇自动忽略 <NSwitch v-model:value="ai.autoIgnoreNonEpisode" size="small" /></span>
+              </div>
+              <div class="sub-row2">
+                <NInput v-model:value="ai.baseUrl" placeholder="https://api.openai.com/v1（可填 Ollama 地址）" />
+                <NInput v-model:value="ai.model" placeholder="模型名（如 gpt-4o-mini / qwen2.5:7b）" />
+              </div>
+              <div class="sub-row2">
+                <NInput v-model:value="ai.apiKey" type="password" show-password-on="click" placeholder="API Key（本地 Ollama 留空）" />
+                <NInputNumber v-model:value="ai.maxCallsPerHour" :min="0" :max="10000" placeholder="每小时调用上限（0=不限）">
+                  <template #prefix>配额</template>
+                </NInputNumber>
+              </div>
+              <div class="sub-row2" style="grid-column: 1 / -1">
+                <NInputNumber v-model:value="ai.timeoutSeconds" :min="5" :max="120" placeholder="单次请求超时（秒）">
+                  <template #prefix>超时</template>
+                </NInputNumber>
+              </div>
+            </div>
+            <div class="svc-status">
+              <template v-if="aiError"><span class="svc-err">{{ aiError }}</span></template>
+              <span v-else-if="ai.ready" class="svc-ok">AI 已就绪（{{ ai.model }}）· 本小时调用 {{ ai.callsThisHour }} 次</span>
+              <span v-else class="svc-muted">未就绪——开启开关并填写 OpenAI 兼容接口地址与模型名；判定一次落库缓存，失败静默降级为启发式</span>
+              <div class="btn-row">
+                <NButton secondary size="small" :loading="aiSaving" :disabled="!settings.svcEnabled" @click="saveAiSettings">保存 AI 设置</NButton>
+              </div>
+            </div>
+            <div class="svc-tip">
+              就绪后：① 订阅命中自动做「本篇/主题曲/非本篇」语义判定（命中行 AI 徽章，评分达标的非本篇命中不再自动入队）；
+              ② 订阅扩展检索词可 AI 生成（罗马字/英文名候选，修复中文名全句在 RSS 子串匹配下查不到的问题）；
+              ③ 媒体库未识别文件可 AI 解析文件名（人工确认绑定）。判定仅在待确认落库时调用一次并缓存，不会重复烧钱。
+            </div>
+          </div>
+        </NFormItem>
+
         <NFormItem label="诊断信息（仅存本地，不含 Token；遇到异常可复制后反馈）">
           <div class="diag-box">
             <div class="diag-meta">
@@ -1030,6 +1120,10 @@ async function onImportFile(ev: Event) {
 
 .svc-err {
   color: var(--av-danger, #e05c5c);
+}
+
+.svc-ok {
+  color: var(--av-success, #4caf7d);
 }
 
 .svc-muted {

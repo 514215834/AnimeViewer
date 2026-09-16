@@ -274,6 +274,24 @@ async function unbind(f: SvcFile) {
   }
 }
 
+/* ── v0.22 AI3 文件名语义解析兜底（LLM 判定标题/集数 → pending 待人工确认绑定） ── */
+
+const aiBusyId = ref<number | null>(null)
+
+async function aiAnalyze(f: SvcFile) {
+  if (aiBusyId.value != null) return
+  aiBusyId.value = f.id
+  try {
+    const r = await mediaService.aiAnalyzeFile(f.id)
+    message.success(r.message || `AI 解析：《${r.title}》${r.episode ? `第 ${r.episode} 话` : ''}（待人工确认绑定）`)
+    await Promise.all([refreshFiles(), refreshStatusOnly()])
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : 'AI 解析失败（需先在设置页启用 AI）')
+  } finally {
+    aiBusyId.value = null
+  }
+}
+
 async function refreshStatusOnly() {
   try {
     status.value = await mediaService.status()
@@ -459,6 +477,15 @@ onBeforeUnmount(stopPolling)
                   @click="confirmMatch(f)"
                 >确认</NButton>
                 <NButton v-if="f.matchState === 'unmatched' && f.parsedTitle" size="tiny" quaternary @click="rematch(f)">匹配</NButton>
+                <NButton
+                  v-if="f.matchState !== 'bound'"
+                  size="tiny"
+                  quaternary
+                  :loading="aiBusyId === f.id"
+                  :disabled="aiBusyId != null && aiBusyId !== f.id"
+                  title="AI 语义解析文件名（正则识别失败时兜底；需在设置页启用 AI）"
+                  @click="aiAnalyze(f)"
+                >AI 解析</NButton>
                 <NButton size="tiny" quaternary @click="openRebind(f)">{{ f.matchState === 'bound' ? '改绑' : '绑定' }}</NButton>
                 <NPopconfirm v-if="f.matchState === 'bound'" @positive-click="unbind(f)">
                   <template #trigger>
