@@ -7,7 +7,7 @@
  *  external（已交给下载器），列表不显示进度条/速度，暂停恢复与文件勾选被隐藏（在 qBt 中操作）。
  *  v0.19 SU1/SU2 订阅自动化：待确认命中区（一键下载/忽略/忽略字幕组并记忆）+ 订阅管理
  *  （全自动开关/立即全量检索/取消订阅）+ 命中历史台账。 */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import {
   NAlert,
   NButton,
@@ -294,11 +294,29 @@ async function clearHistoryAll() {
 
 /** v0.20 阈值取代全自动开关：0=特殊值全手动确认；1~100=匹配度达阈值自动入队（三重保护仍兜底）。
  *  v0.22 实测修复：NInputNumber update:value 逐位触发（输入 30 会连发 3/30 两次 PUT）——
- *  用户定案：无防抖，失焦/回车才提交（输入期间只暂存草稿）。 */
-const scoreDrafts = new Map<number, number>()
+ *  键入期间只暂存草稿、失焦/回车才提交（无防抖，用户定案）。
+ *  v0.23 实测修复：加减按钮/方向键步进不触发 blur，草稿也不响应式——点击原地不动且不提交；
+ *  现草稿改响应式实时显示，加减/方向键在 capture 阶段打标后即时提交。 */
+const scoreDrafts = reactive(new Map<number, number>())
+
+let scoreStepPending = false
+
+function onScoreClick(e: MouseEvent) {
+  if ((e.target as HTMLElement | null)?.closest('button')) scoreStepPending = true
+}
+
+function onScoreKeydown(e: KeyboardEvent) {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') scoreStepPending = true
+}
 
 function onScoreInput(s: SvcSubscription, value: number | null) {
   const v = Math.max(0, Math.min(100, Math.floor(value ?? 0)))
+  if (scoreStepPending) {
+    scoreStepPending = false
+    scoreDrafts.delete(s.id)
+    void setSubScore(s, v)
+    return
+  }
   if (v === (s.autoScore ?? 0)) scoreDrafts.delete(s.id)
   else scoreDrafts.set(s.id, v)
 }
@@ -839,14 +857,16 @@ onBeforeUnmount(() => {
           <NInputNumber
             size="tiny"
             class="sub-score-input"
-            :value="s.autoScore"
+            :value="scoreDrafts.get(s.id) ?? s.autoScore"
             :min="0"
             :max="100"
-              :disabled="subBusyId === s.id"
+            :disabled="subBusyId === s.id"
             placeholder="0=手动"
             @update:value="(v: number | null) => onScoreInput(s, v)"
             @blur="flushScore(s)"
             @keyup.enter="flushScore(s)"
+            @keydown.capture="onScoreKeydown"
+            @click.capture="onScoreClick"
           >
             <template #prefix>阈值</template>
           </NInputNumber>

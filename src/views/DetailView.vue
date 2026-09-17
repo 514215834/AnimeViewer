@@ -267,19 +267,37 @@ async function toggleSubscription(on: boolean) {
 
 /** v0.20 自动入队阈值：0=特殊值全手动确认（默认）；1~100=匹配度达阈值自动入队（三重保护仍兜底）。
  *  v0.22 实测修复：NInputNumber update:value 逐位触发（输入 30 会连发 3/30 两次 PUT）——
- *  用户定案：无防抖，失焦/回车才提交（输入期间只暂存草稿）。 */
-let subScoreDraft: number | null = null
+ *  键入期间只暂存草稿、失焦/回车才提交（无防抖，用户定案）。
+ *  v0.23 实测修复：加减按钮/方向键步进不触发 blur，草稿也不响应式——点击原地不动且不提交；
+ *  现草稿改响应式实时显示，加减/方向键在 capture 阶段打标后即时提交。 */
+const subScoreDraft = ref<number | null>(null)
+
+let subScoreStepPending = false
+
+function onSubScoreClick(e: MouseEvent) {
+  if ((e.target as HTMLElement | null)?.closest('button')) subScoreStepPending = true
+}
+
+function onSubScoreKeydown(e: KeyboardEvent) {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') subScoreStepPending = true
+}
 
 function onSubScoreInput(value: number | null) {
   const v = Math.max(0, Math.min(100, Math.floor(value ?? 0)))
-  if (!subscription.value || v === (subscription.value.autoScore ?? 0)) subScoreDraft = null
-  else subScoreDraft = v
+  if (subScoreStepPending) {
+    subScoreStepPending = false
+    subScoreDraft.value = null
+    void updateSubScore(v)
+    return
+  }
+  if (!subscription.value || v === (subscription.value.autoScore ?? 0)) subScoreDraft.value = null
+  else subScoreDraft.value = v
 }
 
 function flushSubScore() {
-  if (subScoreDraft !== null) {
-    void updateSubScore(subScoreDraft)
-    subScoreDraft = null
+  if (subScoreDraft.value !== null) {
+    void updateSubScore(subScoreDraft.value)
+    subScoreDraft.value = null
   }
 }
 
@@ -813,7 +831,7 @@ onBeforeUnmount(() => {
                 <NInputNumber
                   size="tiny"
                   class="eps-sub-score"
-                  :value="subscription?.autoScore ?? 0"
+                  :value="subScoreDraft ?? subscription?.autoScore ?? 0"
                   :min="0"
                   :max="100"
                   :loading="subBusy"
@@ -821,6 +839,8 @@ onBeforeUnmount(() => {
                   @update:value="onSubScoreInput"
                   @blur="flushSubScore"
                   @keyup.enter="flushSubScore"
+                  @keydown.capture="onSubScoreKeydown"
+                  @click.capture="onSubScoreClick"
                 >
                   <template #prefix>阈值</template>
                 </NInputNumber>
