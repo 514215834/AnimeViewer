@@ -4,6 +4,9 @@
 /** PL3 自然看完判定阈值：播放进度 ≥95% 视为看完 */
 export const WATCH_COMPLETE_RATIO = 0.95
 
+/** v0.23 SB5 跳过片头默认时长（秒）：按条目记忆缺失时使用，可在播放页修改（0=不显示按钮） */
+export const DEFAULT_INTRO_SEC = 90
+
 /** 绑定类型：file=本机文件（句柄在 mediaFiles 记录）；url=在线直链（v0.15 扩展）；demo=内置演示视频 */
 export type MediaBindingType = 'file' | 'url' | 'demo'
 
@@ -20,6 +23,10 @@ export interface MediaBinding {
   url?: string
   /** type=url 且来源为 WebDAV（v0.15 O3）：path 为相对 WebDAV 根的原始路径，播放时 open→streamId 换取流地址 */
   webdav?: { path: string }
+  /** v0.23 SB3：WebDAV 同名字幕的相对路径（存在时播放页经 O2 代理拉取转 VTT） */
+  webdavSubPath?: string
+  /** v0.23 SB2：本地绑定随带的同名外挂字幕展示名（文本在 mediaStore sub:{fileKey}） */
+  subName?: string
   addedAt: number
 }
 

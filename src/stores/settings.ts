@@ -26,6 +26,10 @@ export interface SettingsState {
   webdavUrl: string
   webdavUser: string
   webdavPass: string
+  /** v0.23 SB4 自动连播：播放结束后自动播下一集（默认关） */
+  autoNext: boolean
+  /** v0.23 反馈：字幕字号（px，20~72）；播放器设置面板「字幕大小」滑杆实时调整 */
+  subFontSize: number
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -50,6 +54,8 @@ export const DEFAULT_SETTINGS: SettingsState = {
   webdavUrl: '',
   webdavUser: '',
   webdavPass: '',
+  autoNext: false,
+  subFontSize: 40,
 }
 
 export const useSettingsStore = defineStore('settings', {

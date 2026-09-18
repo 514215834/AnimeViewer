@@ -127,8 +127,9 @@ export interface SvcMatchOutcome {
 
 /* ── 纯函数（供单测）── */
 
-/** 浏览器原生可随机访问的容器（其余走服务端 ffmpeg 转封装 + seek 重拉） */
-export const DIRECT_EXTS = ['mp4', 'm4v', 'webm']
+/** 浏览器原生可随机访问的容器（其余走服务端 ffmpeg 转封装 + seek 重拉）。
+ *  v0.23 SB0：mkv 直发探测通过（video/webm MIME + Range），直发失败由播放页自动降级转封装 */
+export const DIRECT_EXTS = ['mp4', 'm4v', 'webm', 'mkv']
 
 export function isDirectExt(ext?: string | null): boolean {
   return !!ext && DIRECT_EXTS.includes(ext.toLowerCase())
@@ -152,6 +153,21 @@ export function buildProxyUrl(baseUrl: string, token: string, targetUrl: string)
 export function buildWebdavStreamUrl(baseUrl: string, token: string, streamId: string): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
   return `${base}/api/webdav/stream/${encodeURIComponent(streamId)}?token=${encodeURIComponent(token)}`
+}
+
+/* ── v0.23 SB1 内封字幕 ── */
+
+export interface SvcSubtitleTrack {
+  index: number
+  codec?: string | null
+  language?: string | null
+  title?: string | null
+}
+
+/** 字幕轨地址（纯函数）：ArtPlayer subtitle 以 fetch 加载无法带自定义头，Token 走查询参数（与 stream 双通道一致） */
+export function buildSubtitleUrl(baseUrl: string, token: string, fileId: number, track: number): string {
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  return `${base}/api/files/${fileId}/subtitle/${track}?token=${encodeURIComponent(token)}`
 }
 
 /* ── v0.16 DN2/DN3 下载中心（类型与服务端 Dtos.java 一一对应）── */
@@ -411,6 +427,16 @@ export const mediaService = {
   },
   fileDetail(id: number): Promise<SvcFile> {
     return request<SvcFile>(`/api/files/${id}`)
+  },
+
+  /* ── v0.23 SB1 内封字幕：枚举 / VTT 提取地址 ── */
+
+  subtitleTracks(id: number): Promise<SvcSubtitleTrack[]> {
+    return request<{ tracks: SvcSubtitleTrack[] }>(`/api/files/${id}/subtitles`).then((r) => r.tracks)
+  },
+  subtitleUrl(id: number, track: number): string {
+    const { svcUrl, svcToken } = useSettingsStore()
+    return buildSubtitleUrl(svcUrl, svcToken, id, track)
   },
   match(fileId: number, subjectId: number, sort: number): Promise<void> {
     return post<void>(`/api/files/${fileId}/match`, { subjectId, sort })

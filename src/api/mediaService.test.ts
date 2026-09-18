@@ -17,14 +17,27 @@ describe('v0.14 mediaService 纯函数', () => {
     expect(servicePositionId(2045, 1)).toBe('svc:2045:1')
   })
 
-  it('isDirectExt：mp4/m4v/webm 直连，容器大小写不敏感，其余走转封装', () => {
+  it('isDirectExt：mp4/m4v/webm/mkv 直连（v0.23 SB0 mkv 直发探测通过），容器大小写不敏感，其余走转封装', () => {
     expect(isDirectExt('mp4')).toBe(true)
     expect(isDirectExt('M4V')).toBe(true)
     expect(isDirectExt('webm')).toBe(true)
-    expect(isDirectExt('mkv')).toBe(false)
+    expect(isDirectExt('mkv')).toBe(true)
     expect(isDirectExt('avi')).toBe(false)
     expect(isDirectExt(undefined)).toBe(false)
     expect(isDirectExt('')).toBe(false)
+  })
+})
+
+/* ── v0.23 SB1 字幕轨地址构造 ── */
+
+import { buildSubtitleUrl } from './mediaService'
+
+describe('v0.23 SB1 buildSubtitleUrl', () => {
+  it('字幕轨地址：Token 查询参数传递（ArtPlayer subtitle fetch 无法带自定义头），尾斜杠规范化', () => {
+    expect(buildSubtitleUrl('http://127.0.0.1:8787/', 'tok', 5, 1)).toBe(
+      'http://127.0.0.1:8787/api/files/5/subtitle/1?token=tok',
+    )
+    expect(buildSubtitleUrl('http://s', 't 0k', 3, 0)).toBe('http://s/api/files/3/subtitle/0?token=t%200k')
   })
 })
 

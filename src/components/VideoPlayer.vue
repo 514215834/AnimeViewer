@@ -7,11 +7,17 @@
  *  v0.15 O1：m3u8 源经 hls.js（MSE）播放，独立动态 chunk，原生 seek 不走重拉；
  *  在线源加载失败（网络/跨域）向外交付 sourceerror，由外层决定是否经服务代理重试。
  *  v0.15 O4：artplayer-plugin-danmuku 弹幕（独立 chunk，仅播放页下载）；
- *  弹幕源以 props 传入，导入后变化经插件 load() 热更新。 */
+ *  弹幕源以 props 传入，导入后变化经插件 load() 热更新。
+ *  v0.23：SB1/SB2 字幕轨（props.subtitles → ArtPlayer subtitle + 设置面板轨道切换/关闭）；
+ *  SB5 跳过片头胶囊（layers 层，片头区间内显示，点击 seek 到片头尾——remux 经拦截 setter 走重拉）。 */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type Artplayer from 'artplayer'
+import type { SettingOption } from 'artplayer'
 import type { Result as DanmukuResult } from 'artplayer-plugin-danmuku'
 import type { DanmakuItem } from '../utils/danmaku'
+import type { SubtitleEntry } from '../utils/subtitle'
+import { clampSubtitleFontSize, SUBTITLE_FONT_SIZE } from '../utils/subtitle'
+import { useSettingsStore } from '../stores/settings'
 import { formatClock, isHlsUrl } from '../utils/mediaCore'
 
 const props = defineProps<{
@@ -25,7 +31,13 @@ const props = defineProps<{
   danmaku?: DanmakuItem[]
   /** v0.15 发送弹幕持久化回调（函数 prop 直调，绕开组件 emit 的事件查找链） */
   persistDanmuku?: (item: DanmakuItem) => void
+  /** v0.23 SB1/SB2 外挂/内封字幕轨列表（空 = 无字幕，不渲染设置项） */
+  subtitles?: SubtitleEntry[]
+  /** v0.23 SB5 片头时长（秒；≤0 = 不启用跳过片头） */
+  introSec?: number
 }>()
+
+const settings = useSettingsStore()
 
 const emit = defineEmits<{
   (e: 'ready', duration: number): void
@@ -51,6 +63,16 @@ let suppressSeekUntil = 0
 let destroyed = false
 /** sourceerror 只上报一次（外层换源重建组件） */
 let sourceErrored = false
+/** v0.23 反馈：字幕字号持久化节流句柄（拖动滑杆高频回调，600ms 静默期落盘） */
+let fontSizeSaveTimer: number | null = null
+let fontSizePending = 0
+/** v0.23 SB5 跳过片头胶囊显隐状态机（hidden→shown→autoHidden；出区间复位，区间内 seek 回退重新显示）。
+ *  实测反馈：胶囊常驻至片头尾遮挡画面——显示 5s 后自动关闭，不随时间更新反复弹出。 */
+let skipState: 'hidden' | 'shown' | 'autoHidden' = 'hidden'
+let skipShownAt = 0
+let lastSkipT = 0
+/** 胶囊显示后自动关闭的时长（毫秒） */
+const SKIP_INTRO_AUTO_HIDE_MS = 5000
 
 function emitProgress(force = false) {
   if (!art) return
@@ -73,6 +95,9 @@ onMounted(async () => {
   // v0.15 O4 弹幕插件与 ArtPlayer 同批动态 import（Option.danmuku 传函数，导入后经 load() 热更新）
   const { default: danmukuFactory } = await import('artplayer-plugin-danmuku')
   const hlsSrc = isHlsUrl(props.src)
+  // v0.23 SB1/SB2 字幕：默认选中外标 selected 的轨（服务源=启发式默认轨；本地/演示=唯一轨）
+  const subs = props.subtitles ?? []
+  const defaultSub = subs.find((s) => s.selected) ?? subs[0]
 
   art = new ArtplayerCtor({
     container: container.value,
@@ -123,6 +148,92 @@ onMounted(async () => {
         },
       }),
     ],
+    // v0.23 SB1/SB2 字幕轨：构造期注入默认轨；设置面板提供「关闭 + 各轨」切换。
+    // escape=false：VTT cue 内联标签（<b>/<i> 等，ass 轨 \b1 转 VTT 即 <b>）按 WebVTT 语义渲染
+    // 加粗/斜体——默认 escape=true 会转义成字面文本（实测反馈「字幕带 <b>」）。
+    // fontSize：ArtPlayer 默认 20px 偏小（实测反馈），默认 40px 并入设置面板滑杆。
+    ...(defaultSub
+      ? {
+          subtitle: {
+            url: defaultSub.url,
+            type: 'vtt',
+            encoding: 'utf-8',
+            escape: false,
+            style: { fontSize: `${clampSubtitleFontSize(settings.subFontSize)}px` },
+          },
+          settings: [
+            {
+              html: '字幕',
+              selector: [
+                { html: '关闭', default: !defaultSub },
+                ...subs.map((s) => ({ html: s.label, url: s.url, default: s === defaultSub })),
+              ],
+              onSelect(item: { html: string }) {
+                if (!art) return
+                if (item.html === '关闭') {
+                  art.subtitle.show = false
+                } else {
+                  void art.subtitle.switch((item as unknown as { url: string }).url)
+                  art.subtitle.show = true
+                }
+              },
+            },
+            // 字幕大小：range 滑杆实时预览 + 节流持久化（全机生效，不按条目记忆）。
+            // ArtPlayer 会把 onRange/onChange 回调的返回值写入 tooltip——回调必须返回文本，
+            // 否则 tooltip 被赋成字面 "undefined"（实测反馈「滑杆出现 undefa」）；
+            // 预览挂 onChange（input 拖动实时触发），onRange（change 松手）未用故省略
+            {
+              html: '字幕大小',
+              tooltip: `${clampSubtitleFontSize(settings.subFontSize)}px`,
+              range: [
+                clampSubtitleFontSize(settings.subFontSize),
+                SUBTITLE_FONT_SIZE.min,
+                SUBTITLE_FONT_SIZE.max,
+                SUBTITLE_FONT_SIZE.step,
+              ],
+              onChange(item: SettingOption) {
+                if (!art) return `${clampSubtitleFontSize(item.range?.[0])}px`
+                const v = clampSubtitleFontSize(item.range?.[0])
+                art.subtitle.style({ fontSize: `${v}px` })
+                fontSizePending = v
+                if (fontSizeSaveTimer) window.clearTimeout(fontSizeSaveTimer)
+                fontSizeSaveTimer = window.setTimeout(() => {
+                  fontSizeSaveTimer = null
+                  settings.applyPatch({ subFontSize: fontSizePending })
+                }, 600)
+                return `${v}px`
+              },
+            },
+          ],
+        }
+      : {}),
+    // v0.23 SB5 跳过片头胶囊（layers 层）；显隐由 video:timeupdate 同步（下方）
+    ...(props.introSec && props.introSec > 0
+      ? {
+          layers: [
+            {
+              name: 'av-skipintro',
+              html: '<div class="av-skipintro-btn">跳过片头 ›</div>',
+              style: {
+                position: 'absolute',
+                right: '14px',
+                bottom: '64px',
+                padding: '6px 14px',
+                borderRadius: '999px',
+                background: 'rgba(0, 0, 0, 0.55)',
+                color: '#fff',
+                fontSize: '13px',
+                cursor: 'pointer',
+                backdropFilter: 'blur(4px)',
+                pointerEvents: 'auto',
+              },
+              click: () => {
+                if (art && props.introSec) art.seek = props.introSec
+              },
+            },
+          ],
+        }
+      : {}),
     controls: [
       {
         name: 'av-theater',
@@ -202,6 +313,36 @@ onMounted(async () => {
     emit('ready', duration)
   })
   art.on('video:timeupdate', () => emitProgress())
+  // v0.23 SB5 跳过片头胶囊显隐状态机：进入片头区间显示（记 shownAt），显示超 5s 自动关闭；
+  // 出区间复位 hidden（seek 回区间重新显示一轮）。初始层先隐藏，防续播越界时闪烁。
+  if (props.introSec && props.introSec > 0) {
+    const skipLayer = (art.layers as unknown as Record<string, HTMLElement | undefined>)['av-skipintro']
+    if (skipLayer) skipLayer.style.display = 'none'
+    art.on('video:timeupdate', () => {
+      if (!art || destroyed) return
+      const intro = props.introSec ?? 0
+      const t = Number(art.currentTime) || 0
+      const dur = Number(art.duration) || 0
+      const inRange = dur > intro + 5 && t < intro
+      // 区间内时间轴明显回退（seek 回看片头）视为新一轮进入
+      const seekedBack = t < lastSkipT - 1
+      lastSkipT = t
+      let next = skipState
+      if (!inRange) {
+        next = 'hidden'
+      } else if (skipState === 'hidden' || (skipState === 'autoHidden' && seekedBack)) {
+        next = 'shown'
+        skipShownAt = Date.now()
+      } else if (skipState === 'shown' && Date.now() - skipShownAt > SKIP_INTRO_AUTO_HIDE_MS) {
+        next = 'autoHidden'
+      }
+      if (next !== skipState) {
+        skipState = next
+        const layer = (art.layers as unknown as Record<string, HTMLElement | undefined>)['av-skipintro']
+        if (layer) layer.style.display = next === 'shown' ? '' : 'none'
+      }
+    })
+  }
   art.on('video:pause', () => emitProgress(true))
   art.on('video:ended', () => {
     emitProgress(true)
@@ -248,11 +389,13 @@ onMounted(async () => {
   ;(art.video as HTMLVideoElement).addEventListener('seeking', seekingHandler)
 
   // v0.15 O1 直链（非 HLS）加载失败上报：MEDIA_ERR_NETWORK(2) / MEDIA_ERR_SRC_NOT_SUPPORTED(4)
-  // 覆盖跨域拒绝与地址失效；HLS 走 hls.js 错误通道。只报一次。
+  // 覆盖跨域拒绝与地址失效；v0.23 SB0b 增补 MEDIA_ERR_DECODE(3)——mkv 直发遇浏览器不可解
+  // 编码（无硬解 HEVC 等）时报给外层做「降级转封装重试一次」（remux 模式下则由外层判终态）。
+  // HLS 走 hls.js 错误通道。只报一次。
   if (!hlsSrc) {
     videoErrorHandler = () => {
       const code = (art?.video as HTMLVideoElement | undefined)?.error?.code
-      if (code === 2 || code === 4) emitSourceError()
+      if (code === 2 || code === 3 || code === 4) emitSourceError()
     }
     ;(art.video as HTMLVideoElement).addEventListener('error', videoErrorHandler)
   }
@@ -279,6 +422,12 @@ onBeforeUnmount(() => {
   // 卸载兜底：补发最后一次进度（外层持久化），再销毁播放器
   destroyed = true
   emitProgress(true)
+  // 字幕字号节流落盘 flush（拖完立即关页不丢最后一次调整）
+  if (fontSizeSaveTimer) {
+    window.clearTimeout(fontSizeSaveTimer)
+    fontSizeSaveTimer = null
+    settings.applyPatch({ subFontSize: fontSizePending })
+  }
   if (fKeyHandler) window.removeEventListener('keydown', fKeyHandler)
   fKeyHandler = null
   if (videoErrorHandler && art) (art.video as HTMLVideoElement).removeEventListener('error', videoErrorHandler)

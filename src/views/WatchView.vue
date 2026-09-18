@@ -5,22 +5,40 @@
  *  v0.14：新增媒体服务源（?file=服务文件ID）——mp4 直连 Range 流；mkv 等容器走服务端
  *  ffmpeg 转封装「直播式」流，seek 以 ?t= 重拉（seekBase 记录流起点，进度换算回绝对时间）。
  *  v0.15：URL 型绑定扩展为 直链/HLS（hls.js）/WebDAV 三类在线源；直连失败自动经服务代理
- *  重试一次（CORS 容灾）；弹幕按「条目+话数」维度加载与导入（dm: 存储，与源解耦）。 */
+ *  重试一次（CORS 容灾）；弹幕按「条目+话数」维度加载与导入（dm: 存储，与源解耦）。
+ *  v0.23 SB0：mkv 播放源三层策略——直发优先（探测通过，native seek/duration）、
+ *  video error 自动降级转封装管道流重试一次（O1 同款模式，lastPosition 续播）；
+ *  SB1 内封字幕轨枚举 + VTT 提取（ArtPlayer subtitle，默认自动选第一中文轨）；
+ *  SB2 本地外挂 srt/vtt（绑定时的同目录探测成果从 IDB 读出加载）；SB3 WebDAV 同名字幕
+ *  经 O2 代理拉取转 VTT；SB4 自动连播（设置开关）+ 上/下一集；SB5 跳过片头（按条目记忆）。 */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { NButton, NIcon, NSpin } from 'naive-ui'
-import { ArrowBackOutline, LinkOutline, PlayOutline } from '@vicons/ionicons5'
+import { NButton, NIcon, NInputNumber, NPopover, NSpin } from 'naive-ui'
+import { ArrowBackOutline, LinkOutline, PlayOutline, PlayForwardOutline, PlayBackOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { mediaService, isDirectExt, servicePositionId, type SvcFile } from '../api/mediaService'
 import { useLibraryStore } from '../stores/library'
+import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
-import { isWatchedComplete, positionIdOf } from '../utils/mediaCore'
+import { DEFAULT_INTRO_SEC, isWatchedComplete, positionIdOf } from '../utils/mediaCore'
+import { pickDefaultTrack, srtToVtt, trackLabel, type SubtitleEntry, type SubtitleTrack } from '../utils/subtitle'
 import { appendDanmaku, parseDanmakuXml, type DanmakuItem } from '../utils/danmaku'
-import { getBinding, getDanmaku, getFileRecord, getPosition, saveDanmaku, savePosition } from '../utils/mediaStore'
+import {
+  getBinding,
+  getDanmaku,
+  getFileRecord,
+  getIntro,
+  getPosition,
+  getSubtitle,
+  saveDanmaku,
+  savePosition,
+  setIntro,
+} from '../utils/mediaStore'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import EmptyHint from '../components/EmptyHint.vue'
 
+const settings = useSettingsStore()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -42,7 +60,7 @@ const bindingName = ref('')
 const videoTitle = ref('')
 const videoSrc = ref('')
 const startAt = ref(0)
-/** v0.14 是否为服务端转封装流（seek 重拉模式） */
+/** v0.14 是否为服务端转封装流（seek 重拉模式）。v0.23 SB0b：mkv 直发失败时由 false 翻转为 true 重试 */
 const remux = ref(false)
 /** v0.15 O1 在线源（直链/HLS）：原始地址 + 是否已切换为服务代理 */
 const urlSource = ref('')
@@ -50,18 +68,33 @@ const onlineProxied = ref(false)
 /** v0.15 O4 弹幕（按条目+话数加载，全部源类型可用） */
 const danmakuItems = ref<DanmakuItem[]>([])
 const dmInput = ref<HTMLInputElement | null>(null)
+/** v0.23 字幕轨列表（服务源内封轨 / 本地外挂 / 演示内置） */
+const subtitleEntries = ref<SubtitleEntry[]>([])
+/** v0.23 SB5 片头时长（秒，0=关） */
+const introSec = ref(DEFAULT_INTRO_SEC)
+const introDraft = ref(DEFAULT_INTRO_SEC)
+/** v0.23 SB4 剧集导航：当前条目正篇话数（按 sort 升序） */
+const epSorts = ref<number[]>([])
 /** 进度持久化的位置标识 */
 let positionId = ''
 let objectUrl = ''
+/** v0.23 字幕 VTT blob 地址（退出时统一回收） */
+let subObjectUrl = ''
 /** 每次播放会话只自动标记一次 */
 let autoMarked = false
 /** v0.14 转封装流的起点（绝对时间）：进度 = seekBase + 流内时间 */
 let seekBase = 0
 /** 最近一次上报的播放位置（代理重试重建播放器时作为续播起点） */
 let lastPosition = 0
+/** v0.23 SB0b 服务源直发→转封装降级只重试一次 */
+let svcFallbackUsed = false
+/** v0.23 SB0b 服务源文件详情（降级时需要 durationSec 判定续播点） */
+let svcFile: SvcFile | null = null
 
 /** PL5 演示视频资源（用户提供的内置样例，播放时才请求） */
 const demoClipUrl = new URL('../assets/demo-clip.mp4', import.meta.url).href
+/** v0.23 SB2 演示内置字幕（走查字幕链路：选择/开关/切换） */
+const demoSubUrl = new URL('../assets/demo-subtitle.vtt', import.meta.url).href
 
 /** 取源序号：参数快速变化时丢弃过期结果，防止旧响应覆盖新状态 */
 let loadSeq = 0
@@ -79,6 +112,10 @@ async function load() {
   onlineProxied.value = false
   lastPosition = 0
   seekBase = 0
+  svcFallbackUsed = false
+  svcFile = null
+  releaseSubtitleUrl()
+  subtitleEntries.value = []
   try {
     if (!subjectId.value || !sort.value) {
       fatal.value = '缺少条目或集数参数'
@@ -87,6 +124,9 @@ async function load() {
     // v0.15 O4 弹幕与源无关，全部源类型可用（导入入口在 meta 行）
     danmakuItems.value = await getDanmaku(subjectId.value, sort.value)
     if (seq !== loadSeq) return
+    // v0.23 SB4/SB5 副资料并行预取（剧集列表 / 片头记忆），失败静默不影响播放
+    void loadEpSorts()
+    void loadIntro()
     if (fileId.value) {
       await loadServiceSource(seq)
     } else {
@@ -97,7 +137,97 @@ async function load() {
   }
 }
 
-/** v0.14 服务媒体库源：mp4/m4v/webm 直连 Range；其余容器转封装 fMP4（?t= 起点） */
+/** v0.23 SB4 正篇话数序（连播/上下一集导航）：取不到时（离线/无网）仅隐藏按钮 */
+async function loadEpSorts() {
+  epSorts.value = []
+  try {
+    const episodes = await dataSource.episodes(subjectId.value)
+    epSorts.value = episodes
+      .filter((e) => e.type === 0)
+      .map((e) => e.sort)
+      .sort((a, b) => a - b)
+  } catch {
+    /* 静默：连播与上/下一集按钮不可用，不影响播放 */
+  }
+}
+
+/** v0.23 SB5 片头时长按条目记忆（默认 90s） */
+async function loadIntro() {
+  const remembered = await getIntro(subjectId.value)
+  introSec.value = remembered ?? DEFAULT_INTRO_SEC
+  introDraft.value = introSec.value
+}
+
+const prevSort = computed(() => {
+  const i = epSorts.value.indexOf(sort.value)
+  return i > 0 ? epSorts.value[i - 1] : null
+})
+const nextSort = computed(() => {
+  const i = epSorts.value.indexOf(sort.value)
+  return i >= 0 && i < epSorts.value.length - 1 ? epSorts.value[i + 1] : null
+})
+
+/** v0.23 SB4 切集：优先服务源绑定文件（保持 file 参数直连），其次本地绑定；都不存在则提示 */
+async function goEpisode(target: number) {
+  if (mediaService.configured()) {
+    try {
+      const list = await mediaService.subjectFiles(subjectId.value)
+      const f = list.find((x) => x.sort === target)
+      if (f) {
+        await router.push({ name: 'watch', query: { subject: String(subjectId.value), sort: String(target), file: String(f.fileId) } })
+        return
+      }
+    } catch {
+      /* 服务不可达退回本地绑定判定 */
+    }
+  }
+  const b = await getBinding(subjectId.value, target)
+  if (!b) {
+    message.info(`第 ${target} 话还没有绑定播放源`)
+    return
+  }
+  await router.push({ name: 'watch', query: { subject: String(subjectId.value), sort: String(target) } })
+}
+
+/** v0.23 SB4 连播：自然播完（ended）时按设置开关自动进入下一集 */
+function onEnded() {
+  if (settings.autoNext && nextSort.value) void goEpisode(nextSort.value)
+}
+
+/** v0.23 SB4 连播开关（镜像设置页「自动连播」，配置持久化到本机 settings） */
+function toggleAutoNext() {
+  settings.applyPatch({ autoNext: !settings.autoNext })
+  message.info(settings.autoNext ? '已开启自动连播：看完自动播下一集' : '已关闭自动连播')
+}
+
+/** v0.23 SB5 片头时长修改/清除（0=关闭按钮；null 记忆=回到默认 90s） */
+async function applyIntro(v: number | null) {
+  const sec = Math.max(0, Math.min(600, Math.round(v ?? DEFAULT_INTRO_SEC)))
+  introSec.value = sec
+  introDraft.value = sec
+  await setIntro(subjectId.value, sec)
+  message.success(sec > 0 ? `片头时长已记忆为 ${sec}s` : '已关闭跳过片头（本条目）')
+}
+async function resetIntro() {
+  introSec.value = DEFAULT_INTRO_SEC
+  introDraft.value = DEFAULT_INTRO_SEC
+  await setIntro(subjectId.value, DEFAULT_INTRO_SEC)
+  message.success(`已恢复默认片头时长 ${DEFAULT_INTRO_SEC}s`)
+}
+
+function releaseSubtitleUrl() {
+  if (subObjectUrl) URL.revokeObjectURL(subObjectUrl)
+  subObjectUrl = ''
+}
+
+/** v0.23 装载一条字幕轨（vtt 文本 → blob URL → 唯一选中轨；SB2/SB3 本地与 WebDAV 用） */
+function loadVttEntry(name: string, vtt: string) {
+  releaseSubtitleUrl()
+  subObjectUrl = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }))
+  subtitleEntries.value = [{ index: 0, label: name, url: subObjectUrl, selected: true }]
+}
+
+/** v0.14 服务媒体库源：mp4/m4v/webm/mkv 直连 Range（SB0）；其余容器转封装 fMP4（?t= 起点） */
 async function loadServiceSource(seq: number) {
   if (!mediaService.configured()) {
     fatal.value = '媒体服务未配置——请到设置页填写服务地址与 Token'
@@ -111,6 +241,7 @@ async function loadServiceSource(seq: number) {
     return
   }
   if (seq !== loadSeq) return
+  svcFile = file
   bindingName.value = file.name
   videoTitle.value = `第 ${sort.value} 话 · ${file.name}`
   positionId = servicePositionId(subjectId.value, sort.value)
@@ -129,6 +260,23 @@ async function loadServiceSource(seq: number) {
     startAt.value = resume
     videoSrc.value = mediaService.streamUrl(fileId.value)
   }
+
+  // v0.23 SB1 内封字幕轨：枚举 + 默认轨（无轨/失败静默——字幕是增强项，不阻塞播放）
+  try {
+    const tracks: SubtitleTrack[] = await mediaService.subtitleTracks(fileId.value)
+    if (seq !== loadSeq) return
+    if (tracks.length) {
+      const def = pickDefaultTrack(tracks)
+      subtitleEntries.value = tracks.map((t) => ({
+        index: t.index,
+        label: trackLabel(t),
+        url: mediaService.subtitleUrl(fileId.value, t.index),
+        selected: def?.index === t.index,
+      }))
+    }
+  } catch {
+    /* 字幕轨枚举失败不阻塞播放 */
+  }
 }
 
 /** v0.13 本机文件 / 演示 / URL 三路取源 */
@@ -145,6 +293,8 @@ async function loadLocalSource(seq: number) {
 
   if (binding.type === 'demo') {
     videoSrc.value = demoClipUrl
+    // v0.23 SB2 演示内置字幕（走查字幕选择/开关/切换全链路）
+    loadVttEntry('演示字幕', await fetchText(demoSubUrl))
   } else if (binding.type === 'url') {
     if (binding.webdav) {
       // v0.15 O3 WebDAV 源：凭据在服务端会话（open→streamId），播放地址不含凭据；Range 直连原生 seek
@@ -160,6 +310,8 @@ async function loadLocalSource(seq: number) {
         fatal.value = e instanceof Error ? e.message : String(e)
         return
       }
+      // v0.23 SB3 WebDAV 同名字幕：经 O2 代理拉取字幕文本（无目录上下文的直链在线源不做）
+      if (binding.webdavSubPath) void loadWebdavSubtitle(binding.webdavSubPath)
     } else {
       // v0.15 O1 直链 / HLS：先直连，失败经服务代理重试一次
       urlSource.value = binding.url ?? ''
@@ -198,12 +350,41 @@ async function loadLocalSource(seq: number) {
       objectUrl = URL.createObjectURL(file)
       videoSrc.value = objectUrl
     }
+    // v0.23 SB2 本地外挂字幕：绑定时的同目录探测成果（VTT 文本）直接读出加载
+    if (binding.fileKey) {
+      const sub = await getSubtitle(binding.fileKey)
+      if (seq !== loadSeq) return
+      if (sub?.vtt) loadVttEntry(sub.name, sub.vtt)
+    }
   }
 
   // PL3 续播记忆
   const pos = await getPosition(positionId)
   if (pos && pos.position > 5) startAt.value = pos.position
 }
+
+async function fetchText(url: string): Promise<string> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.text()
+}
+
+/** v0.23 SB3 WebDAV 同名字幕：绑定目录时已探测 subPath，经服务代理取文本转 VTT（复用 O2 通道） */
+async function loadWebdavSubtitle(subPath: string) {
+  try {
+    const abs = `${settings.webdavRoot}${subPath}`
+    const proxied = mediaService.proxyUrl(abs)
+    if (!proxied) return
+    const text = await fetchText(proxied)
+    const vtt = /\.vtt$/i.test(subPath) ? text : srtToVtt(text)
+    if (vtt.trim() === 'WEBVTT') return // 空字幕（转换失败/空文件）不装载
+    const name = subPath.split('/').filter(Boolean).pop() ?? '字幕'
+    loadVttEntry(name, vtt)
+  } catch {
+    /* 字幕拉取失败静默（播放不受影响） */
+  }
+}
+
 
 /** 显式重新授权（按钮点击 = 用户手势） */
 async function reauthorize() {
@@ -248,8 +429,26 @@ function applyOnlineSource() {
   }
 }
 
-/** v0.15 O1 在线源加载失败容灾：未代理过且服务可用 → 自动经代理重试一次（结果不粘性记忆） */
+/** v0.15 O1 / v0.23 SB0b 源加载失败容灾：
+ *  - URL 在线源：未代理过且服务可用 → 自动经代理重试一次（结果不粘性记忆）
+ *  - 服务源直发（SB0）：video error 自动降级转封装管道流重试一次（lastPosition 续播；
+ *    降级后仍失败才提示不可播——启发式全保留、可播性只增不减） */
 function onSourceError() {
+  if (fileId.value) {
+    if (svcFallbackUsed || remux.value) {
+      fatal.value = '视频播放失败——转封装管道流亦不可播（编码或文件损坏）。'
+      return
+    }
+    svcFallbackUsed = true
+    remux.value = true
+    const dur = svcFile?.durationSec ?? 0
+    let resume = lastPosition > 5 ? lastPosition : 0
+    if (resume && dur && resume >= dur * 0.95) resume = 0
+    seekBase = resume
+    startAt.value = 0
+    videoSrc.value = mediaService.streamUrl(fileId.value, resume || undefined)
+    return
+  }
   if (!urlSource.value) return
   if (onlineProxied.value) {
     fatal.value = '在线源播放失败（直连与代理均不可用）——请检查地址是否有效，或更换播放源'
@@ -329,6 +528,7 @@ watch(
 onBeforeUnmount(() => {
   if (objectUrl) URL.revokeObjectURL(objectUrl)
   objectUrl = ''
+  releaseSubtitleUrl()
 })
 
 /** v0.14 remux seek 重拉：外层以 ?t= 重建流（VideoPlayer 经 key 变更重挂载） */
@@ -387,17 +587,55 @@ function onSeekReload(target: number) {
         :remux="remux"
         :danmaku="danmakuItems"
         :persist-danmuku="onDanmukuEmit"
+        :subtitles="subtitleEntries"
+        :intro-sec="introSec"
         @progress="onProgress"
         @seekreload="onSeekReload"
         @sourceerror="onSourceError"
+        @ended="onEnded"
       />
       <div class="watch-meta">
         <span class="watch-name">{{ videoTitle }}</span>
         <span class="watch-source" :title="bindingName">来源：{{ bindingName }}</span>
         <span v-if="onlineProxied" class="watch-source">· 经服务代理</span>
+        <span v-if="subtitleEntries.length" class="watch-source" title="字幕轨在播放器「设置 ⚙」内切换">
+          字幕 {{ subtitleEntries.length }} 轨
+        </span>
         <span v-if="danmakuItems.length" class="watch-source">弹幕 {{ danmakuItems.length }} 条</span>
         <input ref="dmInput" type="file" accept=".xml,text/xml,application/xml" hidden @change="onDanmakuFile" />
         <NButton size="tiny" quaternary @click="dmInput?.click()">导入弹幕</NButton>
+        <!-- v0.23 SB4 连播开关（镜像设置页「自动连播」）+ 上/下一集 -->
+        <NButton
+          size="tiny"
+          quaternary
+          :type="settings.autoNext ? 'primary' : 'default'"
+          title="自然看完后自动播放下一集（设置页 · 播放体验）"
+          @click="toggleAutoNext"
+        >
+          连播 {{ settings.autoNext ? '开' : '关' }}
+        </NButton>
+        <NButton v-if="prevSort !== null" size="tiny" quaternary title="上一集" @click="goEpisode(prevSort)">
+          <template #icon><NIcon :component="PlayBackOutline" /></template>
+          第 {{ prevSort }} 话
+        </NButton>
+        <NButton v-if="nextSort !== null" size="tiny" quaternary title="下一集" @click="goEpisode(nextSort)">
+          第 {{ nextSort }} 话
+          <template #icon><NIcon :component="PlayForwardOutline" /></template>
+        </NButton>
+        <!-- v0.23 SB5 片头时长记忆（默认 90s，可改/清） -->
+        <NPopover trigger="click" placement="top">
+          <template #trigger>
+            <NButton size="tiny" quaternary>片头 {{ introSec || '关' }}s</NButton>
+          </template>
+          <div class="intro-edit">
+            <span>片头时长（秒，0=关）</span>
+            <NInputNumber v-model:value="introDraft" size="tiny" :min="0" :max="600" style="width: 130px" />
+            <div class="intro-actions">
+              <NButton size="tiny" type="primary" @click="applyIntro(introDraft)">保存</NButton>
+              <NButton size="tiny" @click="resetIntro()">恢复默认</NButton>
+            </div>
+          </div>
+        </NPopover>
         <span class="watch-hint">
           {{ remux ? '转封装流 · 拖动进度将重新加载' : '空格播放/暂停 · ←→ 快进快退 · F 全屏' }} · 看完 95% 自动标记
         </span>
@@ -457,7 +695,7 @@ function onSeekReload(target: number) {
 
 .watch-meta {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   flex-wrap: wrap;
   margin-top: 12px;
@@ -481,5 +719,19 @@ function onSeekReload(target: number) {
   font-size: 12px;
   color: var(--av-text-tertiary);
   margin-left: auto;
+}
+
+/* v0.23 SB5 片头时长编辑弹层 */
+.intro-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--av-text-secondary);
+}
+
+.intro-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>

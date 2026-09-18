@@ -5,7 +5,10 @@
  *  文件 → 集数为手动绑定（集数自动猜测仅作预填，正式识别在 v0.14 服务端）。
  *  兼容性：File System Access API 仅 Chromium；Firefox/Safari 走 <input type=file> + 拖拽。
  *  v0.15 O1/O3：新增「添加在线源」（直链 / m3u8，URL 文件名段猜测集数）与
- *  WebDAV 浏览（账号在设置页配置，服务端 PROPFIND 列目录，绑定记 webdav 元数据）。 */
+ *  WebDAV 浏览（账号在设置页配置，服务端 PROPFIND 列目录，绑定记 webdav 元数据）。
+ *  v0.23 SB2：目录扫描/多选/拖拽时自动探测同目录同名 srt/vtt 字幕（含中文语言后缀），
+ *  行内显示「字幕 ✓」；绑定即把字幕文本转 VTT 落库（播放页直接加载，免二次授权）。
+ *  SB3：WebDAV 目录同理记录同名字幕相对路径（播放页经服务代理拉取）。 */
 import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, NSelect, NTag } from 'naive-ui'
 import { CloudOutline, FolderOpenOutline, FolderOutline, PlayOutline, TrashOutline, VideocamOutline } from '@vicons/ionicons5'
@@ -20,12 +23,14 @@ import {
   urlFileName,
   type MediaBinding,
 } from '../utils/mediaCore'
+import { isSubtitleName, matchSubtitle, srtToVtt } from '../utils/subtitle'
 import {
   getLastDir,
   getBinding,
   listBindings,
   putFileRecord,
   removeBinding,
+  saveSubtitle,
   setBinding,
   setLastDir,
 } from '../utils/mediaStore'
@@ -60,7 +65,13 @@ interface PendingFile {
   guess: number | null
   /** 行内选择的绑定集数 */
   sort: number | null
+  /** v0.23 SB2/SB3 已发现的同名字幕（null=未发现） */
+  subName?: string
+  subText?: string
 }
+
+/** 字幕来源：句柄延迟取 File，或直接持 File（拖拽/input） */
+type SubSource = { name: string; get: () => Promise<File> }
 
 const pending = ref<PendingFile[]>([])
 const dirName = ref('')
@@ -115,9 +126,10 @@ watch(
   },
 )
 
-async function addFiles(list: { name: string; size: number; handle?: unknown; file?: File }[]) {
-  const videos = list.filter((f) => isVideoName(f.name))
-  const skipped = list.length - videos.length
+/** v0.23 SB2 汇入视频 + 同目录字幕：视频行匹配同名 srt/vtt（含中文语言后缀），命中即预读文本 */
+async function addFiles(list: { name: string; size: number; handle?: unknown; file?: File }[], subs: SubSource[] = []) {
+  const videos = list.filter((f) => isVideoName(f.name) && !isSubtitleName(f.name))
+  const skipped = list.length - videos.length - subs.length
   if (skipped > 0) message.info(`已跳过 ${skipped} 个非视频文件`)
   if (!videos.length) return
   const existing = new Set(pending.value.map((p) => `${p.name}:${p.size}`))
@@ -126,7 +138,25 @@ async function addFiles(list: { name: string; size: number; handle?: unknown; fi
     if (existing.has(key)) continue
     existing.add(key)
     const guess = guessEpisodeSort(f.name)
-    pending.value.push({ ...f, guess, sort: guess })
+    const row: PendingFile = { ...f, guess, sort: guess }
+    // v0.23 SB2 同名外挂字幕探测（候选 = 本批字幕 + 已有待绑定行字幕）
+    const subName = matchSubtitle(
+      f.name,
+      [...subs.map((s) => s.name), ...pending.value.filter((p) => p.subName).map((p) => p.subName as string)],
+    )
+    if (subName) {
+      const src = subs.find((s) => s.name === subName)
+      if (src) {
+        try {
+          const subFile = await src.get()
+          row.subName = subName
+          row.subText = await subFile.text()
+        } catch {
+          /* 字幕预读失败按无字幕处理 */
+        }
+      }
+    }
+    pending.value.push(row)
   }
 }
 
@@ -182,9 +212,16 @@ async function restoreDir() {
 
 async function scanDir(dir: DirHandleLike) {
   const list: { name: string; size: number; handle: unknown }[] = []
+  const subs: SubSource[] = []
   try {
     for await (const entry of dir.values()) {
-      if (entry.kind !== 'file' || !isVideoName(entry.name)) continue
+      if (entry.kind !== 'file') continue
+      // v0.23 SB2 字幕文件也收（候选给 addFiles 匹配）
+      if (isSubtitleName(entry.name)) {
+        subs.push({ name: entry.name, get: () => (entry as FileHandleLike).getFile() })
+        continue
+      }
+      if (!isVideoName(entry.name)) continue
       if (list.length >= 500) {
         message.warning('目录文件过多，仅列前 500 个视频')
         break
@@ -195,8 +232,8 @@ async function scanDir(dir: DirHandleLike) {
   } catch {
     message.error('目录读取失败')
   }
-  await addFiles(list)
-  if (list.length) message.success(`已扫描 ${list.length} 个视频文件`)
+  await addFiles(list, subs)
+  if (list.length) message.success(`已扫描 ${list.length} 个视频文件${subs.some((s) => pending.value.some((p) => p.subName === s.name)) ? '（含同名字幕）' : ''}`)
   else message.info('目录中没有视频文件')
 }
 
@@ -206,11 +243,17 @@ async function pickFiles() {
     try {
       const handles = await w.showOpenFilePicker({ multiple: true })
       const list: { name: string; size: number; handle: unknown }[] = []
+      const subs: SubSource[] = []
       for (const h of handles) {
+        // v0.23 SB2 字幕文件一起收（候选给 addFiles 匹配）
+        if (isSubtitleName(h.name)) {
+          subs.push({ name: h.name, get: () => h.getFile() })
+          continue
+        }
         const file = await h.getFile()
         list.push({ name: file.name, size: file.size, handle: h })
       }
-      await addFiles(list)
+      await addFiles(list, subs)
     } catch {
       // 用户取消
     }
@@ -224,15 +267,18 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
 function onInputFiles(ev: Event) {
   const input = ev.target as HTMLInputElement
-  const files = Array.from(input.files ?? []).map((f) => ({ name: f.name, size: f.size, file: f }))
-  void addFiles(files)
+  // v0.23 SB2 字幕文件（同选）汇入候选
+  const files = Array.from(input.files ?? [])
+  const subs: SubSource[] = files.filter((f) => isSubtitleName(f.name)).map((f) => ({ name: f.name, get: () => Promise.resolve(f) }))
+  void addFiles(files.map((f) => ({ name: f.name, size: f.size, file: f })), subs)
   input.value = ''
 }
 
 function onDrop(ev: DragEvent) {
   dropActive.value = false
-  const files = Array.from(ev.dataTransfer?.files ?? []).map((f) => ({ name: f.name, size: f.size, file: f }))
-  void addFiles(files)
+  const files = Array.from(ev.dataTransfer?.files ?? [])
+  const subs: SubSource[] = files.filter((f) => isSubtitleName(f.name)).map((f) => ({ name: f.name, get: () => Promise.resolve(f) }))
+  void addFiles(files.map((f) => ({ name: f.name, size: f.size, file: f })), subs)
 }
 
 async function bindRow(row: PendingFile) {
@@ -242,15 +288,27 @@ async function bindRow(row: PendingFile) {
   }
   const fileKey = fileKeyOf(row.name, row.size)
   await putFileRecord({ fileKey, name: row.name, size: row.size, handle: row.handle, file: row.file })
+  // v0.23 SB2 同名外挂字幕随绑定落库（srt 转 VTT；vtt 原样），播放页直接加载免二次授权
+  let subName: string | undefined
+  if (row.subName && row.subText !== undefined) {
+    try {
+      const vtt = /\.srt$/i.test(row.subName) ? srtToVtt(row.subText) : row.subText
+      await saveSubtitle(fileKey, row.subName, vtt)
+      subName = row.subName
+    } catch {
+      /* 字幕落库失败不影响绑定 */
+    }
+  }
   await setBinding({
     subjectId: props.subjectId,
     sort: row.sort,
     name: row.name,
     type: 'file',
     fileKey,
+    subName,
     addedAt: Date.now(),
   })
-  message.success(`已绑定到第 ${row.sort} 话`)
+  message.success(`已绑定到第 ${row.sort} 话${subName ? `（含字幕：${subName}）` : ''}`)
   pending.value = pending.value.filter((p) => p !== row)
   await refreshBindings()
   emit('changed')
@@ -320,6 +378,8 @@ const davLoading = ref(false)
 const davPath = ref('/')
 const davList = ref<SvcWebdavEntry[]>([])
 const davSorts = ref<Record<string, number | null>>({})
+/** v0.23 SB3 视频名 → 同名字幕名（浏览目录时探测） */
+const davSubs = ref<Record<string, string>>({})
 const davCrumb = computed(() => davPath.value.split('/').filter(Boolean))
 
 async function browseDav(path: string) {
@@ -333,8 +393,17 @@ async function browseDav(path: string) {
     davPath.value = res.path
     davList.value = res.list
     const sorts: Record<string, number | null> = {}
-    for (const e of res.list) if (!e.dir) sorts[e.name] = guessEpisodeSort(e.name)
+    const subs: Record<string, string> = {}
+    const names = res.list.filter((e) => !e.dir).map((e) => e.name)
+    for (const e of res.list) {
+      if (e.dir) continue
+      sorts[e.name] = guessEpisodeSort(e.name)
+      // v0.23 SB3 同名字幕探测（仅记录路径，播放时经服务代理拉取转 VTT）
+      const subName = matchSubtitle(e.name, names)
+      if (subName && subName !== e.name) subs[e.name] = subName
+    }
     davSorts.value = sorts
+    davSubs.value = subs
   } catch (e) {
     message.error(e instanceof Error ? e.message : 'WebDAV 浏览失败')
   } finally {
@@ -358,6 +427,9 @@ async function bindDavFile(entry: SvcWebdavEntry) {
     return
   }
   const filePath = `${davPath.value === '/' ? '' : davPath.value}/${entry.name}`
+  // v0.23 SB3 同名字幕相对路径（播放页经 O2 代理拉取转 VTT）
+  const subName = davSubs.value[entry.name]
+  const subPath = subName ? `${davPath.value === '/' ? '' : davPath.value}/${subName}` : undefined
   await setBinding({
     subjectId: props.subjectId,
     sort,
@@ -365,9 +437,11 @@ async function bindDavFile(entry: SvcWebdavEntry) {
     type: 'url',
     url: davFileUrl(filePath),
     webdav: { path: filePath },
+    webdavSubPath: subPath,
+    subName,
     addedAt: Date.now(),
   })
-  message.success(`WebDAV 文件已绑定到第 ${sort} 话`)
+  message.success(`WebDAV 文件已绑定到第 ${sort} 话${subName ? `（含字幕：${subName}）` : ''}`)
   await refreshBindings()
   emit('changed')
 }
@@ -395,6 +469,8 @@ function close() {
         <div v-for="b in bindings" :key="b.sort" class="mb-bound-row">
           <NTag size="small" :bordered="false" type="primary" round>第 {{ b.sort }} 话</NTag>
           <span class="mb-bound-name" :title="b.name">{{ b.name }}</span>
+          <!-- v0.23 SB2/SB3 已发现字幕提示 -->
+          <NTag v-if="b.subName" size="small" :bordered="false" round :title="b.subName">字幕 ✓</NTag>
           <NButton size="tiny" type="primary" secondary round @click="playBound(b.sort)">
             <template #icon><NIcon :component="PlayOutline" /></template>
             播放
@@ -428,7 +504,7 @@ function close() {
         </NButton>
 
         <!-- 非 Chromium 兜底：隐藏 input 多选 -->
-        <input ref="fileInput" type="file" multiple accept="video/*,.mkv,.ts,.m2ts" hidden @change="onInputFiles" />
+        <input ref="fileInput" type="file" multiple accept="video/*,.mkv,.ts,.m2ts,.srt,.vtt" hidden @change="onInputFiles" />
 
         <!-- 拖拽区 -->
         <div
@@ -446,6 +522,8 @@ function close() {
           <div v-for="(row, i) in pending" :key="`${row.name}:${row.size}`" class="mb-pending-row">
             <span class="mb-file-name" :title="row.name">{{ row.name }}</span>
             <span class="mb-file-size">{{ fmtSize(row.size) }}</span>
+            <!-- v0.23 SB2 已发现同名字幕提示 -->
+            <NTag v-if="row.subName" size="small" :bordered="false" round :title="`已发现字幕：${row.subName}`">字幕 ✓</NTag>
             <NSelect
               v-model:value="row.sort"
               size="tiny"
@@ -512,6 +590,7 @@ function close() {
               <span v-else class="mb-file-name" :title="entry.name">{{ entry.name }}</span>
               <span v-if="!entry.dir && entry.size" class="mb-file-size">{{ fmtSize(entry.size) }}</span>
               <template v-if="!entry.dir">
+                <NTag v-if="davSubs[entry.name]" size="small" :bordered="false" round :title="`已发现字幕：${davSubs[entry.name]}`">字幕 ✓</NTag>
                 <NSelect
                   v-model:value="davSorts[entry.name]"
                   size="tiny"
@@ -531,8 +610,9 @@ function close() {
       </section>
 
       <p class="mb-hint">
-        句柄保存在本机浏览器，每次会话需重新授权（浏览器安全策略）；支持 mp4 / webm 直播，mkv / avi
-        等容器浏览器暂不支持播放（v0.14 服务端转封装解决）。Firefox/Safari 不支持目录选择，可多选文件或拖拽。
+        句柄保存在本机浏览器，每次会话需重新授权（浏览器安全策略）；mp4 / webm / mkv 直连播放（mkv 直发失败自动经
+        服务端转封装重试），avi 等其他容器走服务端转封装。Firefox/Safari 不支持目录选择，可多选文件或拖拽。
+        扫描/拖拽时自动探测同目录同名 .srt/.vtt 字幕（含 .chs/.cht 等语言后缀；ass 不在本地支持范围）。
         在线源仅限用户自备地址；m3u8 经 hls.js 播放，直链跨域受限且已配置媒体服务时自动经服务代理。
       </p>
     </div>

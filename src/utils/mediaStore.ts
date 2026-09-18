@@ -213,6 +213,43 @@ export async function clearPositions(): Promise<void> {
   for (const r of rows) await idbDelete(r.key)
 }
 
+/* ── v0.23 SB2 本地外挂字幕：绑定文件时把同目录同名 srt/vtt 读成 VTT 文本一并落库 ──
+   键 sub:{fileKey}——字幕文本很小（几十 KB~1MB），存文本免去播放时二次文件授权；
+   换绑/换集互不影响。 */
+
+export interface SubtitleRecord {
+  fileKey: string
+  /** 字幕文件展示名 */
+  name: string
+  vtt: string
+  foundAt: number
+}
+
+export async function getSubtitle(fileKey: string): Promise<SubtitleRecord | null> {
+  if (!fileKey) return null
+  return idbGet<SubtitleRecord>(`sub:${fileKey}`)
+}
+
+export async function saveSubtitle(fileKey: string, name: string, vtt: string): Promise<void> {
+  if (!fileKey) return
+  await idbPut(`sub:${fileKey}`, { fileKey, name, vtt, foundAt: Date.now() } satisfies SubtitleRecord)
+}
+
+/* ── v0.23 SB5 跳过片头：片头时长按条目记忆（秒），未记忆返回 null（调用方用默认值）── */
+
+export async function getIntro(subjectId: number): Promise<number | null> {
+  const v = await idbGet<number>(`i:${subjectId}`)
+  return typeof v === 'number' && v >= 0 ? v : null
+}
+
+export async function setIntro(subjectId: number, seconds: number): Promise<void> {
+  await idbPut(`i:${subjectId}`, Math.max(0, Math.round(seconds)))
+}
+
+export async function clearIntro(subjectId: number): Promise<void> {
+  await idbDelete(`i:${subjectId}`)
+}
+
 /* ── 目录句柄（PL2：每次会话恢复一次授权） ── */
 
 interface DirHandleRecord {

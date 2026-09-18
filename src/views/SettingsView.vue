@@ -430,7 +430,7 @@ onMounted(() => {
 
 function save() {
   applyDraftBase()
-  settings.applyPatch({ dataSource: draft.dataSource, hideNsfw: draft.hideNsfw, imageQuality: draft.imageQuality })
+  settings.applyPatch({ dataSource: draft.dataSource, hideNsfw: draft.hideNsfw, imageQuality: draft.imageQuality, autoNext: draft.autoNext })
   Object.assign(draft, settings.$state)
   clearApiCache()
   message.success('设置已保存并生效')
@@ -619,6 +619,20 @@ async function onImportFile(ev: Event) {
             </NButton>
             <NButton secondary @click="fileInput?.click()">⬆ 导入收藏</NButton>
             <input ref="fileInput" type="file" accept="application/json,.json" hidden @change="onImportFile" />
+          </div>
+        </NFormItem>
+
+        <!-- v0.23 SB4 播放体验（本机设置，立即生效） -->
+        <NFormItem label="播放体验">
+          <div class="playback-box">
+            <NSwitch v-model:value="draft.autoNext">
+              <template #checked>开</template>
+              <template #unchecked>关</template>
+            </NSwitch>
+            <div class="playback-hint">
+              <span class="playback-hint-title">自动连播</span>
+              <span>自然看完一集后自动播放下一集（默认关）；播放页 meta 行有快捷开关</span>
+            </div>
           </div>
         </NFormItem>
 
@@ -1050,6 +1064,29 @@ async function onImportFile(ev: Event) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* v0.23 SB4 播放体验（开关 + 说明横排） */
+.playback-box {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.playback-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--av-text-tertiary);
+  line-height: 1.5;
+}
+
+.playback-hint-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--av-text-secondary);
 }
 
 /* v0.14 S5 媒体服务 */
