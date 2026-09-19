@@ -3,7 +3,6 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NSpin } from 'naive-ui'
 import { useSettingsStore } from '../stores/settings'
-import { mediaService } from '../api/mediaService'
 
 const router = useRouter()
 const settings = useSettingsStore()
@@ -27,35 +26,21 @@ onMounted(async () => {
     return
   }
   try {
-    // v0.26 补记：bgm.tv oauth 端点的响应不允许浏览器跨域读取——媒体服务可用时经服务端代理换取
-    // （服务端带合规 UA + 直连→代理容灾，凭据仅随请求体流转不落库）；未配置服务保持浏览器直取
-    // （部分环境可成功，失败时按提示回退手动粘贴 Token）
-    let data: { access_token?: string; refresh_token?: string }
-    if (settings.svcEnabled) {
-      data = await mediaService.bangumiOauthToken({
+    // Bangumi Token 端点与 API 网关不同域，若浏览器 CORS 受限可能失败，此时可回退手动粘贴 Token
+    const res = await fetch('https://bgm.tv/oauth/access_token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({
         grant_type: 'authorization_code',
         client_id: clientId,
         client_secret: clientSecret,
         code,
         redirect_uri: `${location.origin}/oauth-callback`,
-      })
-      if (!data.access_token) throw new Error('响应中没有 access_token')
-    } else {
-      const res = await fetch('https://bgm.tv/oauth/access_token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: clientId,
-          client_secret: clientSecret,
-          code,
-          redirect_uri: `${location.origin}/oauth-callback`,
-        }).toString(),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
-      data = (await res.json()) as { access_token?: string; refresh_token?: string }
-      if (!data.access_token) throw new Error('响应中没有 access_token')
-    }
+      }).toString(),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
+    const data = (await res.json()) as { access_token?: string; refresh_token?: string }
+    if (!data.access_token) throw new Error('响应中没有 access_token')
     settings.applyPatch({ accessToken: data.access_token, refreshToken: data.refresh_token ?? '' })
     status.value = 'ok'
     detail.value = '登录成功，正在返回设置页…'

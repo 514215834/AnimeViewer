@@ -725,32 +725,6 @@ export const mediaService = {
     if (!svcUrl.trim() || !svcToken.trim() || !url) return ''
     return buildHanimeThumbUrl(svcUrl, svcToken, url)
   },
-
-  /* ── v0.26 补记：Bangumi 服务端透传（浏览器直连 api.bgm.tv 存在环境性故障：预检 502/直连超时）── */
-
-  /** Bangumi GET /v0/* 透传原始响应（status + 文本体，状态语义由 bangumi.ts 解释——401 触发匿名降级、
-   *  4xx/5xx 转 ApiError）；服务未配置抛 ServiceError（调用方据此回退直连）。
-   *  auth 为完整 Authorization 头值（可空，公共数据匿名可用） */
-  async bangumiV0Raw(path: string, auth: string): Promise<{ status: number; body: string }> {
-    const { svcUrl, svcToken } = useSettingsStore()
-    if (!svcUrl.trim() || !svcToken.trim()) throw new ServiceError('unreachable', '媒体服务未配置')
-    const res = await fetch(`${baseOf()}/api/bangumi/v0${path}`, {
-      headers: { 'X-AV-Token': svcToken, ...(auth ? { Authorization: auth } : {}) },
-      signal: AbortSignal.timeout(35000),
-    })
-    const body = await res.text()
-    // 区分两类 401：媒体服务配对 Token 错误（本服务 401）与 bgm 上游 401（透传给调用方降级）
-    if (res.status === 401 && body.includes('"unauthorized"')) {
-      throw new ServiceError('unauthorized', '媒体服务 Token 不正确')
-    }
-    return { status: res.status, body }
-  },
-
-  /** OAuth 授权码换 Token（服务端代理 bgm.tv/oauth/access_token——该端点响应不允许浏览器跨域读取；
-   *  凭据仅随请求体流转，服务端不落库） */
-  bangumiOauthToken(form: Record<string, string>): Promise<{ access_token: string; refresh_token?: string }> {
-    return post<{ access_token: string; refresh_token?: string }>('/api/bangumi/oauth/token', form)
-  },
 }
 
 /* ── v0.19 SU1/SU2/SU3 订阅自动化（类型与服务端 Dtos.java 一一对应）── */
