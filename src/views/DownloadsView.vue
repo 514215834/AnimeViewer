@@ -458,6 +458,46 @@ async function aiGenerateKeywords(s: SvcSubscription) {
   }
 }
 
+/* ── v0.25 RSS 固定直链订阅源（订阅行绑定直连源：蜜柑每番 RSS 等；设置后检索仅走直链、跳过关键词搜索） ── */
+
+const rssEditId = ref<number | null>(null)
+const rssDraft = ref('')
+const rssSaving = ref(false)
+
+function openRssEditor(s: SvcSubscription) {
+  rssEditId.value = s.id
+  rssDraft.value = s.rssUrl ?? ''
+}
+
+function closeRssEditor() {
+  rssEditId.value = null
+}
+
+async function saveRssUrl(s: SvcSubscription) {
+  if (rssSaving.value) return
+  const next = rssDraft.value.trim()
+  if (next && !/^https?:\/\//.test(next)) {
+    message.warning('RSS 直链需以 http(s):// 开头')
+    return
+  }
+  if (next === (s.rssUrl ?? '')) {
+    closeRssEditor()
+    return
+  }
+  rssSaving.value = true
+  try {
+    // 空串=清除（服务端 sanitize 归一 null）；非空=绑定直链
+    await mediaService.updateSubscription(s.id, { rssUrl: next })
+    message.success(next ? 'RSS 直链已绑定，下次检索仅走该直链' : 'RSS 直链已清除，恢复关键词检索')
+    closeRssEditor()
+    await refreshSubscriptionData()
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : '保存失败')
+  } finally {
+    rssSaving.value = false
+  }
+}
+
 async function removeSub(s: SvcSubscription) {
   subBusyId.value = s.id
   try {
@@ -882,6 +922,25 @@ onBeforeUnmount(() => {
               <div class="kw-ops">
                 <NButton size="tiny" secondary :loading="kwSaving" @click="aiGenerateKeywords(s)">AI 生成</NButton>
                 <NButton size="tiny" type="primary" secondary :loading="kwSaving" @click="saveKeywords(s)">保存</NButton>
+              </div>
+            </div>
+          </NPopover>
+          <!-- v0.25 RSS 固定直链订阅：绑定后检索仅走该直链（蜜柑每番 RSS 等），跳过关键词搜索 -->
+          <NPopover trigger="click" placement="bottom-end" :show="rssEditId === s.id" @update:show="(v: boolean) => (v ? openRssEditor(s) : closeRssEditor())">
+            <template #trigger>
+              <NButton size="tiny" quaternary :type="s.rssUrl ? 'primary' : 'default'" :title="s.rssUrl ? `直链源：${s.rssUrl}` : '绑定 RSS 固定直链'">
+                RSS{{ s.rssUrl ? ' ✓' : '' }}
+              </NButton>
+            </template>
+            <div class="kw-editor" @click.stop>
+              <div class="kw-title">
+                RSS 固定直链（蜜柑每番 RSS 等直连源；设置后检索仅走该直链并复用既有过滤管线，
+                跳过关键词搜索；留空保存即清除恢复关键词检索。建议绑定每番 RSS——聚合私享订阅会跨番混入，靠匹配度与人工确认兜底）
+              </div>
+              <NInput v-model:value="rssDraft" size="small" clearable placeholder="https://mikanani.me/RSS/Bangumi?bangumiId=…" />
+              <div class="kw-ops">
+                <NButton size="tiny" quaternary :disabled="rssSaving" @click="closeRssEditor()">取消</NButton>
+                <NButton size="tiny" type="primary" secondary :loading="rssSaving" @click="saveRssUrl(s)">保存</NButton>
               </div>
             </div>
           </NPopover>

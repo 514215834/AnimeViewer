@@ -18,7 +18,7 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { CopyOutline, DownloadOutline, SearchOutline } from '@vicons/ionicons5'
+import { CopyOutline, DownloadOutline, SearchOutline, SettingsOutline } from '@vicons/ionicons5'
 import { clipboard } from '../utils/clipboard'
 import {
   extractFansub,
@@ -30,6 +30,7 @@ import {
   type SvcResourceSite,
 } from '../api/mediaService'
 import { loadJson, saveJson } from '../utils/storage'
+import ResourceSiteManager from './ResourceSiteManager.vue'
 
 const props = defineProps<{
   show: boolean
@@ -79,7 +80,21 @@ async function loadSites() {
   }
 }
 
-/** 选择语义：全部态（null）点站点 = 从空集起指定；子集增减；子集扩大到全集时退化为全部态 */
+/** v0.24 SM1/SM4 站点管理：管理弹窗（添加/编辑/删除/启停）changed 后即时刷新 chips（siteKeys 失效态重置为全部） */
+const siteManagerShow = ref(false)
+
+function onSitesChanged(sites: SvcResourceSite[]) {
+  siteList.value = sites
+  const enabledKeys = sites.filter((s) => s.enabled !== false).map((s) => s.key)
+  if (selectedSiteKeys.value && !selectedSiteKeys.value.some((k) => enabledKeys.includes(k))) {
+    selectedSiteKeys.value = null // 所选站点全部失效 → 退回全部态
+  }
+}
+
+/** v0.24 SM5：chips 只显示启用站点（停用站点在管理弹窗重新启用） */
+const enabledSites = computed(() => siteList.value.filter((s) => s.enabled !== false))
+
+/** 选择语义：全部态（null）点站点 = 从空集起指定；子集增减；子集扩大到全集时退化为全部态（v0.24：全集=启用站点） */
 function toggleSite(key: string | null) {
   if (!key) {
     selectedSiteKeys.value = null
@@ -87,7 +102,7 @@ function toggleSite(key: string | null) {
     const cur = new Set(selectedSiteKeys.value ?? [])
     if (cur.has(key)) cur.delete(key)
     else cur.add(key)
-    if (cur.size === 0 || cur.size === siteList.value.length) selectedSiteKeys.value = null
+    if (cur.size === 0 || cur.size === enabledSites.value.length) selectedSiteKeys.value = null
     else selectedSiteKeys.value = [...cur]
   }
   // RS2 联动重搜：有关键词即以当前关键词重搜
@@ -164,13 +179,18 @@ function openConfirm(it: SvcResourceItem) {
   }
 }
 
+/** 入队链接（v0.24 SE3）：磁力优先、种子直链兜底（后端 MagnetParser.isSupported 双通） */
+function itemUri(it: SvcResourceItem): string {
+  return (it.magnet ?? it.torrentUrl ?? '').trim()
+}
+
 async function submitEnqueue() {
   const st = confirmState.value
   if (!st || enqueueBusy.value) return
   enqueueBusy.value = true
   try {
     await mediaService.enqueueResource({
-      magnet: st.item.magnet,
+      magnet: itemUri(st.item),
       subjectId: st.alsoBind ? (props.subjectId ?? undefined) : undefined,
       subjectName: st.alsoBind ? (props.subjectName || undefined) : undefined,
       subjectNameCn: st.alsoBind ? (props.subjectNameCn || undefined) : undefined,
@@ -191,9 +211,10 @@ async function submitEnqueue() {
   }
 }
 
-async function copyMagnet(it: SvcResourceItem) {
-  await clipboard.write(it.magnet)
-  message.success('磁力链接已复制，可粘贴到外部 BT 客户端')
+/** 复制链接（v0.24 SE3：磁力优先，种子直链自适应） */
+async function copyItemUri(it: SvcResourceItem) {
+  await clipboard.write(itemUri(it))
+  message.success(it.magnet ? '磁力链接已复制，可粘贴到外部 BT 客户端' : '种子链接已复制，可粘贴到外部 BT 客户端或浏览器下载')
 }
 
 /* ── 搜索执行 ── */
@@ -241,7 +262,9 @@ async function autoDualSearch(kws: string[]) {
     }
     const seen = new Set<string>()
     items.value = collected.filter((it) => {
-      const key = it.infoHash || it.magnet
+      // v0.24 SE1 去重键扩展对齐服务端：infoHash > magnet > torrentUrl
+      const key = it.infoHash || it.magnet || it.torrentUrl
+      if (!key) return false
       if (seen.has(key)) return false
       seen.add(key)
       return true
@@ -312,8 +335,8 @@ defineExpose({ runSearch })
       <NButton type="primary" secondary :loading="searching" @click="runSearch(keyword)">搜索</NButton>
     </div>
 
-    <!-- v0.21 RS1 站点选择器：全部=混合搜索；单选/多选=指定站点 -->
-    <div v-if="siteList.length" class="rs-sites">
+    <!-- v0.21 RS1 站点选择器：全部=混合搜索；单选/多选=指定站点（v0.24 SM5：仅启用站点） -->
+    <div v-if="enabledSites.length" class="rs-sites">
       <NButton
         size="tiny"
         round
@@ -325,7 +348,7 @@ defineExpose({ runSearch })
         全部
       </NButton>
       <NButton
-        v-for="s in siteList"
+        v-for="s in enabledSites"
         :key="s.key"
         size="tiny"
         round
@@ -336,6 +359,11 @@ defineExpose({ runSearch })
         @click="toggleSite(s.key)"
       >
         {{ s.key }}{{ s.builtin ? '' : '（自定义）' }}
+      </NButton>
+      <!-- v0.24 SM1 站点管理入口 -->
+      <NButton size="tiny" round quaternary class="rs-site-chip rs-manage" title="管理 RSS 站点（添加/编辑/启停）" @click="siteManagerShow = true">
+        <template #icon><NIcon :component="SettingsOutline" /></template>
+        管理
       </NButton>
     </div>
 
@@ -374,7 +402,7 @@ defineExpose({ runSearch })
         <NInput v-if="items.length > 6" v-model:value="filterText" size="tiny" clearable placeholder="行内过滤标题关键词" class="rs-filter" />
 
         <div class="rs-list">
-          <div v-for="it in filteredItems" :key="it.infoHash || it.magnet" class="rs-row">
+          <div v-for="it in filteredItems" :key="it.infoHash || it.magnet || it.torrentUrl" class="rs-row">
             <div class="rs-main">
               <div class="rs-title" :title="it.title">{{ it.title }}</div>
               <div class="rs-meta">
@@ -388,7 +416,7 @@ defineExpose({ runSearch })
               </div>
             </div>
             <div class="rs-ops">
-              <NButton size="tiny" quaternary circle title="复制磁力链接" @click="copyMagnet(it)">
+              <NButton size="tiny" quaternary circle :title="it.magnet ? '复制磁力链接' : '复制种子链接'" @click="copyItemUri(it)">
                 <template #icon><NIcon :component="CopyOutline" /></template>
               </NButton>
               <NButton size="tiny" type="primary" secondary @click="openConfirm(it)">
@@ -414,6 +442,15 @@ defineExpose({ runSearch })
       <div v-if="confirmState">
         <div class="rs-confirm-title" :title="confirmState.item.title">{{ confirmState.item.title }}</div>
         <div class="rs-confirm-meta dim">
+          <NTag
+            v-if="!confirmState.item.magnet && confirmState.item.torrentUrl"
+            size="tiny"
+            round
+            :bordered="false"
+            type="info"
+          >
+            种子直链
+          </NTag>
           <span v-if="confirmState.item.size">{{ confirmState.item.size }}</span>
           <span v-if="confirmState.item.publisher">{{ confirmState.item.publisher }}</span>
           <span v-if="confirmState.item.infoHash">BT {{ confirmState.item.infoHash.slice(0, 16) }}…</span>
@@ -448,6 +485,14 @@ defineExpose({ runSearch })
         </div>
       </template>
     </NModal>
+
+    <!-- v0.24 SM1/SM2/SM4/SM5 站点管理弹窗（changed 即时刷新 chips） -->
+    <ResourceSiteManager
+      v-model:show="siteManagerShow"
+      :sites="siteList"
+      :default-keyword="keyword.trim() || props.subjectNameCn || props.subjectName || ''"
+      @changed="onSitesChanged"
+    />
   </NModal>
 </template>
 
@@ -466,6 +511,10 @@ defineExpose({ runSearch })
 
 .rs-site-chip {
   user-select: none;
+}
+
+.rs-manage {
+  margin-left: auto;
 }
 
 .rs-search-bar {

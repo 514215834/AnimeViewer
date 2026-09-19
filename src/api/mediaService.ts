@@ -516,8 +516,13 @@ export const mediaService = {
   downloads(): Promise<SvcDownloadTask[]> {
     return request<{ tasks: SvcDownloadTask[] }>('/api/downloads').then((r) => r.tasks)
   },
+  /** v0.24 SE2：手动磁力/直链入队同受种子直链分支影响（服务端抓种子可到 15s+）——30s 超时 */
   addDownload(req: SvcDownloadAddRequest): Promise<SvcDownloadTask> {
-    return post<SvcDownloadTask>('/api/downloads', req)
+    return request<SvcDownloadTask>('/api/downloads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    }, 30000)
   },
   pauseDownload(id: number): Promise<void> {
     return post<void>(`/api/downloads/${id}/pause`)
@@ -558,8 +563,21 @@ export const mediaService = {
       method: 'DELETE',
     }).then((r) => r.sites)
   },
+  /** v0.24 SM3 站点测试连通（不入库）：抓取 + 解析 → 可用性/条目数/样例预览 */
+  testResourceSite(site: Pick<SvcResourceSite, 'baseUrl' | 'searchTemplate'>): Promise<SvcResourceSiteTest> {
+    return request<SvcResourceSiteTest>('/api/resources/sites/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(site),
+    }, 30000)
+  },
+  /** v0.24 SE2：种子直链入队需服务端抓种子 + BTIH 计算（可到 15s+，直连容灾再 +15s）——30s 超时（与资源搜索同档） */
   enqueueResource(req: SvcResourceAddRequest): Promise<SvcDownloadTask> {
-    return post<SvcDownloadTask>('/api/resources/enqueue', req)
+    return request<SvcDownloadTask>('/api/resources/enqueue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    }, 30000)
   },
 
   /* ── v0.19 SU1/SU2/SU3 订阅自动化 ── */
@@ -572,7 +590,7 @@ export const mediaService = {
   },
   updateSubscription(
     id: number,
-    patch: { autoScore?: number; minEpisode?: number; aiKeywords?: string[] },
+    patch: { autoScore?: number; minEpisode?: number; aiKeywords?: string[]; rssUrl?: string },
   ): Promise<SvcSubscription> {
     return request<SvcSubscription>(`/api/subscriptions/${id}`, {
       method: 'PUT',
@@ -672,6 +690,8 @@ export interface SvcSubscription {
   createdAt: number
   /** v0.22 AI2 扩展检索词（LLM 生成缓存/人工编辑；null=从未生成，首轮 AI 就绪时懒生成） */
   aiKeywords?: string[] | null
+  /** v0.25 RSS 固定直链订阅源（蜜柑每番 RSS 等；设置后检索仅走直链、跳过关键词搜索） */
+  rssUrl?: string
 }
 
 export interface SvcSubscriptionAddRequest {
@@ -795,7 +815,8 @@ export function maxWatched(watchedEps?: number[] | null): number {
 
 export interface SvcResourceItem {
   title: string
-  magnet: string
+  /** v0.24 SE1：磁力可空（种子型站点 nyaa/蜜柑无磁力）——链接取 magnet ?? torrentUrl */
+  magnet?: string
   infoHash?: string
   site: string
   size?: string
@@ -803,6 +824,8 @@ export interface SvcResourceItem {
   publisher?: string
   pubDate?: number
   link?: string
+  /** v0.24 SE1：.torrent 下载直链（种子型站点兜底，入队/复制自适应） */
+  torrentUrl?: string
 }
 
 export interface SvcResourceSite {
@@ -811,6 +834,8 @@ export interface SvcResourceSite {
   baseUrl: string
   searchTemplate: string
   builtin: boolean
+  /** v0.24 SM5：启停（缺省 true=启用；停用不参与混合搜索与订阅检索） */
+  enabled?: boolean
 }
 
 export interface SvcResourceSearch {
@@ -821,11 +846,20 @@ export interface SvcResourceSearch {
 }
 
 export interface SvcResourceAddRequest {
+  /** v0.24 SE2：磁力或 .torrent/http(s)/ftp 直链 */
   magnet: string
   subjectId?: number
   subjectName?: string
   subjectNameCn?: string
   episodeSort?: number
+}
+
+/** v0.24 SM3 站点测试连通（不入库）：ok=false 时 error 为失败原因；samples 解析样例（前 3 条） */
+export interface SvcResourceSiteTest {
+  ok: boolean
+  error?: string
+  itemCount: number
+  samples: SvcResourceItem[]
 }
 
 /** 从资源标题提取字幕组（纯函数，R3 过滤用）：
