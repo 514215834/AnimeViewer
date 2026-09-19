@@ -1,4 +1,5 @@
 import { useSettingsStore } from '../stores/settings'
+import { mediaService } from './mediaService'
 import { createTtlCache } from '../utils/cache'
 import { idbGet, idbSet, idbClear } from '../utils/idbCache'
 import type {
@@ -94,7 +95,17 @@ async function doFetch<T>(path: string, init: RequestInit | undefined, token: st
     ...(init?.headers as Record<string, string> | undefined),
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  const res = await fetch(baseUrl() + path, { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  let res: Response
+  try {
+    res = await fetch(baseUrl() + path, { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  } catch (e) {
+    // v0.26 补记：网络层失败（DNS 污染/被阻断/代理出口 502 前的连接失败/超时）转可读错误——
+    // 此类故障在浏览器侧表现为 CORS 报错或 Failed to fetch，原样抛出会让上层展示技术性文本。
+    // 预检失败的 CORS 报错同样落到这里（fetch 统一抛 TypeError）
+    if (e instanceof ApiError) throw e
+    const kind = (e as { name?: string })?.name === 'TimeoutError' ? '请求超时' : '连接失败或被网络阻断'
+    throw new ApiError(0, `Bangumi API ${kind}——请检查网络/代理设置后重试（api.bgm.tv 当前可能不可达）`)
+  }
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status} ${res.statusText}`)
   // 204 或空响应体（部分写接口返回 200 + 空 body）均视为无内容
   const text = await res.text()
@@ -106,11 +117,39 @@ async function doFetch<T>(path: string, init: RequestInit | undefined, token: st
   }
 }
 
+async function parseV0Body<T>(r: { status: number; body: string }): Promise<T> {
+  if (r.status === 401) throw new ApiError(401, 'HTTP 401')
+  if (r.status < 200 || r.status >= 300) throw new ApiError(r.status, `HTTP ${r.status}`)
+  try {
+    return JSON.parse(r.body) as T
+  } catch {
+    throw new ApiError(r.status, '响应不是有效的 JSON')
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const s = useSettingsStore()
   const token = s.accessToken.trim()
   // legacy 端点（如 /calendar）的 CORS 预检不允许 Authorization 头，仅对 /v0/* 发送
   const sendAuth = !!token && path.startsWith('/v0/')
+  const isGet = !init?.method || init.method === 'GET'
+  // v0.26 补记：媒体服务可用时 GET /v0/* 优先经服务端透传——浏览器直连 api.bgm.tv 存在环境性故障
+  // （预检 OPTIONS 502 / 直连超时），服务端带合规 UA + 直连→代理容灾 + Authorization 透传；
+  // 服务不可达回退直连。非 GET（收藏/进度等写操作）保持浏览器直连（需用户 OAuth 语义，不经服务）
+  if (isGet && path.startsWith('/v0/') && s.svcEnabled) {
+    try {
+      const r = await mediaService.bangumiV0Raw(path, sendAuth ? `Bearer ${token}` : '')
+      if (r.status === 401 && sendAuth) {
+        console.warn('[AnimeViewer] Access Token 无效（401），本次请求已降级为匿名访问')
+        const r2 = await mediaService.bangumiV0Raw(path, '')
+        return parseV0Body<T>(r2)
+      }
+      return parseV0Body<T>(r)
+    } catch (e) {
+      if (e instanceof ApiError) throw e
+      console.warn('[AnimeViewer] Bangumi 服务透传失败，回退直连', e instanceof Error ? e.message : e)
+    }
+  }
   try {
     return await doFetch<T>(path, init, sendAuth ? token : undefined)
   } catch (e) {

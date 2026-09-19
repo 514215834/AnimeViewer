@@ -30,6 +30,8 @@ export interface SettingsState {
   autoNext: boolean
   /** v0.23 反馈：字幕字号（px，20~72）；播放器设置面板「字幕大小」滑杆实时调整 */
   subFontSize: number
+  /** v0.26 HN6 在线解析（hanime1.me）NSFW 门：默认关，关闭时剧集 Tab「在线」入口隐藏 */
+  hanimeNsfw: boolean
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -56,6 +58,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   webdavPass: '',
   autoNext: false,
   subFontSize: 40,
+  hanimeNsfw: false,
 }
 
 export const useSettingsStore = defineStore('settings', {

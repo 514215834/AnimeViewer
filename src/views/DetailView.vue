@@ -25,6 +25,7 @@ import {
 import {
   AddOutline,
   CreateOutline,
+  GlobeOutline,
   MicOutline,
   PlayOutline,
   CloudDownloadOutline,
@@ -44,6 +45,7 @@ import PosterImage from '../components/PosterImage.vue'
 import EmptyHint from '../components/EmptyHint.vue'
 import MediaBindModal from '../components/MediaBindModal.vue'
 import ResourceSearchModal from '../components/ResourceSearchModal.vue'
+import HanimeSearchModal from '../components/HanimeSearchModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -212,6 +214,30 @@ function openResourceSearch(sort?: number) {
 function onResourceEnqueued(payload: { episodeSort?: number }) {
   // 带集数入队后刷新服务文件状态（下载完成入库前不出现新播放按钮，属预期；此处仅刷新关联状态）
   if (payload.episodeSort) message.info(`第 ${payload.episodeSort} 话资源已入队，可在「下载」页查看进度`)
+}
+
+/* ── v0.26 HN4/HN8 在线解析（hanime1.me）：剧集行/条目级入口 → HanimeSearchModal → WatchView 在线源 ── */
+const showHanimeModal = ref(false)
+/** 预填集数（null = 条目级入口：只搜不绑定） */
+const hanimeDefaultSort = ref<number | null>(null)
+/** NSFW 门（设置页开关）+ 服务已配置 + 非演示模式；在线解析依赖服务端抓取与转发 */
+const hanimeOnlineVisible = computed(() => settings.hanimeNsfw && settings.svcEnabled && !settings.isDemo)
+
+function openHanimeSearch(sort?: number) {
+  hanimeDefaultSort.value = sort ?? null
+  showHanimeModal.value = true
+}
+
+function onHanimePlayed(payload: { videoCode: string; title: string }) {
+  showHanimeModal.value = false
+  void router.push({
+    name: 'watch',
+    query: { subject: String(id.value), sort: String(hanimeDefaultSort.value ?? 1), online: payload.videoCode },
+  })
+}
+
+async function onHanimeBound() {
+  await refreshBindings()
 }
 
 /* ── v0.19 SU1 条目级「追番下载」订阅：服务已配置才可见；开启即后台定时检索（默认命中入待确认队列） ── */
@@ -888,6 +914,10 @@ onBeforeUnmount(() => {
                 <NButton v-if="settings.svcEnabled" size="tiny" secondary @click="openResourceSearch()">
                   <span class="btn-icon-row"><NIcon :component="CloudDownloadOutline" size="12" />资源搜索</span>
                 </NButton>
+                <!-- v0.26 HN4 在线解析（NSFW 开启 + 服务已配置 + 非演示模式） -->
+                <NButton v-if="hanimeOnlineVisible" size="tiny" secondary @click="openHanimeSearch()">
+                  <span class="btn-icon-row"><NIcon :component="GlobeOutline" size="12" />在线解析</span>
+                </NButton>
                 <NButton size="tiny" secondary @click="markAllEps(true)">全部看过</NButton>
                 <NButton size="tiny" secondary @click="markAllEps(false)">清空</NButton>
                 <NButton size="tiny" type="primary" secondary @click="enterImmersive">▶ 沉浸观剧</NButton>
@@ -962,6 +992,17 @@ onBeforeUnmount(() => {
                     >
                       <template #icon><NIcon :component="PlayOutline" size="14" /></template>
                     </NButton>
+                    <!-- v0.26 HN4 行内「在线解析」入口（与播放按钮并存，主动选择在线源） -->
+                    <NButton
+                      v-if="hanimeOnlineVisible"
+                      size="tiny"
+                      quaternary
+                      class="ep-play ep-online"
+                      title="在线解析播放（hanime1.me）"
+                      @click.stop="openHanimeSearch(ep.sort)"
+                    >
+                      <template #icon><NIcon :component="GlobeOutline" size="14" /></template>
+                    </NButton>
                   </div>
                 </div>
               </NSpin>
@@ -1016,6 +1057,16 @@ onBeforeUnmount(() => {
             >
               <span class="btn-icon-row"><NIcon :component="CloudDownloadOutline" size="14" />搜索本集资源</span>
             </NButton>
+            <!-- v0.26 HN4 单集在线解析（NSFW 门同剧集行） -->
+            <NButton
+              v-if="hanimeOnlineVisible"
+              quaternary
+              block
+              size="small"
+              @click="openHanimeSearch(drawerEp.type === 0 ? drawerEp.sort : undefined)"
+            >
+              <span class="btn-icon-row"><NIcon :component="GlobeOutline" size="14" />在线解析播放</span>
+            </NButton>
             <!-- v0.15 O4 弹幕导入（按条目+话数存储，与播放源无关） -->
             <NButton quaternary block size="small" @click="importDrawerDanmaku(drawerEp.sort)">导入弹幕（B 站 XML）</NButton>
           </div>
@@ -1049,6 +1100,19 @@ onBeforeUnmount(() => {
       :default-sort="resourceDefaultSort"
       @update:show="showResourceModal = $event"
       @enqueued="onResourceEnqueued"
+    />
+
+    <!-- v0.26 HN4/HN8 在线解析弹窗（条目级/单集级共用；关闭即销毁状态） -->
+    <HanimeSearchModal
+      v-if="showHanimeModal"
+      :show="showHanimeModal"
+      :subject-id="id"
+      :subject-name="subject?.name"
+      :subject-name-cn="subject?.name_cn"
+      :default-sort="hanimeDefaultSort"
+      @update:show="showHanimeModal = $event"
+      @played="onHanimePlayed"
+      @bound="onHanimeBound"
     />
   </div>
 </template>

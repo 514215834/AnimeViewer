@@ -43,6 +43,7 @@ const SOURCE_LABEL: Record<HistoryOwner['source'], string> = {
   url: '在线',
   webdav: 'WebDAV',
   demo: '演示',
+  online: '在线解析',
 }
 
 /** 继续观看（未看完）在前，已看完在后；同组按最近观看倒序 */

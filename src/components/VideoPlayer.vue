@@ -35,6 +35,10 @@ const props = defineProps<{
   subtitles?: SubtitleEntry[]
   /** v0.23 SB5 片头时长（秒；≤0 = 不启用跳过片头） */
   introSec?: number
+  /** v0.26 HN3 清晰度列表（>1 项时在设置面板渲染「清晰度」）；切换经 qualitychange 交外层换流 */
+  qualities?: { label: string; res: number }[]
+  /** v0.26 当前激活分辨率（对应 qualities 高亮项） */
+  activeRes?: number
 }>()
 
 const settings = useSettingsStore()
@@ -48,6 +52,8 @@ const emit = defineEmits<{
   (e: 'seekreload', target: number): void
   /** v0.15 O1 在线源加载失败（HLS fatal 错误 / video 网络错误），外层可经代理重试 */
   (e: 'sourceerror'): void
+  /** v0.26 清晰度切换（外层以对应 res 的流地址重建播放器，startAt 承接进度） */
+  (e: 'qualitychange', res: number): void
 }>()
 
 const container = ref<HTMLDivElement | null>(null)
@@ -98,6 +104,70 @@ onMounted(async () => {
   // v0.23 SB1/SB2 字幕：默认选中外标 selected 的轨（服务源=启发式默认轨；本地/演示=唯一轨）
   const subs = props.subtitles ?? []
   const defaultSub = subs.find((s) => s.selected) ?? subs[0]
+  // v0.26 HN3 设置面板条目统一预构建：字幕轨/字幕大小（有字幕轨时）+ 清晰度（在线源多档时）——
+  // 在线源无字幕轨也需要设置面板（清晰度），不能沿用「settings 只随字幕注入」的旧结构。
+  // unknown[] 承接（ArtPlayer 的 SettingOption 含必选扩展字段，注入处显式转换）
+  const settingsEntries: unknown[] = []
+  if (defaultSub) {
+    settingsEntries.push(
+      {
+        html: '字幕',
+        selector: [
+          { html: '关闭', default: !defaultSub },
+          ...subs.map((s) => ({ html: s.label, url: s.url, default: s === defaultSub })),
+        ],
+        onSelect(item: { html: string }) {
+          if (!art) return
+          if (item.html === '关闭') {
+            art.subtitle.show = false
+          } else {
+            void art.subtitle.switch((item as unknown as { url: string }).url)
+            art.subtitle.show = true
+          }
+        },
+      },
+      // 字幕大小：range 滑杆实时预览 + 节流持久化（全机生效，不按条目记忆）。
+      // ArtPlayer 会把 onRange/onChange 回调的返回值写入 tooltip——回调必须返回文本，
+      // 否则 tooltip 被赋成字面 "undefined"（实测反馈「滑杆出现 undefa」）；
+      // 预览挂 onChange（input 拖动实时触发），onRange（change 松手）未用故省略
+      {
+        html: '字幕大小',
+        tooltip: `${clampSubtitleFontSize(settings.subFontSize)}px`,
+        range: [
+          clampSubtitleFontSize(settings.subFontSize),
+          SUBTITLE_FONT_SIZE.min,
+          SUBTITLE_FONT_SIZE.max,
+          SUBTITLE_FONT_SIZE.step,
+        ],
+        onChange(item: SettingOption) {
+          if (!art) return `${clampSubtitleFontSize(item.range?.[0])}px`
+          const v = clampSubtitleFontSize(item.range?.[0])
+          art.subtitle.style({ fontSize: `${v}px` })
+          fontSizePending = v
+          if (fontSizeSaveTimer) window.clearTimeout(fontSizeSaveTimer)
+          fontSizeSaveTimer = window.setTimeout(() => {
+            fontSizeSaveTimer = null
+            settings.applyPatch({ subFontSize: fontSizePending })
+          }, 600)
+          return `${v}px`
+        },
+      },
+    )
+  }
+  const qualityList = props.qualities ?? []
+  if (qualityList.length > 1) {
+    settingsEntries.push({
+      html: '清晰度',
+      tooltip: qualityList.find((q) => q.res === props.activeRes)?.label ?? qualityList[0]?.label ?? '',
+      selector: qualityList.map((q) => ({ html: q.label, res: q.res, default: q.res === props.activeRes })),
+      onSelect(item: SettingOption) {
+        const res = (item as unknown as { res: number }).res
+        emit('qualitychange', res)
+        // 返回文本更新 tooltip（同字幕大小滑杆的返回值语义）
+        return (item as unknown as { html: string }).html
+      },
+    })
+  }
 
   art = new ArtplayerCtor({
     container: container.value,
@@ -148,10 +218,7 @@ onMounted(async () => {
         },
       }),
     ],
-    // v0.23 SB1/SB2 字幕轨：构造期注入默认轨；设置面板提供「关闭 + 各轨」切换。
-    // escape=false：VTT cue 内联标签（<b>/<i> 等，ass 轨 \b1 转 VTT 即 <b>）按 WebVTT 语义渲染
-    // 加粗/斜体——默认 escape=true 会转义成字面文本（实测反馈「字幕带 <b>」）。
-    // fontSize：ArtPlayer 默认 20px 偏小（实测反馈），默认 40px 并入设置面板滑杆。
+    // v0.23 SB1/SB2 字幕轨：构造期注入默认轨（escape=false：VTT cue 内联标签按 WebVTT 语义渲染）
     ...(defaultSub
       ? {
           subtitle: {
@@ -161,52 +228,10 @@ onMounted(async () => {
             escape: false,
             style: { fontSize: `${clampSubtitleFontSize(settings.subFontSize)}px` },
           },
-          settings: [
-            {
-              html: '字幕',
-              selector: [
-                { html: '关闭', default: !defaultSub },
-                ...subs.map((s) => ({ html: s.label, url: s.url, default: s === defaultSub })),
-              ],
-              onSelect(item: { html: string }) {
-                if (!art) return
-                if (item.html === '关闭') {
-                  art.subtitle.show = false
-                } else {
-                  void art.subtitle.switch((item as unknown as { url: string }).url)
-                  art.subtitle.show = true
-                }
-              },
-            },
-            // 字幕大小：range 滑杆实时预览 + 节流持久化（全机生效，不按条目记忆）。
-            // ArtPlayer 会把 onRange/onChange 回调的返回值写入 tooltip——回调必须返回文本，
-            // 否则 tooltip 被赋成字面 "undefined"（实测反馈「滑杆出现 undefa」）；
-            // 预览挂 onChange（input 拖动实时触发），onRange（change 松手）未用故省略
-            {
-              html: '字幕大小',
-              tooltip: `${clampSubtitleFontSize(settings.subFontSize)}px`,
-              range: [
-                clampSubtitleFontSize(settings.subFontSize),
-                SUBTITLE_FONT_SIZE.min,
-                SUBTITLE_FONT_SIZE.max,
-                SUBTITLE_FONT_SIZE.step,
-              ],
-              onChange(item: SettingOption) {
-                if (!art) return `${clampSubtitleFontSize(item.range?.[0])}px`
-                const v = clampSubtitleFontSize(item.range?.[0])
-                art.subtitle.style({ fontSize: `${v}px` })
-                fontSizePending = v
-                if (fontSizeSaveTimer) window.clearTimeout(fontSizeSaveTimer)
-                fontSizeSaveTimer = window.setTimeout(() => {
-                  fontSizeSaveTimer = null
-                  settings.applyPatch({ subFontSize: fontSizePending })
-                }, 600)
-                return `${v}px`
-              },
-            },
-          ],
         }
       : {}),
+    // v0.26 HN3 设置面板条目预构建注入（字幕轨/字幕大小/清晰度）；在线源无字幕轨时也有清晰度可切
+    ...(settingsEntries.length ? { settings: settingsEntries as unknown as SettingOption[] } : {}),
     // v0.23 SB5 跳过片头胶囊（layers 层）；显隐由 video:timeupdate 同步（下方）
     ...(props.introSec && props.introSec > 0
       ? {

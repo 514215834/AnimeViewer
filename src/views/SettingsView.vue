@@ -398,6 +398,77 @@ async function saveAiSettings() {
   }
 }
 
+/* ── v0.26 HN1/HN6 在线解析（hanime1.me）：Cookie 注入 + NSFW 门 + 连通测试 ── */
+const hanime = reactive({ enabled: false, hasCookie: false })
+/** Cookie 草稿：明文不回显，非空保存=更新，留空=不改动 */
+const hanimeCookieDraft = ref('')
+const hanimeSaving = ref(false)
+const hanimeTesting = ref(false)
+const hanimeError = ref('')
+const hanimeTestOk = ref('')
+
+async function loadHanimeConfig() {
+  if (!settings.svcEnabled) return
+  hanimeError.value = ''
+  try {
+    const c = await mediaService.hanimeConfig()
+    hanime.enabled = c.enabled
+    hanime.hasCookie = c.hasCookie
+    hanimeCookieDraft.value = ''
+  } catch (e) {
+    hanimeError.value = e instanceof ServiceError ? e.message : String(e)
+  }
+}
+
+async function saveHanime() {
+  hanimeSaving.value = true
+  hanimeError.value = ''
+  try {
+    const c = await mediaService.saveHanimeConfig({
+      enabled: hanime.enabled,
+      ...(hanimeCookieDraft.value.trim() ? { cookie: hanimeCookieDraft.value.trim() } : {}),
+    })
+    hanime.enabled = c.enabled
+    hanime.hasCookie = c.hasCookie
+    hanimeCookieDraft.value = ''
+    message.success('在线解析设置已保存')
+  } catch (e) {
+    hanimeError.value = e instanceof ServiceError ? e.message : String(e)
+  } finally {
+    hanimeSaving.value = false
+  }
+}
+
+async function clearHanimeCookie() {
+  hanimeSaving.value = true
+  hanimeError.value = ''
+  try {
+    const c = await mediaService.saveHanimeConfig({ cookie: '' })
+    hanime.enabled = c.enabled
+    hanime.hasCookie = c.hasCookie
+    message.success('已清除 Cookie')
+  } catch (e) {
+    hanimeError.value = e instanceof ServiceError ? e.message : String(e)
+  } finally {
+    hanimeSaving.value = false
+  }
+}
+
+async function testHanime() {
+  hanimeTesting.value = true
+  hanimeError.value = ''
+  hanimeTestOk.value = ''
+  try {
+    const r = await mediaService.testHanime()
+    if (r.ok) hanimeTestOk.value = r.message
+    else hanimeError.value = r.message
+  } catch (e) {
+    hanimeError.value = e instanceof ServiceError ? e.message : String(e)
+  } finally {
+    hanimeTesting.value = false
+  }
+}
+
 /** E5 资料卡：优先取云端资料，回退到同步缓存的 me */
 const profile = computed(() => {
   if (sync.profile) return sync.profile
@@ -426,6 +497,7 @@ onMounted(() => {
   void loadDownloadSettings()
   void loadSubscriptionSettings()
   void loadAiSettings()
+  void loadHanimeConfig()
 })
 
 function save() {
@@ -875,6 +947,51 @@ async function onImportFile(ev: Event) {
               就绪后：① 订阅命中自动做「本篇/主题曲/非本篇」语义判定（命中行 AI 徽章，评分达标的非本篇命中不再自动入队）；
               ② 订阅扩展检索词可 AI 生成（罗马字/英文名候选，修复中文名全句在 RSS 子串匹配下查不到的问题）；
               ③ 媒体库未识别文件可 AI 解析文件名（人工确认绑定）。判定仅在待确认落库时调用一次并缓存，不会重复烧钱。
+            </div>
+          </div>
+        </NFormItem>
+
+        <!-- v0.26 HN1/HN6 在线解析（hanime1.me 在线播放）：NSFW 门 + Cookie 注入 + 连通测试。
+             NSFW 解锁开关只控入口显隐（详情页剧集 Tab「在线解析」），解析能力由「启用在线解析」控制 -->
+        <NFormItem label="在线解析（hanime1.me 在线播放 · R-18，默认关闭）">
+          <div class="svc-box">
+            <div class="dl-switches" style="margin: 0 0 8px">
+              <span class="dl-switch-item">启用在线解析 <NSwitch v-model:value="hanime.enabled" size="small" /></span>
+              <span
+                class="dl-switch-item"
+                title="开启后详情页「剧集」Tab 出现「在线解析」入口；关闭即隐藏（已在播的页面不受影响）"
+              >
+                解锁 NSFW 入口
+                <NSwitch
+                  size="small"
+                  :value="settings.hanimeNsfw"
+                  @update:value="(v: boolean) => settings.applyPatch({ hanimeNsfw: v })"
+                />
+              </span>
+            </div>
+            <div class="sub-row2" style="margin-bottom: 8px">
+              <NInput
+                v-model:value="hanimeCookieDraft"
+                type="textarea"
+                :rows="2"
+                placeholder="浏览器 Cookie（可选，明文不回显）。触发人机质询时必填：浏览器打开 hanime1.com 通过验证 → F12 → 网络 → 任一请求 → 复制请求头 Cookie 整段粘贴此处"
+              />
+            </div>
+            <div class="svc-status ai-status">
+              <template v-if="hanimeError"><span class="svc-err">{{ hanimeError }}</span></template>
+              <span v-else-if="hanimeTestOk" class="svc-ok">{{ hanimeTestOk }}</span>
+              <span v-else-if="hanime.hasCookie" class="svc-muted">已配置 Cookie{{ hanime.enabled ? ' · 已启用' : ' · 当前停用' }}——入口在详情页「剧集」Tab「在线解析」</span>
+              <span v-else class="svc-muted">未配置 Cookie——站点 WAF 拦机房出口（服务端需住宅出口代理）；触发质询时按上方说明粘贴 Cookie</span>
+              <div class="btn-row ai-btn-row">
+                <NButton secondary size="small" :loading="hanimeTesting" :disabled="!settings.svcEnabled" @click="testHanime">测试连通</NButton>
+                <NButton secondary size="small" :loading="hanimeSaving" :disabled="!settings.svcEnabled" @click="saveHanime">保存</NButton>
+                <NButton v-if="hanime.hasCookie" quaternary size="small" :disabled="hanimeSaving" @click="clearHanimeCookie">清除 Cookie</NButton>
+              </div>
+            </div>
+            <div class="svc-tip">
+              页面解析与视频转发都在服务端进行：主站被 WAF 拦机房出口时自动走备用域 hanime1.com 并按
+              直连→代理容灾（视频流经服务端 Range 转发，签名直链不落前端）；403 分「IP 封禁 / 人机质询」
+              两类给出文案，质询仅能用浏览器 Cookie 过。剧集 Tab 搜索后可播放或「绑定」到单集（重进直达）。
             </div>
           </div>
         </NFormItem>

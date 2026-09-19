@@ -17,7 +17,7 @@ import { useMessage } from 'naive-ui'
 import { NButton, NIcon, NInputNumber, NPopover, NSpin } from 'naive-ui'
 import { ArrowBackOutline, LinkOutline, PlayOutline, PlayForwardOutline, PlayBackOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
-import { mediaService, isDirectExt, servicePositionId, type SvcFile } from '../api/mediaService'
+import { mediaService, isDirectExt, servicePositionId, type SvcFile, type SvcHanimeSource } from '../api/mediaService'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
@@ -55,6 +55,8 @@ const subjectId = computed(() => Number(route.query.subject) || 0)
 const sort = computed(() => Number(route.query.sort) || 0)
 /** v0.14 服务媒体库文件 ID（存在即走服务源） */
 const fileId = computed(() => Number(route.query.file) || 0)
+/** v0.26 HN5 在线解析视频码（显式参数触发在线源分支；不携带时既有源链行为零变化） */
+const onlineCode = computed(() => String(route.query.online ?? ''))
 
 const bindingName = ref('')
 const videoTitle = ref('')
@@ -90,6 +92,14 @@ let lastPosition = 0
 let svcFallbackUsed = false
 /** v0.23 SB0b 服务源文件详情（降级时需要 durationSec 判定续播点） */
 let svcFile: SvcFile | null = null
+/** v0.26 HN5 在线解析源：当前视频码 + 清晰度档列表（VideoPlayer 设置面板切换） */
+const hanimeCode = ref('')
+const hanimeSources = ref<SvcHanimeSource[]>([])
+const hanimeRes = ref(0)
+/** 清晰度菜单（>1 档才注入设置面板） */
+const qualityOptions = computed(() =>
+  hanimeSources.value.length > 1 ? hanimeSources.value.map((s) => ({ label: s.label, res: s.res })) : undefined,
+)
 
 /** PL5 演示视频资源（用户提供的内置样例，播放时才请求） */
 const demoClipUrl = new URL('../assets/demo-clip.mp4', import.meta.url).href
@@ -114,6 +124,9 @@ async function load() {
   seekBase = 0
   svcFallbackUsed = false
   svcFile = null
+  hanimeCode.value = ''
+  hanimeSources.value = []
+  hanimeRes.value = 0
   releaseSubtitleUrl()
   subtitleEntries.value = []
   try {
@@ -127,7 +140,10 @@ async function load() {
     // v0.23 SB4/SB5 副资料并行预取（剧集列表 / 片头记忆），失败静默不影响播放
     void loadEpSorts()
     void loadIntro()
-    if (fileId.value) {
+    if (onlineCode.value) {
+      // v0.26 HN5 显式在线参数优先（用户从剧集行「在线」主动选择）
+      await loadOnlineSource(seq, onlineCode.value)
+    } else if (fileId.value) {
       await loadServiceSource(seq)
     } else {
       await loadLocalSource(seq)
@@ -279,6 +295,49 @@ async function loadServiceSource(seq: number) {
   }
 }
 
+/** v0.26 HN5 在线解析源：视频码 → 服务端解析 watch 页 → 流转发地址（页面解析、Range 透传、
+ *  直连/代理容灾全在服务端；带签名直链不落前端）。清晰度经 VideoPlayer 设置面板切换
+ *  （换 res 重建流，lastPosition 承接进度）。 */
+async function loadOnlineSource(seq: number, code: string) {
+  if (!mediaService.configured()) {
+    fatal.value = '在线解析播放需要媒体服务（页面解析与视频转发都在服务端）——请到设置页配置服务地址与 Token'
+    return
+  }
+  let detail
+  try {
+    detail = await mediaService.hanimeWatch(code)
+  } catch (e) {
+    fatal.value = e instanceof Error ? e.message : String(e)
+    return
+  }
+  if (seq !== loadSeq) return
+  if (!detail.sources.length) {
+    fatal.value = '未解析到可播放的视频源（视频可能已下架或站点结构变化）'
+    return
+  }
+  hanimeCode.value = code
+  hanimeSources.value = detail.sources
+  hanimeRes.value = detail.sources[0].res
+  bindingName.value = 'hanime1.me · 在线解析'
+  videoTitle.value = `第 ${sort.value} 话 · ${detail.title}`
+  // v0.26 HN7 续播：o:{videoCode} 位置记忆（≥95% 视为看完从头播，与服务源同语义）
+  positionId = `o:${code}`
+  const pos = await getPosition(positionId)
+  if (seq !== loadSeq) return
+  let resume = pos && pos.position > 5 ? pos.position : 0
+  if (resume && pos?.duration && resume >= pos.duration * 0.95) resume = 0
+  if (resume) startAt.value = resume
+  videoSrc.value = mediaService.hanimeStreamUrl(code, detail.sources[0].res)
+}
+
+/** v0.26 清晰度切换：同码换 res 重建流（:key 变更重挂载），lastPosition 承接进度 */
+function switchHanimeRes(res: number) {
+  if (!hanimeCode.value || res === hanimeRes.value) return
+  hanimeRes.value = res
+  startAt.value = lastPosition > 5 ? lastPosition : 0
+  videoSrc.value = mediaService.hanimeStreamUrl(hanimeCode.value, res)
+}
+
 /** v0.13 本机文件 / 演示 / URL 三路取源 */
 async function loadLocalSource(seq: number) {
   const binding = await getBinding(subjectId.value, sort.value)
@@ -318,6 +377,10 @@ async function loadLocalSource(seq: number) {
       applyOnlineSource()
       if (!videoSrc.value) return
     }
+  } else if (binding.type === 'online') {
+    // v0.26 HN8 在线源绑定：绑定即直达（videoCode → 服务端解析/转发）
+    await loadOnlineSource(seq, binding.videoCode ?? '')
+    if (!videoSrc.value) return
   } else {
     // 文件型：优先 File 对象（拖拽/input 兜底），其次 FSA 句柄（跨会话需恢复授权）
     const rec = binding.fileKey ? await getFileRecord(binding.fileKey) : null
@@ -434,6 +497,11 @@ function applyOnlineSource() {
  *  - 服务源直发（SB0）：video error 自动降级转封装管道流重试一次（lastPosition 续播；
  *    降级后仍失败才提示不可播——启发式全保留、可播性只增不减） */
 function onSourceError() {
+  if (hanimeCode.value) {
+    // v0.26 HN5 在线源：转发流播放失败（签名直链过期/出口失效）——重进即重新解析换新链接
+    fatal.value = '在线视频播放失败——直链可能已过期或网络出口不可达，请回剧集列表重新播放（自动换新链接）'
+    return
+  }
   if (fileId.value) {
     if (svcFallbackUsed || remux.value) {
       fatal.value = '视频播放失败——转封装管道流亦不可播（编码或文件损坏）。'
@@ -520,7 +588,7 @@ async function onProgress(position: number, duration: number) {
 onMounted(load)
 // 同路由不同参数（换集播放）时组件复用——必须重新走取源流程
 watch(
-  () => `${route.query.subject ?? ''}|${route.query.sort ?? ''}|${route.query.file ?? ''}`,
+  () => `${route.query.subject ?? ''}|${route.query.sort ?? ''}|${route.query.file ?? ''}|${route.query.online ?? ''}`,
   () => {
     if (route.name === 'watch') void load()
   },
@@ -589,14 +657,18 @@ function onSeekReload(target: number) {
         :persist-danmuku="onDanmukuEmit"
         :subtitles="subtitleEntries"
         :intro-sec="introSec"
+        :qualities="qualityOptions"
+        :active-res="hanimeRes"
         @progress="onProgress"
         @seekreload="onSeekReload"
         @sourceerror="onSourceError"
+        @qualitychange="switchHanimeRes"
         @ended="onEnded"
       />
       <div class="watch-meta">
         <span class="watch-name">{{ videoTitle }}</span>
         <span class="watch-source" :title="bindingName">来源：{{ bindingName }}</span>
+        <span v-if="hanimeRes" class="watch-source" title="清晰度在播放器「设置 ⚙」内切换">当前 {{ hanimeRes }}p</span>
         <span v-if="onlineProxied" class="watch-source">· 经服务代理</span>
         <span v-if="subtitleEntries.length" class="watch-source" title="字幕轨在播放器「设置 ⚙」内切换">
           字幕 {{ subtitleEntries.length }} 轨

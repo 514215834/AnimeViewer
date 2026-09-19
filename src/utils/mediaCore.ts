@@ -7,8 +7,9 @@ export const WATCH_COMPLETE_RATIO = 0.95
 /** v0.23 SB5 跳过片头默认时长（秒）：按条目记忆缺失时使用，可在播放页修改（0=不显示按钮） */
 export const DEFAULT_INTRO_SEC = 90
 
-/** 绑定类型：file=本机文件（句柄在 mediaFiles 记录）；url=在线直链（v0.15 扩展）；demo=内置演示视频 */
-export type MediaBindingType = 'file' | 'url' | 'demo'
+/** 绑定类型：file=本机文件（句柄在 mediaFiles 记录）；url=在线直链（v0.15 扩展）；demo=内置演示视频；
+ *  online=hanime1.me 在线解析源（v0.26 HN8，videoCode 为站点视频码，播放经服务端流转发） */
+export type MediaBindingType = 'file' | 'url' | 'demo' | 'online'
 
 /** 剧集绑定：subjectId + sort（正篇话数）复合键，一集一个播放源 */
 export interface MediaBinding {
@@ -27,6 +28,8 @@ export interface MediaBinding {
   webdavSubPath?: string
   /** v0.23 SB2：本地绑定随带的同名外挂字幕展示名（文本在 mediaStore sub:{fileKey}） */
   subName?: string
+  /** type=online（v0.26 HN8）：hanime1 视频码（watch?v= 参数），解析与流转发均经媒体服务 */
+  videoCode?: string
   addedAt: number
 }
 
@@ -59,10 +62,13 @@ export function fileKeyOf(name: string, size: number): string {
   return `f:${name}:${size}`
 }
 
-/** 位置标识：文件绑定用 fileKey；演示视频固定；URL 加前缀 */
-export function positionIdOf(binding: Pick<MediaBinding, 'type' | 'fileKey' | 'url'>): string {
+/** 位置标识：文件绑定用 fileKey；演示视频固定；URL 加前缀；在线源（v0.26 HN7）用 o:{videoCode} */
+export function positionIdOf(
+  binding: Pick<MediaBinding, 'type' | 'fileKey' | 'url' | 'videoCode'>,
+): string {
   if (binding.type === 'file') return binding.fileKey ?? ''
   if (binding.type === 'demo') return DEMO_POSITION_ID
+  if (binding.type === 'online') return `o:${binding.videoCode ?? ''}`
   return `u:${binding.url ?? ''}`
 }
 
@@ -146,7 +152,7 @@ export function urlFileName(url: string): string {
 
 /* ── v0.15 O5 播放历史：位置记录 → 归属解析（纯函数） ── */
 
-export type HistorySource = 'file' | 'url' | 'webdav' | 'demo' | 'service'
+export type HistorySource = 'file' | 'url' | 'webdav' | 'demo' | 'service' | 'online'
 
 /** 历史行归属：位置标识反解出 条目+话数+来源（无法归属的记录返回 null，如绑定已解） */
 export interface HistoryOwner {
@@ -156,13 +162,19 @@ export interface HistoryOwner {
   positionId: string
 }
 
-/** svc:{subjectId}:{sort} 服务源；u:{url} 按绑定 url 反查（含 WebDAV）；demo 按演示绑定；其余按 fileKey 反查 */
+/** svc:{subjectId}:{sort} 服务源；o:{videoCode} 在线源（v0.26，按绑定 videoCode 反查）；
+ *  u:{url} 按绑定 url 反查（含 WebDAV）；demo 按演示绑定；其余按 fileKey 反查 */
 export function resolvePositionOwner(position: WatchPosition, bindings: MediaBinding[]): HistoryOwner | null {
   const id = position.id
   if (!id) return null
   if (id.startsWith('svc:')) {
     const m = /^svc:(\d+):(\d+)$/.exec(id)
     return m ? { subjectId: Number(m[1]), sort: Number(m[2]), source: 'service', positionId: id } : null
+  }
+  if (id.startsWith('o:')) {
+    const code = id.slice(2)
+    const b = bindings.find((x) => x.type === 'online' && x.videoCode === code)
+    return b ? { subjectId: b.subjectId, sort: b.sort, source: 'online', positionId: id } : null
   }
   if (id.startsWith('u:')) {
     const url = id.slice(2)

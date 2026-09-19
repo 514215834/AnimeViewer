@@ -155,6 +155,24 @@ export function buildWebdavStreamUrl(baseUrl: string, token: string, streamId: s
   return `${base}/api/webdav/stream/${encodeURIComponent(streamId)}?token=${encodeURIComponent(token)}`
 }
 
+/* ── v0.26 HN3/HN5 hanime1.me 在线解析 ── */
+
+/** 在线视频流地址（纯函数）：服务端流转发（Range 透传 + 直连/代理容灾）；res 缺省 = 服务端播最高档。
+ *  token 走查询参数（<video> 无法带自定义头，与 stream/subtitle 双通道一致） */
+export function buildHanimeStreamUrl(baseUrl: string, token: string, videoCode: string, res?: number): string {
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  const qs = new URLSearchParams({ token })
+  if (res && res > 0) qs.set('res', String(res))
+  return `${base}/api/hanime/stream/${encodeURIComponent(videoCode)}?${qs.toString()}`
+}
+
+/** 在线图片（缩略图/海报）地址（纯函数）：浏览器直连站点 CDN 在 DNS 污染网络不可达——经服务端
+ *  容灾转发（与视频同通道）；宿主白名单在服务端校验 */
+export function buildHanimeThumbUrl(baseUrl: string, token: string, url: string): string {
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  return `${base}/api/hanime/thumb?url=${encodeURIComponent(url)}&token=${encodeURIComponent(token)}`
+}
+
 /* ── v0.23 SB1 内封字幕 ── */
 
 export interface SvcSubtitleTrack {
@@ -667,6 +685,72 @@ export const mediaService = {
       body: JSON.stringify(s),
     })
   },
+
+  /* ── v0.26 HN1/HN3 hanime1.me 在线解析（配置 / 测试 / 搜索 / 解析 / 流地址）── */
+
+  hanimeConfig(): Promise<SvcHanimeConfig> {
+    return request<SvcHanimeConfig>('/api/hanime/config')
+  },
+  /** cookie：null=不改动 / 空串=清除 / 非空=设置（服务端 KV，回显只给 hasCookie 不回传明文） */
+  saveHanimeConfig(patch: { enabled?: boolean; ua?: string; cookie?: string }): Promise<SvcHanimeConfig> {
+    return request<SvcHanimeConfig>('/api/hanime/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+  },
+  /** 连通测试（恒 200，ok=false 时 message 为三分类原因）；服务端抓取+容灾可到 60s 级——45s 超时 */
+  testHanime(): Promise<SvcHanimeTest> {
+    return post<SvcHanimeTest>('/api/hanime/test')
+  },
+  hanimeSearch(params: { query?: string; genre?: string; sort?: string; page?: number }): Promise<SvcHanimeSearchResult> {
+    const qs = new URLSearchParams()
+    if (params.query) qs.set('query', params.query)
+    if (params.genre) qs.set('genre', params.genre)
+    if (params.sort) qs.set('sort', params.sort)
+    qs.set('page', String(params.page ?? 1))
+    return request<SvcHanimeSearchResult>(`/api/hanime/search?${qs.toString()}`, undefined, 45000)
+  },
+  hanimeWatch(videoCode: string): Promise<SvcHanimeWatch> {
+    return request<SvcHanimeWatch>(`/api/hanime/watch/${encodeURIComponent(videoCode)}`, undefined, 45000)
+  },
+  /** 视频流地址（<video> src 直挂；token 查询参数双通道） */
+  hanimeStreamUrl(videoCode: string, res?: number): string {
+    const { svcUrl, svcToken } = useSettingsStore()
+    return buildHanimeStreamUrl(svcUrl, svcToken, videoCode, res)
+  },
+  /** 缩略图/海报地址：经服务端容灾转发；服务未配置或空地址返回空串（调用方退化为占位） */
+  hanimeThumbUrl(url: string): string {
+    const { svcUrl, svcToken } = useSettingsStore()
+    if (!svcUrl.trim() || !svcToken.trim() || !url) return ''
+    return buildHanimeThumbUrl(svcUrl, svcToken, url)
+  },
+
+  /* ── v0.26 补记：Bangumi 服务端透传（浏览器直连 api.bgm.tv 存在环境性故障：预检 502/直连超时）── */
+
+  /** Bangumi GET /v0/* 透传原始响应（status + 文本体，状态语义由 bangumi.ts 解释——401 触发匿名降级、
+   *  4xx/5xx 转 ApiError）；服务未配置抛 ServiceError（调用方据此回退直连）。
+   *  auth 为完整 Authorization 头值（可空，公共数据匿名可用） */
+  async bangumiV0Raw(path: string, auth: string): Promise<{ status: number; body: string }> {
+    const { svcUrl, svcToken } = useSettingsStore()
+    if (!svcUrl.trim() || !svcToken.trim()) throw new ServiceError('unreachable', '媒体服务未配置')
+    const res = await fetch(`${baseOf()}/api/bangumi/v0${path}`, {
+      headers: { 'X-AV-Token': svcToken, ...(auth ? { Authorization: auth } : {}) },
+      signal: AbortSignal.timeout(35000),
+    })
+    const body = await res.text()
+    // 区分两类 401：媒体服务配对 Token 错误（本服务 401）与 bgm 上游 401（透传给调用方降级）
+    if (res.status === 401 && body.includes('"unauthorized"')) {
+      throw new ServiceError('unauthorized', '媒体服务 Token 不正确')
+    }
+    return { status: res.status, body }
+  },
+
+  /** OAuth 授权码换 Token（服务端代理 bgm.tv/oauth/access_token——该端点响应不允许浏览器跨域读取；
+   *  凭据仅随请求体流转，服务端不落库） */
+  bangumiOauthToken(form: Record<string, string>): Promise<{ access_token: string; refresh_token?: string }> {
+    return post<{ access_token: string; refresh_token?: string }>('/api/bangumi/oauth/token', form)
+  },
 }
 
 /* ── v0.19 SU1/SU2/SU3 订阅自动化（类型与服务端 Dtos.java 一一对应）── */
@@ -909,4 +993,55 @@ export function guessEpisodeSortFromTitle(title: string): number | null {
     guess = n
   }
   return guess
+}
+
+/* ── v0.26 HN1/HN2 hanime1.me 在线解析（类型与服务端 Dtos.java 一一对应）── */
+
+export interface SvcHanimeConfig {
+  enabled: boolean
+  ua: string
+  /** cookie 不回传明文，只回是否已配置 */
+  hasCookie: boolean
+}
+
+export interface SvcHanimeSearchItem {
+  /** watch?v= 视频码（播放/绑定的稳定键） */
+  videoCode: string
+  title: string
+  thumbnail: string
+  duration: string
+  /** 站点原始文案（如 "100%"） */
+  likes: string
+  /** 站点原始文案（如 "38.2萬次"） */
+  views: string
+  brand: string
+}
+
+export interface SvcHanimeSearchResult {
+  page: number
+  hasNext: boolean
+  items: SvcHanimeSearchItem[]
+}
+
+export interface SvcHanimeSource {
+  label: string
+  res: number
+  /** 带签名 mp4 直链（有时效；前端播放统一走 /api/hanime/stream 转发，本字段仅调试展示） */
+  url: string
+}
+
+export interface SvcHanimeWatch {
+  videoCode: string
+  title: string
+  poster: string
+  brand: string
+  tags: string[]
+  /** 按分辨率降序（默认取首档） */
+  sources: SvcHanimeSource[]
+}
+
+export interface SvcHanimeTest {
+  ok: boolean
+  message: string
+  itemCount: number
 }
