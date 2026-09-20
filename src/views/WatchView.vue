@@ -17,7 +17,7 @@ import { useMessage } from 'naive-ui'
 import { NButton, NIcon, NInputNumber, NPopover, NSpin } from 'naive-ui'
 import { ArrowBackOutline, LinkOutline, PlayOutline, PlayForwardOutline, PlayBackOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
-import { mediaService, isDirectExt, servicePositionId, type SvcFile, type SvcHanimeSource } from '../api/mediaService'
+import { mediaService, isDirectExt, servicePositionId, type SvcFile, type SvcHanimePlaylist, type SvcHanimePlaylistItem, type SvcHanimeSource } from '../api/mediaService'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
@@ -96,6 +96,8 @@ let svcFile: SvcFile | null = null
 const hanimeCode = ref('')
 const hanimeSources = ref<SvcHanimeSource[]>([])
 const hanimeRes = ref(0)
+/** v0.27 A2 系列合集（站点侧栏播放列表，社團/系列二态）：仅在线分支有值 */
+const hanimeSeries = ref<SvcHanimePlaylist | null>(null)
 /** 清晰度菜单（>1 档才注入设置面板） */
 const qualityOptions = computed(() =>
   hanimeSources.value.length > 1 ? hanimeSources.value.map((s) => ({ label: s.label, res: s.res })) : undefined,
@@ -127,6 +129,7 @@ async function load() {
   hanimeCode.value = ''
   hanimeSources.value = []
   hanimeRes.value = 0
+  hanimeSeries.value = null
   releaseSubtitleUrl()
   subtitleEntries.value = []
   try {
@@ -317,7 +320,11 @@ async function loadOnlineSource(seq: number, code: string) {
   }
   hanimeCode.value = code
   hanimeSources.value = detail.sources
-  hanimeRes.value = detail.sources[0].res
+  // v0.27 A3a 清晰度记忆：上次选择仍在档位列表中则优先，否则解析首档（最高档）
+  const preferred = detail.sources.find((s) => s.res === settings.hanimeRes)
+  hanimeRes.value = (preferred ?? detail.sources[0]).res
+  // v0.27 A2 系列合集：站点侧栏播放列表（社團/系列二态），无侧栏时 null
+  hanimeSeries.value = detail.playlist ?? null
   bindingName.value = 'hanime1.me · 在线解析'
   videoTitle.value = `第 ${sort.value} 话 · ${detail.title}`
   // v0.26 HN7 续播：o:{videoCode} 位置记忆（≥95% 视为看完从头播，与服务源同语义）
@@ -327,7 +334,7 @@ async function loadOnlineSource(seq: number, code: string) {
   let resume = pos && pos.position > 5 ? pos.position : 0
   if (resume && pos?.duration && resume >= pos.duration * 0.95) resume = 0
   if (resume) startAt.value = resume
-  videoSrc.value = mediaService.hanimeStreamUrl(code, detail.sources[0].res)
+  videoSrc.value = mediaService.hanimeStreamUrl(code, hanimeRes.value)
 }
 
 /** v0.26 清晰度切换：同码换 res 重建流（:key 变更重挂载），lastPosition 承接进度 */
@@ -336,6 +343,22 @@ function switchHanimeRes(res: number) {
   hanimeRes.value = res
   startAt.value = lastPosition > 5 ? lastPosition : 0
   videoSrc.value = mediaService.hanimeStreamUrl(hanimeCode.value, res)
+  // v0.27 A3a 清晰度记忆：全局单值（0=未记忆），下次播放在线源默认上次选择
+  settings.applyPatch({ hanimeRes: res })
+}
+
+/** v0.27 A2 系列合集缩略图统一经服务端容灾转发（v0.26 补记一同款：浏览器直连站点 CDN 不可达） */
+function hanimeThumb(url: string): string {
+  return mediaService.hanimeThumbUrl(url)
+}
+
+/** v0.27 A2 系列合集换播：原位换 online= 参数（路由 watch 重新走 load，o:{code} 位置记忆
+ *  按视频码天然独立）；不改绑定数据；同码点击 no-op */
+function playSeriesItem(item: SvcHanimePlaylistItem) {
+  if (!item.videoCode || item.videoCode === hanimeCode.value) return
+  void router.replace({
+    query: { ...route.query, online: item.videoCode },
+  })
 }
 
 /** v0.13 本机文件 / 演示 / URL 三路取源 */
@@ -712,6 +735,29 @@ function onSeekReload(target: number) {
           {{ remux ? '转封装流 · 拖动进度将重新加载' : '空格播放/暂停 · ←→ 快进快退 · F 全屏' }} · 看完 95% 自动标记
         </span>
       </div>
+      <!-- v0.27 A2 系列合集（HN9 转正）：站点 watch 页侧栏播放列表（社團/系列二态），
+           点击原位换播（router.replace 换 online= 参数，不改绑定；当前条目高亮） -->
+      <div v-if="hanimeSeries" class="series-block">
+        <div class="series-head">
+          <span class="series-tag">{{ hanimeSeries.category || '系列' }}</span>
+          <span class="series-name" :title="hanimeSeries.name">{{ hanimeSeries.name || '合集' }}</span>
+          <span class="series-count">{{ hanimeSeries.total || hanimeSeries.items.length }} 部影片</span>
+        </div>
+        <div class="series-row">
+          <button
+            v-for="item in hanimeSeries.items"
+            :key="item.videoCode"
+            class="series-item"
+            :class="{ current: item.videoCode === hanimeCode }"
+            :title="item.title"
+            @click="playSeriesItem(item)"
+          >
+            <img :src="hanimeThumb(item.thumbnail)" loading="lazy" alt="" />
+            <span class="series-title">{{ item.title }}</span>
+            <span class="series-dur">{{ item.duration }}</span>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -805,5 +851,91 @@ function onSeekReload(target: number) {
 .intro-actions {
   display: flex;
   gap: 8px;
+}
+
+/* v0.27 A2 系列合集：侧栏播放列表的横滚区块（当前条目高亮；列表可达百级，懒加载图） */
+.series-block {
+  max-width: 1100px;
+  width: 100%;
+  margin: 14px auto 0;
+}
+
+.series-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--av-text-secondary);
+}
+
+.series-tag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--av-surface-raised, rgba(127, 127, 127, 0.18));
+  color: var(--av-text-primary);
+  font-weight: 600;
+}
+
+.series-name {
+  font-size: 13px;
+  color: var(--av-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.series-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.series-item {
+  flex: 0 0 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--av-surface, rgba(127, 127, 127, 0.1));
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.series-item:hover {
+  border-color: var(--av-border-strong, rgba(127, 127, 127, 0.45));
+}
+
+.series-item.current {
+  border-color: var(--av-primary, #7c66ff);
+}
+
+.series-item img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.2);
+}
+
+.series-title {
+  font-size: 12px;
+  line-height: 1.4;
+  height: 2.8em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--av-text-primary);
+}
+
+.series-dur {
+  font-size: 11px;
+  color: var(--av-text-tertiary);
 }
 </style>

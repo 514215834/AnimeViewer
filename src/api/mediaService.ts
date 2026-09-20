@@ -1004,6 +1004,23 @@ export interface SvcHanimeSource {
   url: string
 }
 
+/** v0.27 A2 侧栏播放列表条目（watch 页解析；current=当前播放条目，前端高亮） */
+export interface SvcHanimePlaylistItem {
+  videoCode: string
+  title: string
+  thumbnail: string
+  duration: string
+  current: boolean
+}
+
+/** v0.27 A2 系列合集（站点以「社團/系列」二态承载）：无侧栏时为 null */
+export interface SvcHanimePlaylist {
+  category: string
+  name: string
+  total: number
+  items: SvcHanimePlaylistItem[]
+}
+
 export interface SvcHanimeWatch {
   videoCode: string
   title: string
@@ -1012,6 +1029,8 @@ export interface SvcHanimeWatch {
   tags: string[]
   /** 按分辨率降序（默认取首档） */
   sources: SvcHanimeSource[]
+  /** v0.27 A2 侧栏系列/社团合集（无侧栏时缺省） */
+  playlist?: SvcHanimePlaylist
 }
 
 export interface SvcHanimeTest {

@@ -32,6 +32,8 @@ export interface SettingsState {
   subFontSize: number
   /** v0.26 HN6 在线解析（hanime1.me）NSFW 门：默认关，关闭时剧集 Tab「在线」入口隐藏 */
   hanimeNsfw: boolean
+  /** v0.27 A3a 在线源清晰度记忆（全局单值，0=未记忆走解析首档=最高档） */
+  hanimeRes: number
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -59,6 +61,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   autoNext: false,
   subFontSize: 40,
   hanimeNsfw: false,
+  hanimeRes: 0,
 }
 
 export const useSettingsStore = defineStore('settings', {

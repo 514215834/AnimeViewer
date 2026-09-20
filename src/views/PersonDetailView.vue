@@ -5,7 +5,10 @@ import { useMessage } from 'naive-ui'
 import { NAlert, NButton, NIcon, NResult, NSpin, NTag } from 'naive-ui'
 import { FilmOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
+import { bangumiApi } from '../api/bangumi'
 import { useLibraryStore } from '../stores/library'
+import { useSettingsStore } from '../stores/settings'
+import { useSyncStore } from '../stores/sync'
 import type { PersonDetail, StaffWork } from '../types/bangumi'
 import { careerLabel } from '../utils/career'
 import PosterImage from '../components/PosterImage.vue'
@@ -15,6 +18,8 @@ const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const library = useLibraryStore()
+const settings = useSettingsStore()
+const sync = useSyncStore()
 
 const person = ref<PersonDetail | null>(null)
 const works = ref<StaffWork[] | null>(null)
@@ -43,6 +48,28 @@ async function load() {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
+  }
+  void pullCloudCollectState()
+}
+
+/** v0.27 B2 云端单人物收藏状态回读（与角色页同构：仅增量补录，不动 dirty、不移除） */
+async function pullCloudCollectState() {
+  if (settings.isDemo || !settings.accessToken.trim() || library.hasPerson(id.value)) return
+  const account = sync.account
+  const username = account?.username || (account ? String(account.id) : '')
+  if (!username) return
+  try {
+    const cloud = await bangumiApi.personCollectState(username, id.value)
+    if (cloud) {
+      library.upsertPersonFromServer({
+        personId: id.value,
+        name: cloud.name,
+        image: cloud.images?.medium || cloud.images?.large || cloud.images?.small || '',
+        career: cloud.career,
+      })
+    }
+  } catch {
+    /* 回读失败静默 */
   }
 }
 

@@ -2,13 +2,14 @@
 /** v0.26 HN4 在线解析搜索弹窗（hanime1.me）：条目名预填 → 站内搜索 → 结果行播放/绑定。
  *  复用详情页「资源搜索」弹窗的交互形态（v0.17 R2），但单站点、无站点 chips；
  *  绑定走 MediaBinding online 形态（v0.26 HN8，mediaStore 落库）。
- *  NSFW 门：外层控制入口显隐；本弹窗首次打开二次确认（localStorage 记忆）。 */
+ *  NSFW 门：外层控制入口显隐；本弹窗首次打开二次确认（v0.27 A3c：IndexedDB 记忆，
+ *  localStorage 旧值迁移一次）。v0.27 A3b：搜索行新增 genre 分类筛选（站点原生参数透传）。 */
 import { computed, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NAlert, NButton, NEmpty, NIcon, NInput, NModal, NSelect, NSpin, NTag } from 'naive-ui'
 import { PlayOutline, SearchOutline, CloudUploadOutline } from '@vicons/ionicons5'
 import { mediaService, type SvcHanimeSearchItem } from '../api/mediaService'
-import { setBinding } from '../utils/mediaStore'
+import { getHanime18Confirmed, setHanime18Confirmed, setBinding } from '../utils/mediaStore'
 
 /** 缩略图统一经服务端容灾转发（浏览器直连站点 CDN 在 DNS 污染网络不可达，v0.26 补记修复） */
 function thumbSrc(url: string): string {
@@ -36,11 +37,41 @@ const emit = defineEmits<{
 const message = useMessage()
 
 const CONFIRM_KEY = 'animeviewer:hanime-18-confirmed'
-/** 18+ 首次确认（localStorage 全站记忆一次） */
-const confirmed = ref(localStorage.getItem(CONFIRM_KEY) === '1')
+/** v0.27 A3c 18+ 首次确认：IndexedDB 记忆（挂载异步读键；读键完成前不渲染确认框防闪烁）。
+ *  v0.26 曾用 localStorage——旧值迁移一次后清理。 */
+const confirmed = ref<boolean | null>(null)
+{
+  const legacy = localStorage.getItem(CONFIRM_KEY) === '1'
+  if (legacy) void setHanime18Confirmed()
+  void getHanime18Confirmed().then((v) => {
+    if (v) {
+      confirmed.value = true
+      if (legacy) localStorage.removeItem(CONFIRM_KEY)
+    } else {
+      confirmed.value = false
+    }
+    maybeAutoSearch()
+  })
+}
 
 const keyword = ref('')
 const sort = ref('最新上市')
+// v0.27 A3b 分类筛选：站点原生 genre 参数（2026-09-20 抓包枚举常用档位；站点可随时扩展，
+// 不硬编码全量——「不限」= 不传参数返回全部）
+const genre = ref('')
+const GENRE_OPTIONS = [
+  { label: '分类不限', value: '' },
+  { label: '2D動畫', value: '2D動畫' },
+  { label: '2.5D', value: '2.5D' },
+  { label: '3DCG', value: '3DCG' },
+  { label: 'AI生成', value: 'AI生成' },
+  { label: 'Cosplay', value: 'Cosplay' },
+  { label: 'MMD', value: 'MMD' },
+  { label: 'Motion Anime', value: 'Motion Anime' },
+  { label: '裏番', value: '裏番' },
+  { label: '泡麵番', value: '泡麵番' },
+  { label: '新番預告', value: '新番預告' },
+]
 const SORT_OPTIONS = [
   { label: '最新上市', value: '最新上市' },
   { label: '最新上傳', value: '最新上傳' },
@@ -61,6 +92,13 @@ const bindingCode = ref('')
 
 const prefill = computed(() => (props.subjectNameCn || props.subjectName || '').trim())
 
+// v0.27 A3c：confirmed 由 IDB 异步判定，读取完成后也需补触发首搜（immediate watch 先于 IDB 结果执行）
+function maybeAutoSearch() {
+  if (!props.show || !confirmed.value) return
+  keyword.value = prefill.value
+  if (prefill.value && !items.value.length) void doSearch()
+}
+
 // 每次打开：预填条目名并自动首搜（条目级入口给「最新」浏览，集级入口搜条目名）。
 // v0.26 补记：组件随 v-if 挂载时 show 已为 true——watch 不加 immediate 首次赋值不触发，
 // 预填与自动首搜从未执行（用户实测反馈「搜索框没有自动预填」）；immediate 后覆盖挂载即打开的场景
@@ -77,7 +115,7 @@ watch(
 )
 
 function confirm18() {
-  localStorage.setItem(CONFIRM_KEY, '1')
+  void setHanime18Confirmed()
   confirmed.value = true
   keyword.value = prefill.value
   if (prefill.value) void doSearch()
@@ -90,6 +128,7 @@ async function doSearch(target = 1) {
     const r = await mediaService.hanimeSearch({
       query: keyword.value.trim(),
       sort: sort.value,
+      genre: genre.value || undefined,
       page: target,
     })
     items.value = r.items
@@ -136,7 +175,8 @@ async function bind(item: SvcHanimeSearchItem) {
     @update:show="emit('update:show', $event)"
   >
     <div class="hanime-modal">
-      <template v-if="!confirmed">
+      <!-- v0.27 A3c：confirmed 由 IDB 异步判定（null=判定中不渲染任何态防闪烁） -->
+      <template v-if="confirmed === false">
         <div class="confirm-box">
           <div class="confirm-title">成人内容提醒</div>
           <p class="confirm-text">
@@ -149,7 +189,7 @@ async function bind(item: SvcHanimeSearchItem) {
           </div>
         </div>
       </template>
-      <template v-else>
+      <template v-else-if="confirmed === true">
         <div class="modal-head">
           <span class="modal-title">在线解析 · hanime1.me</span>
           <NTag v-if="defaultSort" size="small" round :bordered="false">绑定到第 {{ defaultSort }} 话</NTag>
@@ -162,6 +202,8 @@ async function bind(item: SvcHanimeSearchItem) {
             placeholder="搜索词（默认条目名，可改）"
             @keyup.enter="doSearch(1)"
           />
+          <!-- v0.27 A3b：genre 分类筛选（站点原生参数；空=不限） -->
+          <NSelect v-model:value="genre" size="small" :options="GENRE_OPTIONS" class="genre-select" />
           <NSelect v-model:value="sort" size="small" :options="SORT_OPTIONS" class="sort-select" />
           <NButton size="small" type="primary" secondary :loading="loading" @click="doSearch(1)">
             <template #icon><NIcon :component="SearchOutline" /></template>
@@ -281,6 +323,10 @@ async function bind(item: SvcHanimeSearchItem) {
 
 .sort-select {
   width: 130px;
+}
+
+.genre-select {
+  width: 120px;
 }
 
 .err {

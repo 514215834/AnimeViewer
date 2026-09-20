@@ -5,7 +5,10 @@ import { useMessage } from 'naive-ui'
 import { NAlert, NButton, NIcon, NResult, NSpin, NTag } from 'naive-ui'
 import { MicOutline, FilmOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
+import { bangumiApi } from '../api/bangumi'
 import { useLibraryStore } from '../stores/library'
+import { useSettingsStore } from '../stores/settings'
+import { useSyncStore } from '../stores/sync'
 import type { CharacterDetail, CharacterPerson, StaffWork } from '../types/bangumi'
 import PosterImage from '../components/PosterImage.vue'
 import EmptyHint from '../components/EmptyHint.vue'
@@ -14,6 +17,8 @@ const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const library = useLibraryStore()
+const settings = useSettingsStore()
+const sync = useSyncStore()
 
 const character = ref<CharacterDetail | null>(null)
 const works = ref<StaffWork[] | null>(null)
@@ -52,6 +57,28 @@ async function load() {
     actors.value = await dataSource.characterPersons(id.value)
   } catch {
     actors.value = []
+  }
+  void pullCloudCollectState()
+}
+
+/** v0.27 B2 云端单角色收藏状态回读：仅增量补录（本地有 dirty 记录不动、云端无记录不移除——
+ *  与同步引擎不打架），修复「换设备收藏后本页不回读」的缺口；演示模式/无 Token/无账号缓存跳过 */
+async function pullCloudCollectState() {
+  if (settings.isDemo || !settings.accessToken.trim() || library.hasCharacter(id.value)) return
+  const account = sync.account
+  const username = account?.username || (account ? String(account.id) : '')
+  if (!username) return
+  try {
+    const cloud = await bangumiApi.characterCollectState(username, id.value)
+    if (cloud) {
+      library.upsertCharacterFromServer({
+        characterId: id.value,
+        name: cloud.name,
+        image: cloud.images?.medium || cloud.images?.large || cloud.images?.small || '',
+      })
+    }
+  } catch {
+    /* 回读失败静默（本地状态不因网络问题被扰动） */
   }
 }
 

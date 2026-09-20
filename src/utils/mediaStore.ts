@@ -265,6 +265,19 @@ export async function setLastDir(name: string, handle: unknown): Promise<void> {
   await idbPut(DIR_KEY, { name, handle } satisfies DirHandleRecord)
 }
 
+/* ── v0.27 A3c 18+ 确认记忆（IndexedDB 持久化）：与播放数据同库，跨浏览器/清 localStorage 后不再重确认；
+   localStorage 旧值由调用方读取迁移后清理 ── */
+
+const HANIME18_KEY = 'k:hanime18-confirmed'
+
+export async function getHanime18Confirmed(): Promise<boolean> {
+  return (await idbGet<unknown>(HANIME18_KEY)) === true
+}
+
+export async function setHanime18Confirmed(): Promise<void> {
+  await idbPut(HANIME18_KEY, true)
+}
+
 /* ── 导出 / 导入（PL4：句柄不导出，恢复的绑定在播放时引导重选文件） ── */
 
 export async function exportMedia(): Promise<MediaExportSection> {

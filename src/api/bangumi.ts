@@ -94,7 +94,16 @@ async function doFetch<T>(path: string, init: RequestInit | undefined, token: st
     ...(init?.headers as Record<string, string> | undefined),
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  const res = await fetch(baseUrl() + path, { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  let res: Response
+  try {
+    res = await fetch(baseUrl() + path, { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  } catch (e) {
+    // v0.27 C2（§5N 补记三回退件复用）：网络层失败（超时 / DNS 污染被阻断 / CORS 预检失败落到的
+    // TypeError "Failed to fetch"——无 HTTP 状态）转可读错误，不再把技术性文本抛给上层；
+    // status 0 不等于 401，request() 的匿名降级逻辑不受影响
+    console.warn('[AnimeViewer] Bangumi API 网络层请求失败:', e)
+    throw new ApiError(0, 'Bangumi API 连接失败或被网络阻断——请检查网络/代理设置')
+  }
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status} ${res.statusText}`)
   // 204 或空响应体（部分写接口返回 200 + 空 body）均视为无内容
   const text = await res.text()
@@ -262,6 +271,18 @@ export const bangumiApi = {
       `/v0/users/${encodeURIComponent(username)}/collections/-/characters?limit=${limit}&offset=${offset}`,
     )
   },
+  /** v0.27 B2 云端单角色收藏状态回读：null = 未收藏 / 用户或角色不存在（404/400 归一为无云端记录）；
+   *  其他网络错误上抛由调用方静默 */
+  async characterCollectState(username: string, characterId: number): Promise<UserCharacterCollection | null> {
+    try {
+      return await request<UserCharacterCollection>(
+        `/v0/users/${encodeURIComponent(username)}/collections/-/characters/${characterId}`,
+      )
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 404 || e.status === 400)) return null
+      throw e
+    }
+  },
   /** F2 收藏人物（需 write:collection 授权；取消收藏端点 DELETE 实测未实现，仅支持收藏） */
   collectPerson(personId: number): Promise<void> {
     return request<void>(`/v0/persons/${personId}/collect`, { method: 'POST' })
@@ -271,6 +292,17 @@ export const bangumiApi = {
     return request<Paged<UserPersonCollection>>(
       `/v0/users/${encodeURIComponent(username)}/collections/-/persons?limit=${limit}&offset=${offset}`,
     )
+  },
+  /** v0.27 B2 云端单人物收藏状态回读（与角色同构；404/400 归一为无云端记录） */
+  async personCollectState(username: string, personId: number): Promise<UserPersonCollection | null> {
+    try {
+      return await request<UserPersonCollection>(
+        `/v0/users/${encodeURIComponent(username)}/collections/-/persons/${personId}`,
+      )
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 404 || e.status === 400)) return null
+      throw e
+    }
   },
   search(keyword: string, tags: string[], sort: string, limit = 24, offset = 0, advanced?: SearchAdvanced): Promise<SearchResponse> {
     // R18 开关统一控制：隐藏时只返回非 R18；显示时不传该字段（返回全部，能否看到 R18 取决于 Bangumi 鉴权）

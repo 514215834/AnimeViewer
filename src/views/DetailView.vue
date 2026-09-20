@@ -64,6 +64,16 @@ const blockedByNsfw = computed(
   () => !!subject.value?.nsfw && settings.hideNsfw && !revealed.value,
 )
 
+/** v0.27 B1 标签热度加权（tag count = 全站含该标签的条目数，server #1124 起 populate）：
+ *  防御性按 count 降序（API 常态已降序）+ 字号三级加权 + 上限 10→12 */
+const weightedTags = computed(() => {
+  const tags = [...(subject.value?.tags ?? [])].sort((a, b) => b.count - a.count).slice(0, 12)
+  return tags.map((t, i) => ({
+    ...t,
+    size: i < 3 ? 'lg' : i < 6 ? 'md' : 'sm',
+  }))
+})
+
 /** v0.12 B6 Hero 背板：与主海报同源大图（放大/模糊/饱和由 CSS 完成），无图时仅占位底色 */
 const heroBackdropStyle = computed(() => {
   const src = subject.value
@@ -660,14 +670,15 @@ onBeforeUnmount(() => {
 
               <div v-if="subject.tags?.length" class="tag-row">
                 <NTag
-                  v-for="t in subject.tags.slice(0, 10)"
+                  v-for="t in weightedTags"
                   :key="t.name"
                   size="small"
                   round
                   type="info"
                   ghost
                   class="tag-clickable"
-                  :title="`点击搜索标签「${t.name}」`"
+                  :class="`tag-w-${t.size}`"
+                  :title="`点击搜索标签「${t.name}」· 全站 ${t.count} 条含此标签`"
                   @click="router.push({ name: 'search', query: { tag: t.name } })"
                 >
                   {{ t.name }} · {{ t.count }}
@@ -1230,6 +1241,15 @@ html.light .detail-poster :deep(.poster-frame) {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+/* v0.27 B1 标签热度三级加权字号（count 降序头部更大） */
+.tag-w-lg {
+  font-size: 14px !important;
+}
+
+.tag-w-md {
+  font-size: 13px !important;
 }
 
 .tag-clickable {
