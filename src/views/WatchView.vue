@@ -11,7 +11,7 @@
  *  SB1 内封字幕轨枚举 + VTT 提取（ArtPlayer subtitle，默认自动选第一中文轨）；
  *  SB2 本地外挂 srt/vtt（绑定时的同目录探测成果从 IDB 读出加载）；SB3 WebDAV 同名字幕
  *  经 O2 代理拉取转 VTT；SB4 自动连播（设置开关）+ 上/下一集；SB5 跳过片头（按条目记忆）。 */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { NButton, NIcon, NInputNumber, NPopover, NSpin } from 'naive-ui'
@@ -353,22 +353,13 @@ function hanimeThumb(url: string): string {
 }
 
 /** v0.27 A2 系列合集换播：原位换 online= 参数（路由 watch 重新走 load，o:{code} 位置记忆
- *  按视频码天然独立）；不改绑定数据；同码点击 no-op；换播后把当前项滚进侧栏视野 */
+ *  按视频码天然独立）；不改绑定数据；同码点击 no-op */
 function playSeriesItem(item: SvcHanimePlaylistItem) {
   if (!item.videoCode || item.videoCode === hanimeCode.value) return
   void router.replace({
     query: { ...route.query, online: item.videoCode },
   })
 }
-
-watch(hanimeCode, () => {
-  // 换播后列表随 load 重建（:key 变更），等渲染稳定再滚——nextTick 仍可能在重挂载前执行
-  nextTick(() =>
-    setTimeout(() => {
-      document.querySelector('.series-item.current')?.scrollIntoView({ block: 'nearest' })
-    }, 120),
-  )
-})
 
 /** v0.13 本机文件 / 演示 / URL 三路取源 */
 async function loadLocalSource(seq: number) {
@@ -679,83 +670,81 @@ function onSeekReload(target: number) {
     </div>
 
     <div v-else class="watch-shell">
-      <div class="watch-main">
-        <VideoPlayer
-          :key="videoSrc"
-          :src="videoSrc"
-          :title="videoTitle"
-          :start-at="startAt"
-          :remux="remux"
-          :danmaku="danmakuItems"
-          :persist-danmuku="onDanmukuEmit"
-          :subtitles="subtitleEntries"
-          :intro-sec="introSec"
-          :qualities="qualityOptions"
-          :active-res="hanimeRes"
-          @progress="onProgress"
-          @seekreload="onSeekReload"
-          @sourceerror="onSourceError"
-          @qualitychange="switchHanimeRes"
-          @ended="onEnded"
-        />
-        <div class="watch-meta">
-          <span class="watch-name">{{ videoTitle }}</span>
-          <span class="watch-source" :title="bindingName">来源：{{ bindingName }}</span>
-          <span v-if="hanimeRes" class="watch-source" title="清晰度在播放器「设置 ⚙」内切换">当前 {{ hanimeRes }}p</span>
-          <span v-if="onlineProxied" class="watch-source">· 经服务代理</span>
-          <span v-if="subtitleEntries.length" class="watch-source" title="字幕轨在播放器「设置 ⚙」内切换">
-            字幕 {{ subtitleEntries.length }} 轨
-          </span>
-          <span v-if="danmakuItems.length" class="watch-source">弹幕 {{ danmakuItems.length }} 条</span>
-          <input ref="dmInput" type="file" accept=".xml,text/xml,application/xml" hidden @change="onDanmakuFile" />
-          <NButton size="tiny" quaternary @click="dmInput?.click()">导入弹幕</NButton>
-          <!-- v0.23 SB4 连播开关（镜像设置页「自动连播」）+ 上/下一集 -->
-          <NButton
-            size="tiny"
-            quaternary
-            :type="settings.autoNext ? 'primary' : 'default'"
-            title="自然看完后自动播放下一集（设置页 · 播放体验）"
-            @click="toggleAutoNext"
-          >
-            连播 {{ settings.autoNext ? '开' : '关' }}
-          </NButton>
-          <NButton v-if="prevSort !== null" size="tiny" quaternary title="上一集" @click="goEpisode(prevSort)">
-            <template #icon><NIcon :component="PlayBackOutline" /></template>
-            第 {{ prevSort }} 话
-          </NButton>
-          <NButton v-if="nextSort !== null" size="tiny" quaternary title="下一集" @click="goEpisode(nextSort)">
-            第 {{ nextSort }} 话
-            <template #icon><NIcon :component="PlayForwardOutline" /></template>
-          </NButton>
-          <!-- v0.23 SB5 片头时长记忆（默认 90s，可改/清） -->
-          <NPopover trigger="click" placement="top">
-            <template #trigger>
-              <NButton size="tiny" quaternary>片头 {{ introSec || '关' }}s</NButton>
-            </template>
-            <div class="intro-edit">
-              <span>片头时长（秒，0=关）</span>
-              <NInputNumber v-model:value="introDraft" size="tiny" :min="0" :max="600" style="width: 130px" />
-              <div class="intro-actions">
-                <NButton size="tiny" type="primary" @click="applyIntro(introDraft)">保存</NButton>
-                <NButton size="tiny" @click="resetIntro()">恢复默认</NButton>
-              </div>
+      <VideoPlayer
+        :key="videoSrc"
+        :src="videoSrc"
+        :title="videoTitle"
+        :start-at="startAt"
+        :remux="remux"
+        :danmaku="danmakuItems"
+        :persist-danmuku="onDanmukuEmit"
+        :subtitles="subtitleEntries"
+        :intro-sec="introSec"
+        :qualities="qualityOptions"
+        :active-res="hanimeRes"
+        @progress="onProgress"
+        @seekreload="onSeekReload"
+        @sourceerror="onSourceError"
+        @qualitychange="switchHanimeRes"
+        @ended="onEnded"
+      />
+      <div class="watch-meta">
+        <span class="watch-name">{{ videoTitle }}</span>
+        <span class="watch-source" :title="bindingName">来源：{{ bindingName }}</span>
+        <span v-if="hanimeRes" class="watch-source" title="清晰度在播放器「设置 ⚙」内切换">当前 {{ hanimeRes }}p</span>
+        <span v-if="onlineProxied" class="watch-source">· 经服务代理</span>
+        <span v-if="subtitleEntries.length" class="watch-source" title="字幕轨在播放器「设置 ⚙」内切换">
+          字幕 {{ subtitleEntries.length }} 轨
+        </span>
+        <span v-if="danmakuItems.length" class="watch-source">弹幕 {{ danmakuItems.length }} 条</span>
+        <input ref="dmInput" type="file" accept=".xml,text/xml,application/xml" hidden @change="onDanmakuFile" />
+        <NButton size="tiny" quaternary @click="dmInput?.click()">导入弹幕</NButton>
+        <!-- v0.23 SB4 连播开关（镜像设置页「自动连播」）+ 上/下一集 -->
+        <NButton
+          size="tiny"
+          quaternary
+          :type="settings.autoNext ? 'primary' : 'default'"
+          title="自然看完后自动播放下一集（设置页 · 播放体验）"
+          @click="toggleAutoNext"
+        >
+          连播 {{ settings.autoNext ? '开' : '关' }}
+        </NButton>
+        <NButton v-if="prevSort !== null" size="tiny" quaternary title="上一集" @click="goEpisode(prevSort)">
+          <template #icon><NIcon :component="PlayBackOutline" /></template>
+          第 {{ prevSort }} 话
+        </NButton>
+        <NButton v-if="nextSort !== null" size="tiny" quaternary title="下一集" @click="goEpisode(nextSort)">
+          第 {{ nextSort }} 话
+          <template #icon><NIcon :component="PlayForwardOutline" /></template>
+        </NButton>
+        <!-- v0.23 SB5 片头时长记忆（默认 90s，可改/清） -->
+        <NPopover trigger="click" placement="top">
+          <template #trigger>
+            <NButton size="tiny" quaternary>片头 {{ introSec || '关' }}s</NButton>
+          </template>
+          <div class="intro-edit">
+            <span>片头时长（秒，0=关）</span>
+            <NInputNumber v-model:value="introDraft" size="tiny" :min="0" :max="600" style="width: 130px" />
+            <div class="intro-actions">
+              <NButton size="tiny" type="primary" @click="applyIntro(introDraft)">保存</NButton>
+              <NButton size="tiny" @click="resetIntro()">恢复默认</NButton>
             </div>
-          </NPopover>
-          <span class="watch-hint">
-            {{ remux ? '转封装流 · 拖动进度将重新加载' : '空格播放/暂停 · ←→ 快进快退 · F 全屏' }} · 看完 95% 自动标记
-          </span>
-        </div>
+          </div>
+        </NPopover>
+        <span class="watch-hint">
+          {{ remux ? '转封装流 · 拖动进度将重新加载' : '空格播放/暂停 · ←→ 快进快退 · F 全屏' }} · 看完 95% 自动标记
+        </span>
       </div>
-      <!-- v0.27 A2（用户反馈修订）：横滚区块在沉浸页首屏之下且页面无滚动容器（body overflow:hidden）被挡——
-           改为播放器右侧竖排栏（站点原生形态，栏内自滚动）；≤768px 退化为播放器下方横滚。
-           点击原位换播（router.replace 换 online= 参数，不改绑定；当前条目高亮） -->
-      <aside v-if="hanimeSeries" class="series-side">
+      <!-- v0.27 A2 系列合集（HN9 转正）：站点 watch 页侧栏播放列表（社團/系列二态），
+           点击原位换播（router.replace 换 online= 参数，不改绑定；当前条目高亮）；
+           v0.27 补记二（用户定案）：右竖排栏回退，恢复本横滚形态——可达性由滚动容器修复承担 -->
+      <div v-if="hanimeSeries" class="series-block">
         <div class="series-head">
           <span class="series-tag">{{ hanimeSeries.category || '系列' }}</span>
           <span class="series-name" :title="hanimeSeries.name">{{ hanimeSeries.name || '合集' }}</span>
           <span class="series-count">{{ hanimeSeries.total || hanimeSeries.items.length }} 部影片</span>
         </div>
-        <div class="series-list">
+        <div class="series-row">
           <button
             v-for="item in hanimeSeries.items"
             :key="item.videoCode"
@@ -765,13 +754,11 @@ function onSeekReload(target: number) {
             @click="playSeriesItem(item)"
           >
             <img :src="hanimeThumb(item.thumbnail)" loading="lazy" alt="" />
-            <span class="series-info">
-              <span class="series-title">{{ item.title }}</span>
-              <span class="series-dur">{{ item.duration }}</span>
-            </span>
+            <span class="series-title">{{ item.title }}</span>
+            <span class="series-dur">{{ item.duration }}</span>
           </button>
         </div>
-      </aside>
+      </div>
     </div>
   </div>
 </template>
@@ -779,7 +766,7 @@ function onSeekReload(target: number) {
 <style scoped>
 /* 沉浸页不铺背景面板：透出全局氛围层（body 氛围层在本路由同样生效）。
    本路由在 MainLayout 之外（v0.13 PL1），而全局 body overflow:hidden、#app height:100% ——
-   页面自身必须是滚动容器，否则首屏之下内容（meta 行/系列侧栏）永远不可达（v0.27 用户反馈修复） */
+   页面自身必须是滚动容器（v0.27 用户定案保留），否则首屏之下内容（meta 行/系列横滚区块）不可达 */
 .watch-page {
   height: 100vh;
   overflow-y: auto;
@@ -813,15 +800,6 @@ function onSeekReload(target: number) {
 .watch-shell {
   max-width: 1100px;
   margin: 0 auto;
-  /* v0.27 A2 修订：播放器列 + 右侧系列竖排栏（无系列时 watch-main 独占，与既有布局一致） */
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.watch-main {
-  flex: 1;
-  min-width: 0;
 }
 
 .watch-state {
@@ -880,22 +858,16 @@ function onSeekReload(target: number) {
   gap: 8px;
 }
 
-/* v0.27 A2（用户反馈修订）系列合集：播放器右侧竖排栏（栏内自滚动）；
-   ≤768px 退化为播放器下方横滚。当前条目高亮；列表可达百级，懒加载图。
-   align-self: flex-start + sticky + 视口上限：列表超长时栏不撑高整行（行高由播放器列决定），
-   滚动发生在 .series-list 内部 */
-.series-side {
-  flex: 0 0 300px;
-  align-self: flex-start;
-  position: sticky;
-  top: 14px;
-  max-height: calc(100vh - 130px);
-  display: flex;
-  flex-direction: column;
+/* v0.27 A2 系列合集：侧栏播放列表的横滚区块（当前条目高亮；列表可达百级，懒加载图）。
+   v0.27 补记二（用户定案）：右竖排栏形态回退，恢复本横滚形态；可达性（无法下拉）由
+   .watch-page 滚动容器修复承担 */
+.series-block {
+  max-width: 1100px;
+  width: 100%;
+  margin: 14px auto 0;
 }
 
 .series-head {
-  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -913,8 +885,6 @@ function onSeekReload(target: number) {
 }
 
 .series-name {
-  flex: 1;
-  min-width: 0;
   font-size: 13px;
   color: var(--av-text-primary);
   overflow: hidden;
@@ -922,22 +892,19 @@ function onSeekReload(target: number) {
   white-space: nowrap;
 }
 
-.series-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
+.series-row {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-right: 2px;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
 }
 
 .series-item {
-  flex: 0 0 auto;
+  flex: 0 0 150px;
   display: flex;
-  gap: 8px;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding: 6px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -956,24 +923,17 @@ function onSeekReload(target: number) {
 }
 
 .series-item img {
-  flex-shrink: 0;
-  width: 96px;
+  width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: 6px;
   background: rgba(127, 127, 127, 0.2);
 }
 
-.series-info {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 .series-title {
   font-size: 12px;
   line-height: 1.4;
+  height: 2.8em;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -984,34 +944,5 @@ function onSeekReload(target: number) {
 .series-dur {
   font-size: 11px;
   color: var(--av-text-tertiary);
-}
-
-@media (max-width: 768px) {
-  .watch-shell {
-    flex-direction: column;
-  }
-
-  .series-side {
-    flex: none;
-    width: 100%;
-  }
-
-  .series-list {
-    flex-direction: row;
-    overflow-y: hidden;
-    overflow-x: auto;
-    padding-bottom: 6px;
-  }
-
-  .series-item {
-    flex: 0 0 150px;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 4px;
-  }
-
-  .series-item img {
-    width: 100%;
-  }
 }
 </style>
