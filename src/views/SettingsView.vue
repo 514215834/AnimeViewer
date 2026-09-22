@@ -502,7 +502,14 @@ onMounted(() => {
 
 function save() {
   applyDraftBase()
-  settings.applyPatch({ dataSource: draft.dataSource, hideNsfw: draft.hideNsfw, imageQuality: draft.imageQuality, autoNext: draft.autoNext })
+  settings.applyPatch({
+    dataSource: draft.dataSource,
+    hideNsfw: draft.hideNsfw,
+    imageQuality: draft.imageQuality,
+    autoNext: draft.autoNext,
+    transcodeEnabled: draft.transcodeEnabled,
+    transcodePreset: draft.transcodePreset,
+  })
   Object.assign(draft, settings.$state)
   clearApiCache()
   message.success('设置已保存并生效')
@@ -694,7 +701,7 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
-        <!-- v0.23 SB4 播放体验（本机设置，立即生效） -->
+        <!-- v0.23 SB4 播放体验（本机设置，立即生效）；v0.28 P1 实时转码并入本区块 -->
         <NFormItem label="播放体验">
           <div class="playback-box">
             <NSwitch v-model:value="draft.autoNext">
@@ -704,6 +711,29 @@ async function onImportFile(ev: Event) {
             <div class="playback-hint">
               <span class="playback-hint-title">自动连播</span>
               <span>自然看完一集后自动播放下一集（默认关）；播放页 meta 行有快捷开关</span>
+            </div>
+          </div>
+          <div class="playback-box">
+            <NSwitch v-model:value="draft.transcodeEnabled">
+              <template #checked>开</template>
+              <template #unchecked>关</template>
+            </NSwitch>
+            <div class="playback-hint">
+              <span class="playback-hint-title">实时转码</span>
+              <span>
+                视频编码浏览器不可解（HEVC/10bit/mpeg4 等）时服务端实时转码播放（默认开）；
+                占用服务端 CPU，seek 起播约 2~3 秒。关闭后此类文件按原路径播放（可能黑屏/花屏）
+              </span>
+              <NSelect
+                v-model:value="draft.transcodePreset"
+                size="tiny"
+                style="width: 180px; margin-top: 6px"
+                :options="[
+                  { label: '质量档：超 fast（最流畅）', value: 'superfast' },
+                  { label: '质量档：fast', value: 'fast' },
+                  { label: '质量档：medium（最清晰）', value: 'medium' },
+                ]"
+              />
             </div>
           </div>
         </NFormItem>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildStreamUrl, isDirectExt, servicePositionId } from './mediaService'
+import { buildStreamUrl, isDirectExt, needsTranscode, servicePositionId } from './mediaService'
 
 describe('v0.14 mediaService 纯函数', () => {
   it('buildStreamUrl：基础地址拼接 + 尾斜杠规范化', () => {
@@ -25,6 +25,48 @@ describe('v0.14 mediaService 纯函数', () => {
     expect(isDirectExt('avi')).toBe(false)
     expect(isDirectExt(undefined)).toBe(false)
     expect(isDirectExt('')).toBe(false)
+  })
+})
+
+/* ── v0.28 P1 转码决策与流地址参数 ── */
+
+describe('v0.28 P1 needsTranscode / buildStreamUrl opts', () => {
+  it('needsTranscode：hevc/mpeg4/未知 exotic 编码需要转码（白名单语义），大小写不敏感', () => {
+    expect(needsTranscode('hevc')).toBe(true)
+    expect(needsTranscode('HEVC')).toBe(true)
+    expect(needsTranscode('mpeg4')).toBe(true)
+    expect(needsTranscode('mpeg2video')).toBe(true)
+    expect(needsTranscode('vc1')).toBe(true)
+    // 浏览器视频解码面基本只有 h264/vp8/vp9/av1——未知非空编码转码兜底（扩大可播面）
+    expect(needsTranscode('未知编码')).toBe(true)
+  })
+
+  it('needsTranscode：可解编码与缺失/空白编码不转码（保守回退旧路径，零回归）', () => {
+    expect(needsTranscode('h264')).toBe(false)
+    expect(needsTranscode('vp9')).toBe(false)
+    expect(needsTranscode('av1')).toBe(false)
+    expect(needsTranscode('vp8')).toBe(false)
+    expect(needsTranscode(null)).toBe(false)
+    expect(needsTranscode(undefined)).toBe(false)
+    expect(needsTranscode('')).toBe(false)
+  })
+
+  it('buildStreamUrl：opts.transcode/preset/audio 参数拼装，缺省不携带（既有调用零变化）', () => {
+    expect(buildStreamUrl('http://s', 't', 3, 30, { transcode: true, preset: 'fast' })).toBe(
+      'http://s/api/stream/3?token=t&t=30&transcode=on&preset=fast',
+    )
+    expect(buildStreamUrl('http://s', 't', 3, undefined, { transcode: true, audio: 1 })).toBe(
+      'http://s/api/stream/3?token=t&transcode=on&audio=1',
+    )
+    // audio=0 合法（切到第一轨），负数不携带
+    expect(buildStreamUrl('http://s', 't', 3, undefined, { audio: 0 })).toBe(
+      'http://s/api/stream/3?token=t&audio=0',
+    )
+    expect(buildStreamUrl('http://s', 't', 3, undefined, { audio: -1 })).toBe(
+      'http://s/api/stream/3?token=t',
+    )
+    // 无 opts：与 v0.14 形态完全一致
+    expect(buildStreamUrl('http://s', 't', 3)).toBe('http://s/api/stream/3?token=t')
   })
 })
 

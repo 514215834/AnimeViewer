@@ -39,6 +39,12 @@ const props = defineProps<{
   qualities?: { label: string; res: number }[]
   /** v0.26 当前激活分辨率（对应 qualities 高亮项） */
   activeRes?: number
+  /** v0.28 P2 音轨列表（>1 项时在设置面板渲染「音轨」）；切换经 audiochange 交外层换流 */
+  audios?: { index: number; label: string }[]
+  /** v0.28 P2 当前激活音轨（对应 audios 高亮项） */
+  activeAudio?: number
+  /** v0.28 P2 章节（设置面板「章节」selector，选择即 seek 到章节头） */
+  chapters?: { start: number; end: number; title?: string | null }[]
 }>()
 
 const settings = useSettingsStore()
@@ -54,6 +60,8 @@ const emit = defineEmits<{
   (e: 'sourceerror'): void
   /** v0.26 清晰度切换（外层以对应 res 的流地址重建播放器，startAt 承接进度） */
   (e: 'qualitychange', res: number): void
+  /** v0.28 P2 音轨切换（外层以 audio= 参数重建流，lastPosition 承接进度） */
+  (e: 'audiochange', index: number): void
 }>()
 
 const container = ref<HTMLDivElement | null>(null)
@@ -164,6 +172,36 @@ onMounted(async () => {
         const res = (item as unknown as { res: number }).res
         emit('qualitychange', res)
         // 返回文本更新 tooltip（同字幕大小滑杆的返回值语义）
+        return (item as unknown as { html: string }).html
+      },
+    })
+  }
+  // v0.28 P2 音轨：>1 轨才渲染；切换交外层重建流（audio= 参数，lastPosition 承接）
+  const audioList = props.audios ?? []
+  if (audioList.length > 1) {
+    settingsEntries.push({
+      html: '音轨',
+      tooltip: audioList.find((a) => a.index === props.activeAudio)?.label ?? audioList[0]?.label ?? '',
+      selector: audioList.map((a) => ({ html: a.label, index: a.index, default: a.index === props.activeAudio })),
+      onSelect(item: SettingOption) {
+        emit('audiochange', (item as unknown as { index: number }).index)
+        return (item as unknown as { html: string }).html
+      },
+    })
+  }
+  // v0.28 P2 章节：选择即 seek 到章节头（直发原生 seek；remux/转码流经 currentTime setter
+  // 拦截走 seekreload 重拉，目标为文件绝对时间，与外层 seekBase 换算一致）
+  const chapterList = props.chapters ?? []
+  if (chapterList.length > 0) {
+    settingsEntries.push({
+      html: '章节',
+      tooltip: '跳转到章节',
+      selector: chapterList.map((c, i) => ({
+        html: c.title?.trim() ? c.title : `章节 ${i + 1}（${formatClock(c.start)}）`,
+        start: c.start,
+      })),
+      onSelect(item: SettingOption) {
+        if (art) art.seek = (item as unknown as { start: number }).start
         return (item as unknown as { html: string }).html
       },
     })
@@ -374,23 +412,30 @@ onMounted(async () => {
     emit('ended')
   })
   // v0.14 remux seek 重拉：fMP4 无索引，浏览器把超出 seekable=[0,0] 的 seek 静默钳制到 0，
-  // 事后（video:seeking）读到的 currentTime 已非用户意图。ArtPlayer 的进度条拖拽 / 热键 / seek
-  // 全部经过实例的 currentTime setter——在其上拦截，拿到的才是原始目标时间。
+  // 事后（video:seeking）读到的 currentTime 已非用户意图。ArtPlayer 的进度条拖拽 / 热键 /
+  // 章节 seek 全部经 art.currentTime → video.currentTime 写入——在 video 元素上拦截，
+  // 拿到的才是原始目标时间（ArtPlayer 自身钳制只到 duration，不破坏重拉目标）。
+  // v0.28 修复：旧实现拦截 art 实例的 currentTime——ArtPlayer 5.x 用 Object.defineProperty
+  // 直接在实例上定义该属性且默认 configurable:false，我们后续 defineProperty 抛 TypeError
+  // 静默失败（拦截从未生效、还连带跳过其后的兜底挂载；章节跳转实测暴露）。video 元素的
+  // 原生 currentTime 定义在 HTMLMediaElement.prototype 上，元素自有属性可自由覆写。
   if (props.remux) {
-    const proto = Object.getPrototypeOf(art)
-    const desc = Object.getOwnPropertyDescriptor(proto, 'currentTime')
-    if (desc?.set && desc.get) {
-      Object.defineProperty(art, 'currentTime', {
+    const videoEl = art.video as HTMLVideoElement | undefined
+    const mediaDesc = videoEl
+      ? Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')
+      : undefined
+    if (videoEl && mediaDesc?.set && mediaDesc.get) {
+      Object.defineProperty(videoEl, 'currentTime', {
         configurable: true,
         get() {
-          return desc.get!.call(art)
+          return mediaDesc.get!.call(videoEl)
         },
-        set(t: number) {
+        set(target: number) {
           if (destroyed || Date.now() < suppressSeekUntil) {
-            desc.set!.call(art, Number(t) || 0)
+            mediaDesc.set!.call(videoEl, Number(target) || 0)
             return
           }
-          emit('seekreload', Number(t) || 0)
+          emit('seekreload', Number(target) || 0)
         },
       })
     }

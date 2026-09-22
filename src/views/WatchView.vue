@@ -17,7 +17,7 @@ import { useMessage } from 'naive-ui'
 import { NButton, NIcon, NInputNumber, NPopover, NSpin } from 'naive-ui'
 import { ArrowBackOutline, LinkOutline, PlayOutline, PlayForwardOutline, PlayBackOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
-import { mediaService, isDirectExt, servicePositionId, type SvcFile, type SvcHanimePlaylist, type SvcHanimePlaylistItem, type SvcHanimeSource } from '../api/mediaService'
+import { mediaService, isDirectExt, needsTranscode, servicePositionId, type SvcAudioTrack, type SvcChapter, type SvcFile, type SvcHanimePlaylist, type SvcHanimePlaylistItem, type SvcHanimeSource } from '../api/mediaService'
 import { useLibraryStore } from '../stores/library'
 import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
@@ -62,8 +62,16 @@ const bindingName = ref('')
 const videoTitle = ref('')
 const videoSrc = ref('')
 const startAt = ref(0)
-/** v0.14 是否为服务端转封装流（seek 重拉模式）。v0.23 SB0b：mkv 直发失败时由 false 翻转为 true 重试 */
+/** v0.14 是否为服务端转封装流（seek 重拉模式）。v0.23 SB0b：mkv 直发失败时由 false 翻转为 true 重试。
+ *  v0.28 P1：转码流与转封装流同语义（无随机访问），转码模式也置 true（复用 seek 重拉拦截）。 */
 const remux = ref(false)
+/** v0.28 P1 转码播放态（vcodec 不可解 + 设置开关开）：meta 行「转码播放」标注 + 流 URL 带 transcode 参数 */
+const transcoded = ref(false)
+/** v0.28 P2 音轨（服务源多音轨：列表 + 当前激活；null = 未选择走流默认轨） */
+const audioEntries = ref<{ index: number; label: string }[]>([])
+const activeAudio = ref<number | null>(null)
+/** v0.28 P2 章节（设置面板 selector 跳转） */
+const chapterList = ref<SvcChapter[]>([])
 /** v0.15 O1 在线源（直链/HLS）：原始地址 + 是否已切换为服务代理 */
 const urlSource = ref('')
 const onlineProxied = ref(false)
@@ -97,8 +105,7 @@ const hanimeCode = ref('')
 const hanimeSources = ref<SvcHanimeSource[]>([])
 const hanimeRes = ref(0)
 /** v0.27 A2 系列合集（站点侧栏播放列表，社團/系列二态）：仅在线分支有值 */
-const hanimeSeries = ref<SvcHanimePlaylist | null>(null)
-/** 清晰度菜单（>1 档才注入设置面板） */
+const hanimeSeries = ref<SvcHanimePlaylist | null>(null)/** 清晰度菜单（>1 档才注入设置面板） */
 const qualityOptions = computed(() =>
   hanimeSources.value.length > 1 ? hanimeSources.value.map((s) => ({ label: s.label, res: s.res })) : undefined,
 )
@@ -120,6 +127,10 @@ async function load() {
   videoSrc.value = ''
   startAt.value = 0
   remux.value = false
+  transcoded.value = false
+  audioEntries.value = []
+  activeAudio.value = null
+  chapterList.value = []
   urlSource.value = ''
   onlineProxied.value = false
   lastPosition = 0
@@ -246,7 +257,30 @@ function loadVttEntry(name: string, vtt: string) {
   subtitleEntries.value = [{ index: 0, label: name, url: subObjectUrl, selected: true }]
 }
 
-/** v0.14 服务媒体库源：mp4/m4v/webm/mkv 直连 Range（SB0）；其余容器转封装 fMP4（?t= 起点） */
+/** v0.28 P1 服务流 URL 组装（统一携带转码/质量档/音轨参数——转码态、音轨态在 seek 重拉
+ *  与降级重试路径都不得丢失）。audioOverride 非空 = 音轨切换（切轨必然走管道）。 */
+function buildSvcStreamUrl(t?: number, audioOverride?: number): string {
+  const opts = {
+    transcode: transcoded.value,
+    preset: settings.transcodePreset,
+    ...(audioOverride !== undefined || activeAudio.value !== null
+      ? { audio: audioOverride ?? activeAudio.value ?? 0 }
+      : {}),
+  }
+  return mediaService.streamUrl(fileId.value, t, opts)
+}
+
+/** v0.28 P2 音轨标签：title > language > codec > 音轨 N（与字幕轨 trackLabel 同口径） */
+function audioTrackLabel(t: SvcAudioTrack): string {
+  if (t.title?.trim()) return t.title.trim()
+  if (t.language?.trim()) return t.language.trim()
+  if (t.codec?.trim()) return t.codec.trim()
+  return `音轨 ${t.index + 1}`
+}
+
+/** v0.14 服务媒体库源：mp4/m4v/webm/mkv 直连 Range（SB0）；其余容器转封装 fMP4（?t= 起点）。
+ *  v0.28 P1 第四层：vcodec 不可解（HEVC/10bit/mpeg4…）且转码开关开 → 实时转码管道
+ *  （X-AV-Transcode 流，与转封装同 seek 重拉语义，meta 行「转码播放」标注）。 */
 async function loadServiceSource(seq: number) {
   if (!mediaService.configured()) {
     fatal.value = '媒体服务未配置——请到设置页填写服务地址与 Token'
@@ -264,20 +298,42 @@ async function loadServiceSource(seq: number) {
   bindingName.value = file.name
   videoTitle.value = `第 ${sort.value} 话 · ${file.name}`
   positionId = servicePositionId(subjectId.value, sort.value)
-  remux.value = !isDirectExt(file.ext)
+  // v0.28 P1 转码判定（纯函数 needsTranscode 与服务端 PLAYABLE_VCODECS 同口径）
+  transcoded.value = settings.transcodeEnabled && needsTranscode(file.vcodec)
+  // 转码流与转封装流同为「直播式」管道：seek 重拉语义（VideoPlayer remux prop）
+  remux.value = transcoded.value || !isDirectExt(file.ext)
 
   const pos = await getPosition(positionId)
   let resume = pos && pos.position > 5 ? pos.position : 0
   if (remux.value) {
-    // 转封装：续播点直接作为流起点（-ss），进度按 seekBase 换算；
+    // 管道流：续播点直接作为流起点（-ss），进度按 seekBase 换算；
     // 已接近结尾（≥95%）则从头重播（与 direct 的 ready 判定同语义）
     if (resume && file.durationSec && resume >= file.durationSec * 0.95) resume = 0
     seekBase = resume
-    videoSrc.value = mediaService.streamUrl(fileId.value, resume || undefined)
+    videoSrc.value = buildSvcStreamUrl(resume || undefined)
   } else {
     // 直连 Range：浏览器原生 seek
     startAt.value = resume
-    videoSrc.value = mediaService.streamUrl(fileId.value)
+    videoSrc.value = buildSvcStreamUrl()
+  }
+
+  // v0.28 P2 音轨/章节：与字幕轨同策略（枚举失败静默不阻塞播放；单音轨不注入面板）
+  try {
+    const tracks = await mediaService.audioTracks(fileId.value)
+    if (seq !== loadSeq) return
+    if (tracks.length > 1) {
+      audioEntries.value = tracks.map((t) => ({ index: t.index, label: audioTrackLabel(t) }))
+      activeAudio.value = null
+    }
+  } catch {
+    /* 音轨枚举失败不阻塞播放 */
+  }
+  try {
+    const chapters = await mediaService.chapters(fileId.value)
+    if (seq !== loadSeq) return
+    chapterList.value = chapters
+  } catch {
+    /* 章节枚举失败不阻塞播放 */
   }
 
   // v0.23 SB1 内封字幕轨：枚举 + 默认轨（无轨/失败静默——字幕是增强项，不阻塞播放）
@@ -296,6 +352,18 @@ async function loadServiceSource(seq: number) {
   } catch {
     /* 字幕轨枚举失败不阻塞播放 */
   }
+}
+
+/** v0.28 P2 音轨切换：以 audio= 参数重建流（可解编码→转封装 copy+音频 aac；不可解→随转码管道）。
+ *  切轨必然走管道流：seekBase 承接当前绝对位置（直发态 lastPosition 即绝对位置），startAt 归零。 */
+function switchAudio(index: number) {
+  if (!fileId.value || activeAudio.value === index) return
+  activeAudio.value = index
+  const abs = (remux.value ? seekBase : 0) + (lastPosition > 5 ? lastPosition : 0)
+  remux.value = true
+  seekBase = abs
+  startAt.value = 0
+  videoSrc.value = buildSvcStreamUrl(abs > 5 ? abs : undefined, index)
 }
 
 /** v0.26 HN5 在线解析源：视频码 → 服务端解析 watch 页 → 流转发地址（页面解析、Range 透传、
@@ -518,7 +586,9 @@ function applyOnlineSource() {
 /** v0.15 O1 / v0.23 SB0b 源加载失败容灾：
  *  - URL 在线源：未代理过且服务可用 → 自动经代理重试一次（结果不粘性记忆）
  *  - 服务源直发（SB0）：video error 自动降级转封装管道流重试一次（lastPosition 续播；
- *    降级后仍失败才提示不可播——启发式全保留、可播性只增不减） */
+ *    降级后仍失败才提示不可播——启发式全保留、可播性只增不减）
+ *  v0.28 P1：转码态失败直接终态（本就在最重路径上，无更重的兜底）；直发失败降级走
+ *  buildSvcStreamUrl（转码参数随 settings 状态，如开关开着则降级请求仍可能被服务端判转码）。 */
 function onSourceError() {
   if (hanimeCode.value) {
     // v0.26 HN5 在线源：转发流播放失败（签名直链过期/出口失效）——重进即重新解析换新链接
@@ -527,7 +597,9 @@ function onSourceError() {
   }
   if (fileId.value) {
     if (svcFallbackUsed || remux.value) {
-      fatal.value = '视频播放失败——转封装管道流亦不可播（编码或文件损坏）。'
+      fatal.value = transcoded.value
+        ? '转码播放失败——转码任务异常退出（可尝试更换质量档或关闭转码开关后重试）。'
+        : '视频播放失败——转封装管道流亦不可播（编码或文件损坏）。'
       return
     }
     svcFallbackUsed = true
@@ -537,7 +609,7 @@ function onSourceError() {
     if (resume && dur && resume >= dur * 0.95) resume = 0
     seekBase = resume
     startAt.value = 0
-    videoSrc.value = mediaService.streamUrl(fileId.value, resume || undefined)
+    videoSrc.value = buildSvcStreamUrl(resume || undefined)
     return
   }
   if (!urlSource.value) return
@@ -622,13 +694,14 @@ onBeforeUnmount(() => {
   releaseSubtitleUrl()
 })
 
-/** v0.14 remux seek 重拉：外层以 ?t= 重建流（VideoPlayer 经 key 变更重挂载） */
+/** v0.14 remux seek 重拉：外层以 ?t= 重建流（VideoPlayer 经 key 变更重挂载）。
+ *  v0.28：buildSvcStreamUrl 统一携带转码/质量档/音轨参数——转码态与切轨态在重拉路径不丢失。 */
 function onSeekReload(target: number) {
   if (!remux.value || !fileId.value) return
   const abs = seekBase + target
   seekBase = abs
   startAt.value = 0
-  videoSrc.value = mediaService.streamUrl(fileId.value, abs || undefined)
+  videoSrc.value = buildSvcStreamUrl(abs || undefined)
 }
 </script>
 
@@ -682,19 +755,32 @@ function onSeekReload(target: number) {
         :intro-sec="introSec"
         :qualities="qualityOptions"
         :active-res="hanimeRes"
+        :audios="audioEntries.length > 1 ? audioEntries : undefined"
+        :active-audio="activeAudio ?? undefined"
+        :chapters="chapterList.length ? chapterList : undefined"
         @progress="onProgress"
         @seekreload="onSeekReload"
         @sourceerror="onSourceError"
         @qualitychange="switchHanimeRes"
+        @audiochange="switchAudio"
         @ended="onEnded"
       />
       <div class="watch-meta">
         <span class="watch-name">{{ videoTitle }}</span>
         <span class="watch-source" :title="bindingName">来源：{{ bindingName }}</span>
+        <span v-if="transcoded" class="watch-source watch-transcode" title="该文件视频编码浏览器不可解码（如 HEVC/10bit），服务端实时转码播放；seek 起播约 2~3 秒">
+          转码播放（{{ settings.transcodePreset }}）
+        </span>
         <span v-if="hanimeRes" class="watch-source" title="清晰度在播放器「设置 ⚙」内切换">当前 {{ hanimeRes }}p</span>
         <span v-if="onlineProxied" class="watch-source">· 经服务代理</span>
         <span v-if="subtitleEntries.length" class="watch-source" title="字幕轨在播放器「设置 ⚙」内切换">
           字幕 {{ subtitleEntries.length }} 轨
+        </span>
+        <span v-if="audioEntries.length > 1" class="watch-source" title="音轨在播放器「设置 ⚙」内切换">
+          音轨 {{ audioEntries.length }} 轨
+        </span>
+        <span v-if="chapterList.length" class="watch-source" title="章节跳转在播放器「设置 ⚙」内">
+          章节 {{ chapterList.length }}
         </span>
         <span v-if="danmakuItems.length" class="watch-source">弹幕 {{ danmakuItems.length }} 条</span>
         <input ref="dmInput" type="file" accept=".xml,text/xml,application/xml" hidden @change="onDanmakuFile" />
@@ -732,7 +818,7 @@ function onSeekReload(target: number) {
           </div>
         </NPopover>
         <span class="watch-hint">
-          {{ remux ? '转封装流 · 拖动进度将重新加载' : '空格播放/暂停 · ←→ 快进快退 · F 全屏' }} · 看完 95% 自动标记
+          {{ transcoded ? '转码流 · 拖动进度将重新加载（起播约 2~3s）' : remux ? '转封装流 · 拖动进度将重新加载' : '空格播放/暂停 · ←→ 快进快退 · F 全屏' }} · 看完 95% 自动标记
         </span>
       </div>
       <!-- v0.27 A2 系列合集（HN9 转正）：站点 watch 页侧栏播放列表（社團/系列二态），
@@ -836,6 +922,17 @@ function onSeekReload(target: number) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* v0.28 P1 转码播放标注：主色胶囊（用户知情——转码 CPU 占用高、seek 起播有延迟） */
+.watch-transcode {
+  max-width: none;
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: var(--av-primary);
+  border: 1px solid color-mix(in srgb, var(--av-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--av-primary) 12%, transparent);
 }
 
 .watch-hint {

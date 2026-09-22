@@ -34,6 +34,10 @@ export interface SettingsState {
   hanimeNsfw: boolean
   /** v0.27 A3a 在线源清晰度记忆（全局单值，0=未记忆走解析首档=最高档） */
   hanimeRes: number
+  /** v0.28 P1 实时转码：浏览器不可解码编码（HEVC/10bit 等）自动转码播放（默认开；关闭则维持旧路径） */
+  transcodeEnabled: boolean
+  /** v0.28 P1 转码质量档（服务端 libx264 preset 白名单三档；越界由服务端回退 superfast） */
+  transcodePreset: 'superfast' | 'fast' | 'medium'
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -62,6 +66,8 @@ export const DEFAULT_SETTINGS: SettingsState = {
   subFontSize: 40,
   hanimeNsfw: false,
   hanimeRes: 0,
+  transcodeEnabled: true,
+  transcodePreset: 'superfast',
 }
 
 export const useSettingsStore = defineStore('settings', {

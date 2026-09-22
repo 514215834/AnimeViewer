@@ -1,6 +1,6 @@
 # AnimeViewer - 动漫面板
 
-基于 Vue 3 的本地动漫追番面板，数据来源 [Bangumi API](https://github.com/bangumi/api)。当前版本 v0.27，迭代计划见 `docs/功能迭代文档.md`。
+基于 Vue 3 的本地动漫追番面板，数据来源 [Bangumi API](https://github.com/bangumi/api)。当前版本 v0.28，迭代计划见 `docs/功能迭代文档.md`。
 
 ## 技术栈
 
@@ -232,6 +232,16 @@ npm run build   # 类型检查 + 生产构建
 | Bangumi 错误文案 | API 网络层失败（超时/被阻断）转可读提示「Bangumi API 连接失败或被网络阻断」，不再抛 "Failed to fetch" 技术文本 |
 | 标签热度加权 | 详情页标签按全站热度 `total_count` 降序 + 三级字号加权展示 |
 | 收藏状态回读 | 角色/人物详情页回读云端单条收藏状态（换设备收藏后页面即时同步；仅增量补录不动待推队列） |
+
+### v0.28 播放能力补强（已完成，需 AnimeViewerService 0.28+）
+
+| 功能 | 说明 |
+|------|------|
+| HEVC/10bit 实时转码 | 视频编码浏览器不可解（HEVC/10bit/mpeg4/mpeg2 等，扫描时已探明）时服务端 ffmpeg 实时转码 h264+aac 管道播放：设置页开关（默认开）+ 质量档三档（superfast/fast/medium）；播放页「转码播放」如实标注；1080p HEVC-10bit 实测 superfast 6.1x 实时 |
+| 多音轨 | 播放器设置面板「音轨」selector（双轨以上 mkv）：切换换流承接进度（可解编码走视频 copy + 音频 aac 轻管道，不可解随转码管道）；`/api/files/{id}/audios` 枚举（语言/标题/声道） |
+| 章节跳转 | mkv 内嵌章节枚举（`/api/files/{id}/chapters`）+ 播放器设置面板「章节」selector 跳转：直发流原生 seek、转封装/转码流自动重拉承接 |
+| 流端点并发闸 | 在线流转发 2 并发（超限 503 可读文案）+ 实时转码 1 并发（即时拒绝），多标签页/异常客户端不再拖垮宿主机 |
+| 播放器 seek 修复 | 管道流（转封装/转码）拖动进度重拉拦截自 v0.14 起因 artplayer 版本漂移静默失效——拦截下沉到 video 元素层修复（章节跳转实测暴露，直发流不受影响） |
 
 ## 配置说明（Key 可配置化）
 

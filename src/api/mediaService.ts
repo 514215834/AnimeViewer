@@ -135,11 +135,32 @@ export function isDirectExt(ext?: string | null): boolean {
   return !!ext && DIRECT_EXTS.includes(ext.toLowerCase())
 }
 
+/** v0.28 P1 浏览器可解码的视频编码（与服务端 StreamController.PLAYABLE_VCODECS 同口径）。
+ *  扫描落库 vcodec 命中 → 既有直发/转封装路径零回归；未命中（hevc/mpeg4/mpeg2/vc1/未知
+ *  exotic 编码…）→ 转码兜底——浏览器视频解码面基本只有这四种，白名单外转码才能扩大可播面。 */
+export const PLAYABLE_VCODECS = ['h264', 'vp8', 'vp9', 'av1']
+
+/** v0.28 P1 是否需要转码（纯函数，供单测）：vcodec 缺失/空白按可解处理（保守回退旧路径），
+ *  非空白且不在白名单 → 转码。 */
+export function needsTranscode(vcodec?: string | null): boolean {
+  return !!vcodec && !PLAYABLE_VCODECS.includes(vcodec.toLowerCase())
+}
+
+/** 流地址附加参数（v0.28）：transcode=on 启用不可解编码转码；preset 质量档；audio 音轨切换（P2） */
+export interface StreamUrlOpts {
+  transcode?: boolean
+  preset?: string
+  audio?: number
+}
+
 /** 服务流地址：<video> 无法带自定义请求头，Token 走查询参数（局域网个人服务，可接受） */
-export function buildStreamUrl(baseUrl: string, token: string, fileId: number, t?: number): string {
+export function buildStreamUrl(baseUrl: string, token: string, fileId: number, t?: number, opts?: StreamUrlOpts): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
   const qs = new URLSearchParams({ token })
   if (t && t > 0) qs.set('t', String(Math.floor(t)))
+  if (opts?.transcode) qs.set('transcode', 'on')
+  if (opts?.preset) qs.set('preset', opts.preset)
+  if (opts?.audio !== undefined && opts.audio >= 0) qs.set('audio', String(opts.audio))
   return `${base}/api/stream/${fileId}?${qs.toString()}`
 }
 
@@ -186,6 +207,24 @@ export interface SvcSubtitleTrack {
 export function buildSubtitleUrl(baseUrl: string, token: string, fileId: number, track: number): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
   return `${base}/api/files/${fileId}/subtitle/${track}?token=${encodeURIComponent(token)}`
+}
+
+/* ── v0.28 P2 多音轨与章节 ── */
+
+export interface SvcAudioTrack {
+  /** 音轨序号（0 基，与服务端 -map 0:a:N 同口径，非流 index） */
+  index: number
+  codec?: string | null
+  channels?: number | null
+  language?: string | null
+  title?: string | null
+}
+
+export interface SvcChapter {
+  /** 文件绝对秒 */
+  start: number
+  end: number
+  title?: string | null
 }
 
 /* ── v0.16 DN2/DN3 下载中心（类型与服务端 Dtos.java 一一对应）── */
@@ -456,6 +495,15 @@ export const mediaService = {
     const { svcUrl, svcToken } = useSettingsStore()
     return buildSubtitleUrl(svcUrl, svcToken, id, track)
   },
+
+  /* ── v0.28 P2 多音轨与章节 ── */
+
+  audioTracks(id: number): Promise<SvcAudioTrack[]> {
+    return request<{ tracks: SvcAudioTrack[] }>(`/api/files/${id}/audios`).then((r) => r.tracks)
+  },
+  chapters(id: number): Promise<SvcChapter[]> {
+    return request<{ chapters: SvcChapter[] }>(`/api/files/${id}/chapters`).then((r) => r.chapters)
+  },
   match(fileId: number, subjectId: number, sort: number): Promise<void> {
     return post<void>(`/api/files/${fileId}/match`, { subjectId, sort })
   },
@@ -477,9 +525,9 @@ export const mediaService = {
     return request<{ list: SvcBangumiEpisode[] }>(`/api/bangumi/subjects/${subjectId}/episodes`).then((r) => r.list)
   },
 
-  streamUrl(fileId: number, t?: number): string {
+  streamUrl(fileId: number, t?: number, opts?: StreamUrlOpts): string {
     const { svcUrl, svcToken } = useSettingsStore()
-    return buildStreamUrl(svcUrl, svcToken, fileId, t)
+    return buildStreamUrl(svcUrl, svcToken, fileId, t, opts)
   },
 
   /** v0.15 O1 在线源代理地址：服务未配置返回空串（调用方据此提示） */
