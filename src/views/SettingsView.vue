@@ -509,6 +509,7 @@ function save() {
     autoNext: draft.autoNext,
     transcodeEnabled: draft.transcodeEnabled,
     transcodePreset: draft.transcodePreset,
+    updateNotify: draft.updateNotify,
   })
   Object.assign(draft, settings.$state)
   clearApiCache()
@@ -734,6 +735,23 @@ async function onImportFile(ev: Event) {
                   { label: '质量档：medium（最清晰）', value: 'medium' },
                 ]"
               />
+            </div>
+          </div>
+        </NFormItem>
+
+        <!-- v0.29 Q2 更新提醒（本机设置，随「保存设置」生效） -->
+        <NFormItem label="更新提醒">
+          <div class="playback-box">
+            <NSwitch v-model:value="draft.updateNotify">
+              <template #checked>开</template>
+              <template #unchecked>关</template>
+            </NSwitch>
+            <div class="playback-hint">
+              <span class="playback-hint-title">今日更新提醒</span>
+              <span>
+                启动或切回应用时，追番库中今日有新话且未看完的条目 toast 提醒一次（每天至多一次，默认开）；
+                关闭后零打扰
+              </span>
             </div>
           </div>
         </NFormItem>

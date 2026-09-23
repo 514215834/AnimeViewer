@@ -10,6 +10,8 @@ import { useLibraryStore } from '../stores/library'
 import type { WatchStatus } from '../stores/library'
 import type { CalendarDay, CalendarSubject } from '../types/bangumi'
 import { coverCardUrl } from '../utils/image'
+import { useAirtimes } from '../utils/airtimeStore'
+import type { AirTime } from '../utils/airtime'
 import { listBindings } from '../utils/mediaStore'
 import PosterImage from '../components/PosterImage.vue'
 import EmptyHint from '../components/EmptyHint.vue'
@@ -48,7 +50,6 @@ interface TrackedItem {
   addedAt: number
   dirtyAt?: number
 }
-
 /** 周历条目 → 追番库条目连接（按 subjectId）；返回 null 表示未加追 */
 function joinEntry(cal: CalendarSubject): TrackedItem | null {
   const e = library.entry(cal.id)
@@ -78,6 +79,55 @@ const todayItems = computed(() =>
     (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.addedAt - a.addedAt,
   ),
 )
+
+/* ── v0.29 Q1 今日页时间轴（Q2 汇总条复用 todayItems）── */
+const airtimes = useAirtimes(() => todayItems.value.map((x) => x.cal.id))
+
+function airtime(id: number): AirTime | null | undefined {
+  return airtimes.value.get(id)
+}
+
+/** 展示时刻（保留 24+ 原貌，如「24:30」）；无时刻数据返回 '—' */
+function timeText(item: TrackedItem): string {
+  const t = airtime(item.cal.id)
+  if (!t?.timed || t.hour === undefined) return '—'
+  return `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`
+}
+
+/** 已过判定（定案 3）：常规时刻与当前分钟比较；24+ 深夜档实际播于次日凌晨，今日列表内恒为未播 */
+function isPast(item: TrackedItem): boolean {
+  const t = airtime(item.cal.id)
+  if (!t?.timed || t.hour === undefined) return false
+  if (t.hour >= 24) return false
+  const now = new Date()
+  return t.hour * 60 + t.minute <= now.getHours() * 60 + now.getMinutes()
+}
+
+/** 时间轴排序：有时刻条目按时刻升序（24+ 深夜档排同日末段），无时刻条目保持原顺序垫后 */
+const timelineItems = computed(() =>
+  todayItems.value
+    .map((it, i) => ({ it, i }))
+    .sort((a, b) => timeOrder(a.it) - timeOrder(b.it) || a.i - b.i)
+    .map((x) => x.it),
+)
+
+function timeOrder(item: TrackedItem): number {
+  const t = airtime(item.cal.id)
+  return t?.timed && t.hour !== undefined ? t.hour * 60 + t.minute : Number.MAX_SAFE_INTEGER
+}
+
+/** 分界线位置：已过条目数量（0 或全部时不渲染分界线） */
+const pastCount = computed(() => timelineItems.value.filter((it) => isPast(it)).length)
+const showDivider = computed(() => pastCount.value > 0 && pastCount.value < timelineItems.value.length)
+
+/* ── v0.29 Q2 今日待看汇总条：追番条目今日有更新且未看过 → 计数 + 一键展开 ── */
+const todaySectionEl = ref<HTMLElement | null>(null)
+const pendingToday = computed(() =>
+  todayItems.value.filter((it) => it.status === 'doing' && (it.epsTotal > 0 ? it.progress < it.epsTotal : true)),
+)
+function expandToday() {
+  todaySectionEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 /** 本周各天的追番命中（今日为空时展示） */
 const weekGroups = computed(() =>
@@ -209,31 +259,46 @@ function continueWatch(id: number) {
       <div class="stat-card"><div class="stat-num">{{ stats.weekCount }}</div><div class="stat-label">本周更新部数</div></div>
     </section>
 
-    <!-- ② 今日更新：周历 ∩ 追番库 -->
-    <section class="today-section">
+    <!-- v0.29 Q2 今日待看汇总条：追番条目今日有更新且未看过 → 计数 + 一键展开 -->
+    <section v-if="pendingToday.length" class="pending-bar" role="status">
+      <span class="pending-dot" aria-hidden="true" />
+      <span class="pending-text">
+        今日待看：<b>{{ pendingToday.length }}</b> 部追番有更新未看完
+      </span>
+      <NButton size="tiny" round type="primary" secondary @click="expandToday">展开今日更新</NButton>
+    </section>
+
+    <!-- ② 今日更新：周历 ∩ 追番库（v0.29 Q1 时间轴形态：有时刻按时刻升序 + 已过/未播分界线；无时刻回退既有排序） -->
+    <section ref="todaySectionEl" class="today-section">
       <h3 class="section-title">
         今日更新
         <NTag v-if="todayItems.length" size="tiny" :bordered="false" round>{{ todayItems.length }}</NTag>
       </h3>
-      <template v-if="todayItems.length">
-        <div v-for="it in todayItems" :key="it.cal.id" class="today-row" @click="open(it.cal.id)">
-          <div class="row-poster">
-            <PosterImage :src="coverCardUrl(it.cal.images, settings.imageQuality)" :title="it.cal.name_cn || it.cal.name" :subject-id="it.cal.id" />
+      <template v-if="timelineItems.length">
+        <template v-for="(it, idx) in timelineItems" :key="it.cal.id">
+          <div v-if="idx === pastCount && showDivider" class="time-divider" role="separator">
+            <span>↑ 已过 · 以下未播</span>
           </div>
-          <div class="row-info">
-            <div class="row-title">
-              {{ it.cal.name_cn || it.cal.name }}
-              <NTag size="tiny" :type="it.status === 'doing' ? 'success' : it.status === 'wish' ? 'info' : 'default'" :bordered="false">
-                {{ STATUS_LABEL[it.status] }}
-              </NTag>
-              <NTag v-if="it.myRate && it.myRate > 0" size="tiny" type="warning" :bordered="false" round>我的 ★{{ it.myRate }}</NTag>
+          <div class="today-row timeline-row" :class="{ aired: isPast(it) }" @click="open(it.cal.id)">
+            <span class="row-time" :class="{ unknown: !airtime(it.cal.id)?.timed }">{{ timeText(it) }}</span>
+            <div class="row-poster">
+              <PosterImage :src="coverCardUrl(it.cal.images, settings.imageQuality)" :title="it.cal.name_cn || it.cal.name" :subject-id="it.cal.id" />
             </div>
-            <div class="row-sub">
-              进度 {{ it.progress }}{{ it.epsTotal > 0 ? ` / ${it.epsTotal}` : '' }} 话 · {{ nextEpText(it) }}
+            <div class="row-info">
+              <div class="row-title">
+                {{ it.cal.name_cn || it.cal.name }}
+                <NTag size="tiny" :type="it.status === 'doing' ? 'success' : it.status === 'wish' ? 'info' : 'default'" :bordered="false">
+                  {{ STATUS_LABEL[it.status] }}
+                </NTag>
+                <NTag v-if="it.myRate && it.myRate > 0" size="tiny" type="warning" :bordered="false" round>我的 ★{{ it.myRate }}</NTag>
+              </div>
+              <div class="row-sub">
+                进度 {{ it.progress }}{{ it.epsTotal > 0 ? ` / ${it.epsTotal}` : '' }} 话 · {{ nextEpText(it) }}
+              </div>
             </div>
+            <span class="row-arrow"><NIcon :component="ChevronForwardOutline" /></span>
           </div>
-          <span class="row-arrow"><NIcon :component="ChevronForwardOutline" /></span>
-        </div>
+        </template>
       </template>
       <EmptyHint v-else-if="!loading" text="今天没有追番更新" sub="看看本周其他日子 ↓" />
 
@@ -431,6 +496,83 @@ function continueWatch(id: number) {
   transform: translateX(2px);
   color: var(--av-primary-hover);
   background: var(--av-primary-soft);
+}
+
+/* ── v0.29 Q1 时间轴形态：左侧时刻列 + 已过/未播分界线 ── */
+.timeline-row.aired {
+  opacity: 0.62;
+}
+
+.row-time {
+  flex: none;
+  width: 44px;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--av-primary);
+  background: var(--av-primary-soft);
+  border: 1px solid var(--av-ring);
+  border-radius: 8px;
+  padding: 3px 0;
+  align-self: center;
+}
+
+.row-time.unknown {
+  color: var(--av-text-tertiary);
+  background: transparent;
+  border-color: var(--av-border);
+  font-weight: 400;
+}
+
+.time-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  color: var(--av-text-tertiary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.time-divider::before,
+.time-divider::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: var(--av-border);
+}
+
+/* ── v0.29 Q2 今日待看汇总条 ── */
+.pending-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  border: 1px solid var(--av-ring);
+  background: var(--av-primary-soft);
+}
+
+.pending-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--av-primary);
+  box-shadow: 0 0 8px rgba(138, 123, 255, 0.8);
+  flex: none;
+}
+
+.pending-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--av-text);
+}
+
+.pending-text b {
+  color: var(--av-primary-hover);
+  font-size: 15px;
 }
 
 .week-group {

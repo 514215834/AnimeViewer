@@ -9,6 +9,8 @@ import { useNsfwStore } from '../stores/nsfw'
 import { useSettingsStore } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
 import { coverCardUrl } from '../utils/image'
+import { useAirtimes } from '../utils/airtimeStore'
+import type { AirTime } from '../utils/airtime'
 import type { CalendarDay } from '../types/bangumi'
 import AnimeCard from '../components/AnimeCard.vue'
 import EmptyHint from '../components/EmptyHint.vue'
@@ -40,9 +42,32 @@ const currentItems = computed(() => {
   return days.value.find((d) => d.weekday.id === day)?.items ?? []
 })
 
+/** v0.29 Q1 时刻解析（infobox 随详情缓存走；普查定案现网无时刻数据，全部回退星期粒度） */
+const airtimes = useAirtimes(() => currentItems.value.map((i) => i.id))
+
+/** 时刻徽章文本（如「24:30」保留深夜档原貌）；无时刻返回 undefined */
+function timeBadge(id: number): string | undefined {
+  const t = airtimes.value.get(id)
+  if (!t?.timed || t.hour === undefined) return undefined
+  return `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`
+}
+
+/** 同日按时刻排序（有时刻条目升序在前，无时刻保持原顺序跟后；普查定案下现实数据全部无时刻 → 零回归） */
+function timeOrder(id: number): number {
+  const t: AirTime | null | undefined = airtimes.value.get(id)
+  return t?.timed && t.hour !== undefined ? t.hour * 60 + t.minute : Number.MAX_SAFE_INTEGER
+}
+
+const sortedItems = computed(() =>
+  currentItems.value
+    .map((it, i) => ({ it, i }))
+    .sort((a, b) => timeOrder(a.it.id) - timeOrder(b.it.id) || a.i - b.i)
+    .map((x) => x.it),
+)
+
 /** 应用 R18 过滤后的可见列表 */
 const visibleItems = computed(() =>
-  settings.hideNsfw ? currentItems.value.filter((x) => !nsfw.isNsfw(x.id)) : currentItems.value,
+  settings.hideNsfw ? sortedItems.value.filter((x) => !nsfw.isNsfw(x.id)) : sortedItems.value,
 )
 
 onMounted(load)
@@ -133,6 +158,7 @@ function open(id: number) {
               :poster="coverCardUrl(it.images, settings.imageQuality)"
               :score="it.rating?.score"
               :extra="airText(it)"
+              :time-badge="timeBadge(it.id)"
               :in-library="library.has(it.id)"
               :progress-ratio="progressRatio(it.id)"
               @open="open"

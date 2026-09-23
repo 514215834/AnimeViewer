@@ -30,6 +30,8 @@ export { isDemoCharacterId, isDemoPersonId, isDemoSubjectId }
 
 interface DemoSubject extends CalendarSubject {
   tags: { name: string; count: number }[]
+  /** v0.29 Q1 演示用放送时刻原文（如「2026-07-05 星期一 24:30」）；缺省回退 air_date（对应现网无时刻数据的回退态走查） */
+  airTimeText?: string
 }
 
 /** 内置演示数据：虚构番剧，用于离线体验与 UI 验证 */
@@ -37,6 +39,7 @@ const DEMO_SUBJECTS: DemoSubject[] = [
   {
     id: 900001, name: 'Starlight Pact', name_cn: '星轨之约', type: 2, eps: 12,
     air_date: '2026-07-05', air_weekday: 1, date: '2026-07-05',
+    airTimeText: '2026-07-05 星期一 24:30',
     rating: { score: 8.2, total: 3210, rank: 412 }, collection: { wish: 5600, doing: 5200, done: 880 },
     summary: '夜空中突然出现了一条不属于任何星图的轨迹。少女天文社的成员们发现，只有许下约定的人才能看见那条星轨背后隐藏的世界。',
     tags: [{ name: '原创', count: 210 }, { name: '奇幻', count: 180 }, { name: '治愈', count: 96 }],
@@ -44,6 +47,7 @@ const DEMO_SUBJECTS: DemoSubject[] = [
   {
     id: 900002, name: 'Spicy Hot Pot Girls', name_cn: '麻辣火锅少女', type: 2, eps: 12,
     air_date: '2026-07-05', air_weekday: 1, date: '2026-07-05',
+    airTimeText: '2026-07-05 21:00',
     rating: { score: 7.1, total: 1540, rank: 1980 }, collection: { wish: 2100, doing: 2300, done: 640 },
     summary: '三家火锅店为了争夺老街的黄金铺面，派出各自最擅做火锅的少女展开厨艺对决，却在一次次比赛中变成了最好的朋友。',
     tags: [{ name: '原创', count: 88 }, { name: '搞笑', count: 76 }, { name: '日常', count: 41 }],
@@ -51,6 +55,7 @@ const DEMO_SUBJECTS: DemoSubject[] = [
   {
     id: 900003, name: 'Pixel Love Song', name_cn: '像素恋歌', type: 2, eps: 13,
     air_date: '2026-07-06', air_weekday: 2, date: '2026-07-06',
+    airTimeText: '2026年7月6日 23:30',
     rating: { score: 7.8, total: 2210, rank: 980 }, collection: { wish: 3300, doing: 4100, done: 1120 },
     summary: '一台只会输出像素画的老旧街机，竟能让玩家进入游戏内部世界。男主角在游戏里遇见了只能存在于 8-bit 世界中的女孩。',
     tags: [{ name: '游戏改', count: 132 }, { name: '恋爱', count: 118 }, { name: '科幻', count: 55 }],
@@ -65,6 +70,7 @@ const DEMO_SUBJECTS: DemoSubject[] = [
   {
     id: 900005, name: 'Iron Swallowtail', name_cn: '钢铁燕尾蝶', type: 2, eps: 24,
     air_date: '2026-04-03', air_weekday: 3, date: '2026-04-03',
+    airTimeText: '2026年4月3日 25:30',
     rating: { score: 7.4, total: 1980, rank: 1520 }, collection: { wish: 2600, doing: 3100, done: 990 },
     summary: '在被机械蜂群支配的天空下，少年驾驶着最后一台蝶形装甲机，守护着一座仍然相信春天的城市。',
     tags: [{ name: '漫画改', count: 140 }, { name: '热血', count: 122 }, { name: '机战', count: 87 }],
@@ -72,6 +78,7 @@ const DEMO_SUBJECTS: DemoSubject[] = [
   {
     id: 900006, name: 'Neko Convenience Store', name_cn: '猫咪便利屋', type: 2, eps: 13,
     air_date: '2026-04-03', air_weekday: 3, date: '2026-04-03',
+    airTimeText: '2026年4月3日 12:00',
     rating: { score: 8.0, total: 3010, rank: 655 }, collection: { wish: 4200, doing: 5600, done: 1780 },
     summary: '只在深夜营业的便利屋里，店长是一只戴着领结的猫。每位深夜到访的客人，都会带着一个烦恼进来，带着一份温暖离开。',
     tags: [{ name: '漫画改', count: 165 }, { name: '治愈', count: 150 }, { name: '日常', count: 121 }],
@@ -149,7 +156,7 @@ function toDetail(s: DemoSubject): SubjectDetail {
     infobox: [
       { key: '中文名', value: s.name_cn },
       { key: '话数', value: String(s.eps) },
-      { key: '放送开始', value: s.air_date ?? '未知' },
+      { key: '放送开始', value: s.airTimeText ?? s.air_date ?? '未知' },
       { key: '制作', value: 'DEMO STUDIO（演示数据）' },
     ],
     series: false,

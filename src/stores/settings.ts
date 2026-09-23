@@ -38,6 +38,8 @@ export interface SettingsState {
   transcodeEnabled: boolean
   /** v0.28 P1 转码质量档（服务端 libx264 preset 白名单三档；越界由服务端回退 superfast） */
   transcodePreset: 'superfast' | 'fast' | 'medium'
+  /** v0.29 Q2 更新提醒：启动/切回应用时今日追番有新话的 toast 提醒（默认开） */
+  updateNotify: boolean
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -68,6 +70,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   hanimeRes: 0,
   transcodeEnabled: true,
   transcodePreset: 'superfast',
+  updateNotify: true,
 }
 
 export const useSettingsStore = defineStore('settings', {

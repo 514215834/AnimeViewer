@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { NButton, NIcon, NInputNumber, NPagination, NPopconfirm, NRadioButton, NRadioGroup, NSelect, NTag } from 'naive-ui'
@@ -9,6 +9,9 @@ import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
 import type { CollectedCharacter, CollectedPerson, WatchStatus } from '../stores/library'
 import { isDemoCharacterId, isDemoPersonId } from '../api/demoIds'
+import { dataSource } from '../api/dataSource'
+import { useAirtimes } from '../utils/airtimeStore'
+import type { CalendarDay } from '../types/bangumi'
 import { upgradeStoredCover } from '../utils/image'
 import { careerLabel } from '../utils/career'
 import PosterImage from '../components/PosterImage.vue'
@@ -77,6 +80,35 @@ const shown = computed(() => {
 
 function open(id: number) {
   router.push({ name: 'subject', params: { id: String(id) } })
+}
+
+/* ── v0.29 Q1 追番库行下次放送：周历（5min TTL 缓存）取放送日 + infobox 时刻（随详情缓存走）；无数据不显示 ── */
+const calWeekday = ref(new Map<number, number>())
+const WD_CN = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
+
+onMounted(async () => {
+  try {
+    const days: CalendarDay[] = await dataSource.calendar()
+    const m = new Map<number, number>()
+    for (const d of days) for (const it of d.items) m.set(it.id, d.weekday.id)
+    calWeekday.value = m
+  } catch {
+    // 周历不可达：下次放送列整体隐藏（防御降级）
+  }
+})
+
+const airtimes = useAirtimes(() => shown.value.map((e) => e.subjectId))
+
+/** 下次放送文本：「周六 24:30」/「周六更新」（无时刻回退）/ ''（无数据） */
+function nextAirText(subjectId: number): string {
+  const wd = calWeekday.value.get(subjectId)
+  const t = airtimes.value.get(subjectId)
+  const day = wd ? WD_CN[wd] : ''
+  if (t?.timed && t.hour !== undefined) {
+    const hm = `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`
+    return day ? `${day} ${hm}` : hm
+  }
+  return day ? `${day} 更新` : ''
 }
 
 function openCharacter(id: number) {
@@ -208,6 +240,9 @@ function removePerson(id: number, title: string) {
             </span>
             <span v-if="e.score" class="lib-score">★ {{ e.score.toFixed(1) }}</span>
             <span v-if="e.myRate" class="lib-mine" title="我的评分">我的 ★{{ e.myRate }}</span>
+          </div>
+          <div v-if="nextAirText(e.subjectId)" class="lib-nextair">
+            <span class="lib-nextair-chip">下次放送</span>{{ nextAirText(e.subjectId) }}
           </div>
           <div class="lib-controls">
             <NSelect
@@ -510,6 +545,28 @@ function removePerson(id: number, title: string) {
   font-size: 12px;
   font-weight: 600;
   color: #ffd75e;
+  flex-shrink: 0;
+}
+
+/* v0.29 Q1 下次放送行：主色小徽章 + 时刻文本 */
+.lib-nextair {
+  font-size: 12px;
+  color: var(--av-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lib-nextair-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--av-primary);
+  border: 1px solid var(--av-ring);
+  background: var(--av-primary-soft);
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 16px;
   flex-shrink: 0;
 }
 
