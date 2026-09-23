@@ -8,8 +8,6 @@ defineProps<{
   poster?: string
   score?: number
   extra?: string
-  /** v0.29 Q1 放送时刻徽章（如「24:30」，无时刻数据不渲染） */
-  timeBadge?: string
   /** H1 已追标记：该条目在追番库中时于海报左上角显示徽章（由调用方传入，组件不感知 store） */
   inLibrary?: boolean
   /** v0.12 B5 在追进度线：progress/epsTotal 比值（0~1），>0 时海报底部渲染渐变进度条（纯展示） */
@@ -42,7 +40,6 @@ function scoreText(score?: number): string {
     <div class="card-info">
       <div class="card-title" :title="title">{{ title }}</div>
       <div v-if="original && original !== title" class="card-sub" :title="original">{{ original }}</div>
-      <div v-if="timeBadge" class="card-time-badge">{{ timeBadge }}</div>
       <div v-if="extra" class="card-extra">{{ extra }}</div>
     </div>
   </div>
@@ -181,19 +178,5 @@ html.light .score-badge {
   font-size: 12px;
   color: var(--av-text-tertiary);
   margin-top: 2px;
-}
-
-/* v0.29 Q1 放送时刻徽章：主色描边小胶囊 */
-.card-time-badge {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--av-primary);
-  border: 1px solid var(--av-ring);
-  background: var(--av-primary-soft);
-  border-radius: 999px;
-  padding: 1px 8px;
-  margin-top: 6px;
 }
 </style>
