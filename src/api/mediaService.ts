@@ -746,6 +746,17 @@ export const mediaService = {
   aiResolveRss(id: number, text: string): Promise<{ source: 'rule' | 'ai' | 'none'; rssUrl?: string; message?: string }> {
     return post(`/api/subscriptions/${id}/ai-rss`, { text })
   },
+  /** v0.30 补记一：AI 解析站点接入配置（站点管理「AI 解析」按钮；规则映射优先 + LLM 兜底，结果仅预填表单） */
+  aiFillSite(text: string): Promise<{
+    source: 'rule' | 'ai' | 'none'
+    key?: string | null
+    name?: string | null
+    baseUrl?: string | null
+    searchTemplate?: string | null
+    message?: string
+  }> {
+    return post('/api/resources/sites/ai-fill', { text })
+  },
 
   /* ── v0.26 HN1/HN3 hanime1.me 在线解析（配置 / 测试 / 搜索 / 解析 / 流地址）── */
 

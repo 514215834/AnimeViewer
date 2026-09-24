@@ -160,6 +160,33 @@ async function submitSave() {
   }
 }
 
+/* ── v0.30 补记一 AI 解析站点配置（结果仅预填表单，测试连通与保存仍人工把关） ── */
+
+const aiFilling = ref(false)
+
+async function runAiFill() {
+  const st = formState.value
+  const text = st?.form.baseUrl.trim()
+  if (!st || !text || aiFilling.value) return
+  aiFilling.value = true
+  try {
+    const r = await mediaService.aiFillSite(text)
+    if (r.baseUrl && r.searchTemplate) {
+      st.form.baseUrl = r.baseUrl
+      st.form.searchTemplate = r.searchTemplate
+      st.form.key = st.form.key.trim() || (r.key ?? '')
+      st.form.name = st.form.name.trim() || (r.name ?? '')
+      message.success(r.message || 'AI 已推导站点配置（测试连通后保存）')
+    } else {
+      message.warning(r.message || '无法解析出站点配置')
+    }
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : 'AI 解析失败（需先在设置页启用 AI）')
+  } finally {
+    aiFilling.value = false
+  }
+}
+
 /* ── 删除（内置不可删）── */
 
 async function removeSite(site: SvcResourceSite) {
@@ -289,13 +316,25 @@ const formTitle = computed(() => (formState.value?.editing ? '编辑站点' : '�
 
         <div class="rsm-field">
           <span class="rsm-label">站点地址（http(s)://）</span>
-          <NInput
-            v-model:value="formState.form.baseUrl"
-            size="small"
-            :disabled="busy"
-            placeholder="https://example.org"
-            :status="errors.baseUrl ? 'error' : undefined"
-          />
+          <div class="rsm-test-row">
+            <NInput
+              v-model:value="formState.form.baseUrl"
+              size="small"
+              :disabled="busy"
+              placeholder="https://example.org"
+              :status="errors.baseUrl ? 'error' : undefined"
+              @keyup.enter="runAiFill"
+            />
+            <!-- v0.30 补记一：贴站点地址后 AI 推导其余参数（名称/搜索模板/key），仅预填人工把关 -->
+            <NButton
+              size="small"
+              secondary
+              :disabled="!formState.form.baseUrl.trim() || busy"
+              :loading="aiFilling"
+              title="从站点地址推导名称与搜索模板（已知站点规则映射优先，未知站点 AI 兜底；结果仅预填，测试连通后保存）"
+              @click="runAiFill"
+            >AI 解析</NButton>
+          </div>
           <span v-if="errors.baseUrl" class="rsm-error">{{ errors.baseUrl }}</span>
         </div>
 
