@@ -463,6 +463,8 @@ async function aiGenerateKeywords(s: SvcSubscription) {
 const rssEditId = ref<number | null>(null)
 const rssDraft = ref('')
 const rssSaving = ref(false)
+/* v0.30 A6 AI 解析订阅地址：粘贴条目页/搜索页 URL → 规则映射优先 + AI 兜底，结果仅预填人工保存 */
+const rssAiBusy = ref(false)
 
 function openRssEditor(s: SvcSubscription) {
   rssEditId.value = s.id
@@ -471,6 +473,25 @@ function openRssEditor(s: SvcSubscription) {
 
 function closeRssEditor() {
   rssEditId.value = null
+}
+
+async function aiResolveRss(s: SvcSubscription) {
+  const text = rssDraft.value.trim()
+  if (!text || rssAiBusy.value) return
+  rssAiBusy.value = true
+  try {
+    const r = await mediaService.aiResolveRss(s.id, text)
+    if (r.rssUrl) {
+      rssDraft.value = r.rssUrl
+      message.success(r.message || 'AI 已解析出 RSS 地址（人工确认后保存）')
+    } else {
+      message.warning(r.message || '无法解析出 RSS 地址')
+    }
+  } catch (e) {
+    message.error(e instanceof ServiceError ? e.message : 'AI 解析失败（需先在设置页启用 AI）')
+  } finally {
+    rssAiBusy.value = false
+  }
 }
 
 async function saveRssUrl(s: SvcSubscription) {
@@ -939,6 +960,10 @@ onBeforeUnmount(() => {
               </div>
               <NInput v-model:value="rssDraft" size="small" clearable placeholder="https://mikanani.me/RSS/Bangumi?bangumiId=…" />
               <div class="kw-ops">
+                <!-- v0.30 A6 AI 解析订阅地址（规则映射优先 + AI 兜底，结果仅预填） -->
+                <NButton size="tiny" secondary :disabled="!rssDraft.trim() || rssSaving" :loading="rssAiBusy"
+                         title="从粘贴的条目页/搜索页地址解析 RSS 订阅地址（规则映射优先，未知站点 AI 兜底；结果仅预填）"
+                         @click="aiResolveRss(s)">AI 解析</NButton>
                 <NButton size="tiny" quaternary :disabled="rssSaving" @click="closeRssEditor()">取消</NButton>
                 <NButton size="tiny" type="primary" secondary :loading="rssSaving" @click="saveRssUrl(s)">保存</NButton>
               </div>

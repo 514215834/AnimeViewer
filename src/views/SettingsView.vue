@@ -347,9 +347,12 @@ async function saveSubscriptionSettings() {
   }
 }
 
-/* ── v0.22 AI 分析剧集（AI0 Provider 设置：OpenAI 兼容接口 + 配额护栏 + 自动忽略开关） ── */
+/* ── v0.22 AI 分析剧集（AI0 Provider 设置：OpenAI 兼容接口 + 配额护栏 + 自动忽略开关） ──
+ *  v0.30 A5/A7：maxTokens 上限 + 连通测试 + 累计调用统计 + 媒体库自动绑定阈值 */
 const aiSaving = ref(false)
 const aiError = ref('')
+const aiPinging = ref(false)
+const aiPingResult = ref('')
 const ai = reactive({
   enabled: false,
   baseUrl: 'https://api.openai.com/v1',
@@ -361,6 +364,9 @@ const ai = reactive({
   ready: false,
   callsThisHour: 0,
   extraHeaders: '',
+  maxTokens: 512,
+  aiBindThreshold: 85,
+  totalCalls: 0,
 })
 
 async function loadAiSettings() {
@@ -388,6 +394,9 @@ async function saveAiSettings() {
       ready: false,
       callsThisHour: 0,
       extraHeaders: ai.extraHeaders,
+      maxTokens: Math.max(0, Number(ai.maxTokens) || 0),
+      aiBindThreshold: Math.max(0, Math.min(100, Number(ai.aiBindThreshold) || 0)),
+      totalCalls: 0,
     })
     Object.assign(ai, s)
     message.success(s.ready ? 'AI 设置已保存，服务就绪' : '设置已保存（未就绪：需开启开关并填写接口地址与模型）')
@@ -395,6 +404,21 @@ async function saveAiSettings() {
     aiError.value = e instanceof ServiceError ? e.message : String(e)
   } finally {
     aiSaving.value = false
+  }
+}
+
+async function pingAi() {
+  aiPinging.value = true
+  aiPingResult.value = ''
+  try {
+    const r = await mediaService.aiPing()
+    aiPingResult.value = r.ok
+      ? `连通正常（${r.model}，${r.latencyMs}ms）${r.message && r.message !== 'pong' ? ` · ${r.message}` : ''}`
+      : `连通失败：${r.message || '未知原因'}`
+  } catch (e) {
+    aiPingResult.value = `连通失败：${e instanceof ServiceError ? e.message : String(e)}`
+  } finally {
+    aiPinging.value = false
   }
 }
 
@@ -973,6 +997,14 @@ async function onImportFile(ev: Event) {
                   <template #prefix>配额</template>
                 </NInputNumber>
               </div>
+              <div class="sub-row2">
+                <NInputNumber v-model:value="ai.maxTokens" :min="0" :max="32768" placeholder="0=不注入">
+                  <template #prefix>max_tokens</template>
+                </NInputNumber>
+                <NInputNumber v-model:value="ai.aiBindThreshold" :min="0" :max="100" placeholder="0=关闭自动绑定">
+                  <template #prefix>绑定阈值</template>
+                </NInputNumber>
+              </div>
               <div class="sub-row2" style="grid-column: 1 / -1">
                 <NInput v-model:value="ai.extraHeaders" type="textarea" :rows="2"
                         placeholder="自定义请求头（每行「名称: 值」，如非标网关通道需 x-opencode-session: 会话标识；普通 OpenAI/Ollama 留空）" />
@@ -985,16 +1017,19 @@ async function onImportFile(ev: Event) {
             </div>
             <div class="svc-status ai-status">
               <template v-if="aiError"><span class="svc-err">{{ aiError }}</span></template>
-              <span v-else-if="ai.ready" class="svc-ok">AI 已就绪（{{ ai.model }}）· 本小时调用 {{ ai.callsThisHour }} 次</span>
+              <span v-else-if="ai.ready" class="svc-ok">AI 已就绪（{{ ai.model }}）· 本小时调用 {{ ai.callsThisHour }} 次 · 累计 {{ ai.totalCalls }} 次</span>
               <span v-else class="svc-muted">未就绪——开启开关并填写 OpenAI 兼容接口地址与模型名；判定一次落库缓存，失败静默降级为启发式</span>
+              <span v-if="aiPingResult" :class="/^连通正常/.test(aiPingResult) ? 'svc-ok' : 'svc-err'">{{ aiPingResult }}</span>
               <div class="btn-row ai-btn-row">
+                <NButton secondary size="small" :loading="aiPinging" :disabled="!settings.svcEnabled || !ai.ready" @click="pingAi">测试连通</NButton>
                 <NButton secondary size="small" :loading="aiSaving" :disabled="!settings.svcEnabled" @click="saveAiSettings">保存 AI 设置</NButton>
               </div>
             </div>
             <div class="svc-tip">
               就绪后：① 订阅命中自动做「本篇/主题曲/非本篇」语义判定（命中行 AI 徽章，评分达标的非本篇命中不再自动入队）；
               ② 订阅扩展检索词可 AI 生成（罗马字/英文名候选，修复中文名全句在 RSS 子串匹配下查不到的问题）；
-              ③ 媒体库未识别文件可 AI 解析文件名（人工确认绑定）。判定仅在待确认落库时调用一次并缓存，不会重复烧钱。
+              ③ 媒体库未识别文件可 AI 解析文件名，解析结果带「匹配置信度」——≥ 绑定阈值（默认 85，0=关闭）直接自动绑定并标注来源，低于阈值留待确认；
+              ④ 下载中心 RSS 直链弹层可 AI 解析订阅地址（规则映射优先）。判定仅在落库时调用一次并缓存，不会重复烧钱。
             </div>
           </div>
         </NFormItem>

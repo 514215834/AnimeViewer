@@ -82,6 +82,10 @@ export interface SvcFile {
   /** v0.16 DN5 来源下载任务溯源 */
   downloadTaskId?: number
   downloadTaskName?: string
+  /** v0.30 A7 AI 解析候选匹配置信度（0~100，null=未评分） */
+  aiMatchScore?: number | null
+  /** v0.30 A7 置信度判定依据（供徽章 Tooltip） */
+  aiMatchReason?: string | null
 }
 
 export interface SvcPage<T> {
@@ -672,8 +676,9 @@ export const mediaService = {
   generateAiKeywords(id: number): Promise<SvcSubscription> {
     return post<SvcSubscription>(`/api/subscriptions/${id}/ai-keywords`)
   },
-  /** v0.22 AI3：文件名语义解析兜底（LLM 判定标题/集数并预填关联条目 → pending 待人工确认绑定） */
-  aiAnalyzeFile(id: number): Promise<{ title: string; episode: number; subjectId?: number; subjectName?: string; message?: string }> {
+  /** v0.22 AI3：文件名语义解析兜底（LLM 判定标题/集数并预填关联条目 → pending 待确认；
+   *  v0.30 A7：附匹配置信度 score，≥ 阈值直接自动绑定 autoBound=true） */
+  aiAnalyzeFile(id: number): Promise<AiAnalyzeResult> {
     return post(`/api/files/${id}/ai-analyze`)
   },
   unsubscribeSubject(id: number): Promise<void> {
@@ -732,6 +737,14 @@ export const mediaService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     })
+  },
+  /** v0.30 A5：AI 连通性测试（最小 chat 调用，计入配额与累计统计） */
+  aiPing(): Promise<{ ok: boolean; model: string; latencyMs: number; message?: string }> {
+    return post('/api/ai/ping')
+  },
+  /** v0.30 A6：AI 解析订阅地址（规则映射优先 + LLM 兜底；结果仅预填，保存仍人工） */
+  aiResolveRss(id: number, text: string): Promise<{ source: 'rule' | 'ai' | 'none'; rssUrl?: string; message?: string }> {
+    return post(`/api/subscriptions/${id}/ai-rss`, { text })
   },
 
   /* ── v0.26 HN1/HN3 hanime1.me 在线解析（配置 / 测试 / 搜索 / 解析 / 流地址）── */
@@ -881,6 +894,40 @@ export interface SvcAiSettings {
   callsThisHour: number
   /** v0.22 逐请求附加头（每行「Name: Value」，如 opencode zen 需 x-opencode-session） */
   extraHeaders: string
+  /** v0.30 A5 单请求 max_tokens 上限（0=不注入；思考型模型勿配过小） */
+  maxTokens: number
+  /** v0.30 A7 媒体库 AI 解析自动绑定阈值（0=关闭仅预填，1~100 置信度达标自动绑定） */
+  aiBindThreshold: number
+  /** v0.30 A5 服务端只读回显：累计成功调用数（持久化，重启不丢） */
+  totalCalls: number
+}
+
+/** v0.30 A3/A7 AI 批量解析单条结果（ai-analyze 响应视图） */
+export interface AiAnalyzeResult {
+  title: string
+  episode: number
+  subjectId?: number
+  subjectName?: string
+  /** v0.30 A7 匹配置信度（0~100，无候选/未评分=0） */
+  score?: number
+  /** v0.30 A7 置信度 ≥ 阈值时服务端已直接绑定 */
+  autoBound?: boolean
+  message?: string
+}
+
+/** v0.30 A3 纯函数：批量解析结果汇总（自动绑定 / 待确认 / 失败三计数） */
+export function aiBatchSummary(
+  results: { autoBound?: boolean; subjectId?: number | null; ok: boolean }[],
+): { autoBound: number; pending: number; failed: number } {
+  let autoBound = 0
+  let pending = 0
+  let failed = 0
+  for (const r of results) {
+    if (!r.ok) failed++
+    else if (r.autoBound) autoBound++
+    else pending++
+  }
+  return { autoBound, pending, failed }
 }
 
 /** AI1 命中语义判定（纯函数视图）：解析 aiVerdict JSON，损坏/未判定返回 null */

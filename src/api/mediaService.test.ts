@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildStreamUrl, isDirectExt, needsTranscode, servicePositionId } from './mediaService'
+import { aiBatchSummary, buildStreamUrl, isDirectExt, needsTranscode, servicePositionId } from './mediaService'
 
 describe('v0.14 mediaService 纯函数', () => {
   it('buildStreamUrl：基础地址拼接 + 尾斜杠规范化', () => {
@@ -245,6 +245,24 @@ describe('v0.22 AI1 命中语义判定徽章（hitAiVerdict 纯函数）', () =>
     expect(hitAiVerdict('{"type":"episode","episode":1080}')?.episode).toBeNull()
     expect(hitAiVerdict('{"type":"unknown"}')?.type).toBe('other')
     expect(hitAiVerdict('{"type":"other"}')?.isMainline).toBe(false)
+  })
+})
+
+describe('v0.30 A3 AI 批量解析汇总（aiBatchSummary 纯函数）', () => {
+  it('自动绑定 / 待确认 / 失败三计数', () => {
+    expect(aiBatchSummary([
+      { ok: true, autoBound: true },
+      { ok: true, autoBound: true },
+      { ok: true },
+      { ok: true, autoBound: false },
+      { ok: false },
+    ])).toEqual({ autoBound: 2, pending: 2, failed: 1 })
+  })
+
+  it('空列表与全失败形态', () => {
+    expect(aiBatchSummary([])).toEqual({ autoBound: 0, pending: 0, failed: 0 })
+    expect(aiBatchSummary([{ ok: false }, { ok: false }])).toEqual({ autoBound: 0, pending: 0, failed: 2 })
+    expect(aiBatchSummary([{ ok: true }])).toEqual({ autoBound: 0, pending: 1, failed: 0 })
   })
 })
 

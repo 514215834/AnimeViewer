@@ -19,6 +19,7 @@ import {
 } from 'naive-ui'
 import { CloudDownloadOutline, RefreshOutline, SearchOutline, TrashOutline } from '@vicons/ionicons5'
 import {
+  aiBatchSummary,
   mediaService,
   type SvcBangumiEpisode,
   type SvcBangumiSubject,
@@ -274,16 +275,22 @@ async function unbind(f: SvcFile) {
   }
 }
 
-/* ── v0.22 AI3 文件名语义解析兜底（LLM 判定标题/集数 → pending 待人工确认绑定） ── */
+/* ── v0.22 AI3 文件名语义解析兜底（LLM 判定标题/集数 → pending 待人工确认绑定） ──
+ *  v0.30 A7：ai-analyze 附匹配置信度，≥ 设置阈值直接自动绑定（bound + autoBound）；A3 批量解析串行循环 */
 
 const aiBusyId = ref<number | null>(null)
+/** v0.30 A3 批量解析进度（null=空闲；done/total 供按钮文案与状态行） */
+const batchProgress = ref<{ done: number; total: number } | null>(null)
+const batchRunning = computed(() => batchProgress.value != null)
 
 async function aiAnalyze(f: SvcFile) {
-  if (aiBusyId.value != null) return
+  if (aiBusyId.value != null || batchRunning.value) return
   aiBusyId.value = f.id
   try {
     const r = await mediaService.aiAnalyzeFile(f.id)
-    if (r.subjectId) {
+    if (r.autoBound) {
+      message.success(r.message || `AI 解析：《${r.title}》匹配置信度 ${r.score ?? 0}，已自动绑定《${r.subjectName}》`)
+    } else if (r.subjectId) {
       message.success(r.message || `AI 解析：《${r.title}》第 ${r.episode} 话，已关联《${r.subjectName}》（待确认绑定）`)
     } else {
       message.info(r.message || `AI 解析：《${r.title}》${r.episode ? `第 ${r.episode} 话` : ''}（未找到相近条目，可人工绑定）`)
@@ -294,6 +301,33 @@ async function aiAnalyze(f: SvcFile) {
   } finally {
     aiBusyId.value = null
   }
+}
+
+/** v0.30 A3：AI 批量解析（串行复用单文件端点，小时配额护栏天然限流；单批 = 当前页非绑定文件，至多 20） */
+async function aiBatchAnalyze() {
+  if (batchRunning.value || aiBusyId.value != null) return
+  const targets = files.value.filter((f) => f.matchState !== 'bound')
+  if (!targets.length) {
+    message.info('当前列表没有未绑定文件（可先切换状态筛选）')
+    return
+  }
+  batchProgress.value = { done: 0, total: targets.length }
+  const results: { ok: boolean; autoBound?: boolean }[] = []
+  for (const f of targets) {
+    try {
+      const r = await mediaService.aiAnalyzeFile(f.id)
+      results.push({ ok: true, autoBound: r.autoBound })
+    } catch {
+      results.push({ ok: false })
+    }
+    batchProgress.value = { done: batchProgress.value.done + 1, total: targets.length }
+  }
+  const s = aiBatchSummary(results)
+  batchProgress.value = null
+  const text = `AI 批量解析完成：自动绑定 ${s.autoBound} · 待确认 ${s.pending}${s.failed ? ` · 失败 ${s.failed}` : ''}`
+  if (s.failed && !s.autoBound && !s.pending) message.error(text)
+  else message.success(text)
+  await Promise.all([refreshFiles(), refreshStatusOnly()])
 }
 
 async function refreshStatusOnly() {
@@ -447,6 +481,16 @@ onBeforeUnmount(stopPolling)
               <NButton size="small" secondary @click="search">
                 <template #icon><NIcon :component="SearchOutline" /></template>
               </NButton>
+              <!-- v0.30 A3 AI 批量解析：当前页非绑定文件串行解析（≥阈值自动绑定，<阈值待确认） -->
+              <NButton
+                size="small"
+                secondary
+                type="primary"
+                :loading="batchRunning"
+                :disabled="scanRunning"
+                :title="'AI 批量解析本页未绑定文件（串行调用，需在设置页启用 AI；匹配度 ≥ 阈值自动绑定）'"
+                @click="aiBatchAnalyze"
+              >{{ batchRunning ? `AI 解析中 ${batchProgress?.done ?? 0}/${batchProgress?.total ?? 0}` : 'AI 批量解析' }}</NButton>
             </div>
             <EmptyHint v-if="!files.length" text="没有匹配的文件" sub="先添加扫描目录，或调整筛选条件" />
             <div v-for="f in files" :key="f.id" class="file-row">
@@ -468,6 +512,10 @@ onBeforeUnmount(stopPolling)
                   <template v-else-if="f.matchState === 'pending' && f.subjectNameCn">
                     · 疑似《{{ f.subjectNameCn }}》
                   </template>
+                  <!-- v0.30 A7 AI 匹配置信度标注（title=判定依据；是否自动绑定以行状态与 autoBound 为准） -->
+                  <template v-if="f.aiMatchScore != null">
+                    · <span :title="f.aiMatchReason || ''">AI 匹配 {{ f.aiMatchScore }}{{ f.matchState === 'bound' && f.autoBound ? '（AI 自动绑定）' : '' }}</span>
+                  </template>
                 </span>
                 <span v-if="f.error" class="file-error">{{ f.error }}</span>
               </div>
@@ -486,7 +534,7 @@ onBeforeUnmount(stopPolling)
                   size="tiny"
                   quaternary
                   :loading="aiBusyId === f.id"
-                  :disabled="aiBusyId != null && aiBusyId !== f.id"
+                  :disabled="batchRunning || (aiBusyId != null && aiBusyId !== f.id)"
                   title="AI 语义解析文件名（正则识别失败时兜底；需在设置页启用 AI）"
                   @click="aiAnalyze(f)"
                 >AI 解析</NButton>
