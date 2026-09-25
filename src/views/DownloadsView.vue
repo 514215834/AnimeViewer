@@ -6,7 +6,8 @@
  *  v0.18 qBittorrent 外部应用直开：添加磁力即拉起本机 qBt（无 RPC），此类任务状态定格
  *  external（已交给下载器），列表不显示进度条/速度，暂停恢复与文件勾选被隐藏（在 qBt 中操作）。
  *  v0.19 SU1/SU2 订阅自动化：待确认命中区（一键下载/忽略/忽略字幕组并记忆）+ 订阅管理
- *  （全自动开关/立即全量检索/取消订阅）+ 命中历史台账。 */
+ *  （全自动开关/立即全量检索/取消订阅）+ 命中历史台账。
+ *  v0.30 补记三：待确认命中/订阅两区改 NCollapse 默认收缩（点击标题行展开，批量控件随展开显隐）。 */
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import {
   NAlert,
@@ -128,6 +129,11 @@ const subs = ref<SvcSubscription[]>([])
 const subBusyId = ref<number | null>(null)
 const checkNowBusy = ref(false)
 let subTimer: number | null = null
+
+/* 待确认命中/订阅区默认收缩（点击标题行展开）；批量控件仅展开时出现在标题行 */
+const pendingOpen = ref<string[]>([])
+const subsOpen = ref<string[]>([])
+const pendingExpanded = computed(() => pendingOpen.value.includes('pending'))
 
 const HIT_STATUS: Record<string, { label: string; type: 'default' | 'success' | 'warning' | 'info' | 'error' }> = {
   pending: { label: '待确认', type: 'warning' },
@@ -793,36 +799,41 @@ onBeforeUnmount(() => {
       <NSpin v-else size="small" />
     </div>
 
-    <!-- v0.19 SU2 待确认命中（订阅自动化的命中默认人工把关；支持多选/全选批量忽略） -->
-    <section v-if="serviceConfigured && pendingHits.length" class="dl-section sub-section">
-      <h3 class="dl-title">
-        待确认命中（{{ pendingHits.length }}）
-        <span class="sub-hint">订阅检索到的新资源——确认后才下载</span>
-        <NCheckbox
-          class="hit-select-all"
-          size="small"
-          :checked="allSelected"
-          :indeterminate="someSelected"
-          @update:checked="toggleSelectAll"
-        >
-          全选
-        </NCheckbox>
-        <NPopconfirm @positive-click="batchIgnore">
-          <template #trigger>
-            <NButton
-              size="tiny"
-              type="error"
-              secondary
-              :disabled="!selectedCount"
-              :loading="batchBusy"
-            >
-              忽略选中（{{ selectedCount }}）
-            </NButton>
-          </template>
-          将选中的 {{ selectedCount }} 条命中标记为已忽略（资源不入队），确定？
-        </NPopconfirm>
-      </h3>
-      <div v-for="h in sortedPendingHits" :key="h.id" class="hit-row">
+    <!-- v0.19 SU2 待确认命中（订阅自动化的命中默认人工把关；支持多选/全选批量忽略）。
+         默认收缩：点击标题行展开，全选/批量忽略仅在展开后显示 -->
+    <NCollapse v-if="serviceConfigured && pendingHits.length" v-model:expanded-names="pendingOpen" class="sub-collapse">
+      <NCollapseItem name="pending">
+        <template #header>
+          <span class="sub-head">
+            <span class="sub-head-title">待确认命中（{{ pendingHits.length }}）</span>
+            <span class="sub-hint">订阅检索到的新资源——确认后才下载</span>
+            <span v-if="pendingExpanded" class="hist-ctl" @click.stop>
+              <NCheckbox
+                size="small"
+                :checked="allSelected"
+                :indeterminate="someSelected"
+                @update:checked="toggleSelectAll"
+              >
+                全选
+              </NCheckbox>
+              <NPopconfirm @positive-click="batchIgnore">
+                <template #trigger>
+                  <NButton
+                    size="tiny"
+                    type="error"
+                    secondary
+                    :disabled="!selectedCount"
+                    :loading="batchBusy"
+                  >
+                    忽略选中（{{ selectedCount }}）
+                  </NButton>
+                </template>
+                将选中的 {{ selectedCount }} 条命中标记为已忽略（资源不入队），确定？
+              </NPopconfirm>
+            </span>
+          </span>
+        </template>
+        <div v-for="h in sortedPendingHits" :key="h.id" class="hit-row">
         <NCheckbox
           class="hit-select"
           size="small"
@@ -885,15 +896,19 @@ onBeforeUnmount(() => {
           <NButton v-if="!h.aiVerdict" size="tiny" quaternary :loading="subBusyId === h.id" @click="aiJudge(h)">AI 判定</NButton>
         </div>
       </div>
-    </section>
+      </NCollapseItem>
+    </NCollapse>
 
-    <!-- v0.19 SU1 订阅管理 -->
-    <section v-if="serviceConfigured" class="dl-section sub-section">
-      <h3 class="dl-title">
-        订阅（{{ subs.length }}）
-        <NButton size="tiny" quaternary :loading="checkNowBusy" class="check-now" @click="checkNow">立即全量检索</NButton>
-      </h3>
-      <div v-if="!subs.length" class="dl-none">
+    <!-- v0.19 SU1 订阅管理（默认收缩：点击标题行展开；立即全量检索常驻标题行） -->
+    <NCollapse v-if="serviceConfigured" v-model:expanded-names="subsOpen" class="sub-collapse">
+      <NCollapseItem name="subs">
+        <template #header>
+          <span class="sub-head">
+            <span class="sub-head-title">订阅（{{ subs.length }}）</span>
+            <NButton size="tiny" quaternary :loading="checkNowBusy" class="check-now" @click.stop="checkNow">立即全量检索</NButton>
+          </span>
+        </template>
+        <div v-if="!subs.length" class="dl-none">
         还没有订阅——在条目详情页剧集 Tab 打开「追番下载」即可定时追新集
       </div>
       <div v-for="s in subs" :key="s.id" class="sub-row">
@@ -979,7 +994,8 @@ onBeforeUnmount(() => {
           </NPopconfirm>
         </div>
       </div>
-    </section>
+      </NCollapseItem>
+    </NCollapse>
 
     <div v-if="loading" class="dl-state"><NSpin size="medium" /></div>
 
@@ -1366,18 +1382,45 @@ onBeforeUnmount(() => {
   margin-bottom: 22px;
 }
 
-/* ── v0.19 订阅区（待确认命中 + 订阅管理 + 命中历史）── */
+/* ── v0.19 订阅区（待确认命中 + 订阅管理 + 命中历史）──
+   v0.30 前两区改 NCollapse 默认收缩：沿用原卡片描边，标题行承载提示与批量操作。
+   注意：naive-ui 会以更高优先级给首项 header 强制 padding-top:0 并用 --n-title-padding
+   覆盖 :deep 的 padding（补记三实测文字贴顶 2.8px/12.8px）——垂直留白一律由自有元素
+   .sub-head 承载，这里仅以更高优先级把 header / content-inner 自带 padding 清零复位 */
 
-.sub-section {
+.sub-collapse {
+  margin-bottom: 22px;
   border: 1px solid var(--av-border);
   border-radius: 12px;
-  padding: 12px 14px;
+  padding: 0 14px;
 }
 
-.sub-section .dl-title {
+.sub-collapse :deep(.n-collapse-item:first-child .n-collapse-item__header) {
+  padding: 0;
+}
+
+.sub-collapse :deep(.n-collapse-item:first-child .n-collapse-item__content-inner) {
+  padding: 2px 0 4px;
+}
+
+.sub-head {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 12px 0;
+}
+
+.sub-head-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--av-text-secondary);
+  white-space: nowrap;
+}
+
+.sub-head .hist-ctl {
+  margin-left: auto;
 }
 
 .sub-hint {
@@ -1400,10 +1443,6 @@ onBeforeUnmount(() => {
 
 .hit-select {
   flex: none;
-}
-
-.hit-select-all {
-  margin-left: auto;
 }
 
 .hist-head {

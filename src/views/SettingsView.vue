@@ -4,6 +4,8 @@ import { useMessage } from 'naive-ui'
 import {
   NAlert,
   NButton,
+  NCollapse,
+  NCollapseItem,
   NDynamicTags,
   NForm,
   NFormItem,
@@ -795,281 +797,320 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
-        <NFormItem label="媒体服务（可选：AnimeViewerService 本地媒体库——自动扫描匹配、mkv 转封装播放、局域网观看）">
-          <div class="svc-box">
-            <div class="svc-grid">
-              <NInput v-model:value="draft.svcUrl" placeholder="服务地址，如 http://127.0.0.1:8787" clearable />
-              <NInput
-                v-model:value="draft.svcToken"
-                type="password"
-                show-password-on="click"
-                placeholder="配对 Token（服务首次启动时打印到控制台并写入 data/token）"
-              />
-            </div>
-            <div class="svc-status">
-              <template v-if="svcError">
-                <span class="svc-err">{{ svcError }}</span>
-              </template>
-              <template v-else-if="svcHealth">
-                <span>AnimeViewerService v{{ svcHealth.version }}</span>
-                <span>ffmpeg {{ svcHealth.ffmpeg ? '可用' : '未配置（mp4 直连可用，mkv 转封装不可用）' }}</span>
-                <span v-if="svcStatus">文件 {{ svcStatus.files }} · 已绑定 {{ svcStatus.bound }} · 待确认 {{ svcStatus.pending }}</span>
-              </template>
-              <span v-else class="svc-muted">未连接——填写地址与 Token 后点「连接测试」（配置即时生效）</span>
-            </div>
-            <div class="btn-row">
-              <NButton secondary size="small" :loading="svcTesting" @click="testService()">连接测试</NButton>
-              <NButton secondary size="small" :disabled="!settings.svcEnabled" @click="openMediaLibrary">
-                <template #icon><NIcon :component="ServerOutline" /></template>
-                媒体库管理
-              </NButton>
-            </div>
-            <div class="svc-tip">
-              服务默认地址 http://127.0.0.1:8787，默认仅本机可访问；部署与局域网开启方式见服务端 README。
-              配置后剧集 Tab 会显示媒体库已收录集的播放按钮。
-            </div>
-          </div>
-        </NFormItem>
-
-        <NFormItem label="WebDAV 账号（可选：浏览并播放自备网络存储中的视频；凭据仅存本机，播放凭据由媒体服务会话托管）">
-          <div class="svc-box">
-            <div class="svc-grid">
-              <NInput v-model:value="draft.webdavUrl" placeholder="WebDAV 地址，如 https://dav.example.com/dav" clearable />
-              <NInput v-model:value="draft.webdavUser" placeholder="账号（匿名服务可留空）" clearable />
-              <NInput
-                v-model:value="draft.webdavPass"
-                type="password"
-                show-password-on="click"
-                placeholder="密码"
-                clearable
-              />
-            </div>
-            <div class="svc-tip">
-              填写地址后即可在剧集 Tab「本地播放」弹窗中浏览 WebDAV 目录并绑定集数；播放需同时配置上方媒体服务。
-              仅支持只读浏览，不做上传/删除等写操作。
-            </div>
-          </div>
-        </NFormItem>
-
-        <NFormItem label="BT 下载（可选：aria2 引擎托管下载，或直开本机 qBittorrent 下载）">
-          <div class="svc-box">
-            <div class="svc-grid dl-grid">
-              <NSelect v-model:value="dl.engineType" :options="ENGINE_TYPE_OPTIONS" placeholder="引擎类型" />
-              <template v-if="isQb">
-                <NInput v-model:value="dl.qbPath" placeholder="qBittorrent 可执行文件完整路径（如 G:/qbittorrent/qbittorrent.exe）" clearable />
-              </template>
-              <template v-else>
-                <NInput v-if="isAria2Managed" v-model:value="dl.enginePath" placeholder="aria2c 可执行文件（PATH 探测；未入 PATH 填完整路径，如 G:/aria2/aria2c.exe）" clearable />
-                <NInput v-if="!isAria2Managed" v-model:value="dl.engineUrl" placeholder="外部实例 RPC 地址（如 http://127.0.0.1:6800/rpc）" clearable />
+        <!-- v0.30 补记三 高级功能组：默认全部收起、点击标题行展开（各项独立保存，与上方基础配置互不影响） -->
+        <NCollapse class="adv-collapse">
+          <NCollapseItem name="svc">
+            <template #header>
+              <span class="adv-head">
+                <span class="adv-head-title">媒体服务</span>
+                <span class="adv-head-sub">可选：AnimeViewerService 本地媒体库——自动扫描匹配、mkv 转封装播放、局域网观看</span>
+              </span>
+            </template>
+            <div class="svc-box">
+              <div class="svc-grid">
+                <NInput v-model:value="draft.svcUrl" placeholder="服务地址，如 http://127.0.0.1:8787" clearable />
                 <NInput
-                  v-if="!isAria2Managed"
-                  v-model:value="dl.engineSecret"
+                  v-model:value="draft.svcToken"
                   type="password"
                   show-password-on="click"
-                  placeholder="外部实例 rpc-secret（选填）"
+                  placeholder="配对 Token（服务首次启动时打印到控制台并写入 data/token）"
+                />
+              </div>
+              <div class="svc-status">
+                <template v-if="svcError">
+                  <span class="svc-err">{{ svcError }}</span>
+                </template>
+                <template v-else-if="svcHealth">
+                  <span>AnimeViewerService v{{ svcHealth.version }}</span>
+                  <span>ffmpeg {{ svcHealth.ffmpeg ? '可用' : '未配置（mp4 直连可用，mkv 转封装不可用）' }}</span>
+                  <span v-if="svcStatus">文件 {{ svcStatus.files }} · 已绑定 {{ svcStatus.bound }} · 待确认 {{ svcStatus.pending }}</span>
+                </template>
+                <span v-else class="svc-muted">未连接——填写地址与 Token 后点「连接测试」（配置即时生效）</span>
+              </div>
+              <div class="btn-row">
+                <NButton secondary size="small" :loading="svcTesting" @click="testService()">连接测试</NButton>
+                <NButton secondary size="small" :disabled="!settings.svcEnabled" @click="openMediaLibrary">
+                  <template #icon><NIcon :component="ServerOutline" /></template>
+                  媒体库管理
+                </NButton>
+              </div>
+              <div class="svc-tip">
+                服务默认地址 http://127.0.0.1:8787，默认仅本机可访问；部署与局域网开启方式见服务端 README。
+                配置后剧集 Tab 会显示媒体库已收录集的播放按钮。
+              </div>
+            </div>
+          </NCollapseItem>
+
+          <NCollapseItem name="webdav">
+            <template #header>
+              <span class="adv-head">
+                <span class="adv-head-title">WebDAV 账号</span>
+                <span class="adv-head-sub">可选：浏览并播放自备网络存储中的视频；凭据仅存本机，播放凭据由媒体服务会话托管</span>
+              </span>
+            </template>
+            <div class="svc-box">
+              <div class="svc-grid">
+                <NInput v-model:value="draft.webdavUrl" placeholder="WebDAV 地址，如 https://dav.example.com/dav" clearable />
+                <NInput v-model:value="draft.webdavUser" placeholder="账号（匿名服务可留空）" clearable />
+                <NInput
+                  v-model:value="draft.webdavPass"
+                  type="password"
+                  show-password-on="click"
+                  placeholder="密码"
                   clearable
                 />
-                <NInputNumber v-if="isAria2Managed" v-model:value="dl.rpcPort" :min="1" :max="65535" placeholder="RPC 端口">
-                  <template #prefix>RPC</template>
-                </NInputNumber>
-                <div class="dl-row2">
-                  <NInputNumber v-model:value="dl.maxConcurrent" :min="1" :max="10" placeholder="并发任务">
-                    <template #prefix>并发</template>
+              </div>
+              <div class="svc-tip">
+                填写地址后即可在剧集 Tab「本地播放」弹窗中浏览 WebDAV 目录并绑定集数；播放需同时配置上方媒体服务。
+                仅支持只读浏览，不做上传/删除等写操作。
+              </div>
+            </div>
+          </NCollapseItem>
+
+          <NCollapseItem name="dl">
+            <template #header>
+              <span class="adv-head">
+                <span class="adv-head-title">BT 下载</span>
+                <span class="adv-head-sub">可选：aria2 引擎托管下载，或直开本机 qBittorrent 下载</span>
+              </span>
+            </template>
+            <div class="svc-box">
+              <div class="svc-grid dl-grid">
+                <NSelect v-model:value="dl.engineType" :options="ENGINE_TYPE_OPTIONS" placeholder="引擎类型" />
+                <template v-if="isQb">
+                  <NInput v-model:value="dl.qbPath" placeholder="qBittorrent 可执行文件完整路径（如 G:/qbittorrent/qbittorrent.exe）" clearable />
+                </template>
+                <template v-else>
+                  <NInput v-if="isAria2Managed" v-model:value="dl.enginePath" placeholder="aria2c 可执行文件（PATH 探测；未入 PATH 填完整路径，如 G:/aria2/aria2c.exe）" clearable />
+                  <NInput v-if="!isAria2Managed" v-model:value="dl.engineUrl" placeholder="外部实例 RPC 地址（如 http://127.0.0.1:6800/rpc）" clearable />
+                  <NInput
+                    v-if="!isAria2Managed"
+                    v-model:value="dl.engineSecret"
+                    type="password"
+                    show-password-on="click"
+                    placeholder="外部实例 rpc-secret（选填）"
+                    clearable
+                  />
+                  <NInputNumber v-if="isAria2Managed" v-model:value="dl.rpcPort" :min="1" :max="65535" placeholder="RPC 端口">
+                    <template #prefix>RPC</template>
                   </NInputNumber>
-                  <NInputNumber v-model:value="dl.seedTimeMinutes" :min="0" :max="100000" placeholder="做种分钟">
-                    <template #prefix>做种</template>
-                  </NInputNumber>
-                  <NInput v-model:value="dl.uploadLimit" placeholder="上传限速（如 2M，留空不限）" clearable />
+                  <div class="dl-row2">
+                    <NInputNumber v-model:value="dl.maxConcurrent" :min="1" :max="10" placeholder="并发任务">
+                      <template #prefix>并发</template>
+                    </NInputNumber>
+                    <NInputNumber v-model:value="dl.seedTimeMinutes" :min="0" :max="100000" placeholder="做种分钟">
+                      <template #prefix>做种</template>
+                    </NInputNumber>
+                    <NInput v-model:value="dl.uploadLimit" placeholder="上传限速（如 2M，留空不限）" clearable />
+                  </div>
+                </template>
+                <NInput v-model:value="dl.downloadDir" placeholder="下载目录（相对服务工作目录，默认 ./data/downloads）" />
+                <NInput
+                  v-model:value="dl.trackersText"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="注入磁力的公共 tracker（每行一个；无 tracker 磁力仅靠 DHT，元数据解析极慢）"
+                />
+                <div class="dl-switches">
+                  <span class="dl-switch-item">完成后自动入库扫描 <NSwitch v-model:value="dl.autoScan" size="small" /></span>
+                  <span v-if="!isQb" class="dl-switch-item">aria2 证书校验 <NSwitch v-model:value="dl.checkCertificate" size="small" /></span>
                 </div>
-              </template>
-              <NInput v-model:value="dl.downloadDir" placeholder="下载目录（相对服务工作目录，默认 ./data/downloads）" />
-              <NInput
-                v-model:value="dl.trackersText"
-                type="textarea"
-                :rows="2"
-                placeholder="注入磁力的公共 tracker（每行一个；无 tracker 磁力仅靠 DHT，元数据解析极慢）"
-              />
-              <div class="dl-switches">
-                <span class="dl-switch-item">完成后自动入库扫描 <NSwitch v-model:value="dl.autoScan" size="small" /></span>
-                <span v-if="!isQb" class="dl-switch-item">aria2 证书校验 <NSwitch v-model:value="dl.checkCertificate" size="small" /></span>
+              </div>
+              <div class="svc-status">
+                <template v-if="dlError">
+                  <span class="svc-err">{{ dlError }}</span>
+                </template>
+                <template v-else-if="dlEngine">
+                  <span>
+                    {{ dlEngine.available
+                      ? (dlEngine.mode === 'external-app' ? 'qBittorrent 直开就绪' : `aria2 ${dlEngine.version ?? ''}（${dlEngine.mode === 'external' ? '外部实例' : '托管模式'}）`)
+                      : '引擎不可用' }}
+                  </span>
+                  <span v-if="dlEngine.available">目录 {{ dlEngine.downloadDir }}</span>
+                  <span v-else class="svc-err">{{ dlEngine.error }}</span>
+                </template>
+                <span v-else class="svc-muted">引擎状态未知——保存设置后自动探测</span>
+                <div class="btn-row">
+                  <NButton secondary size="small" :loading="dlSaving" @click="saveDownloadSettings">保存并应用</NButton>
+                  <NButton quaternary size="small" :disabled="!settings.svcEnabled" @click="loadDownloadSettings">重新读取</NButton>
+                </div>
+              </div>
+              <div class="svc-tip">
+                {{ isQb
+                  ? 'qBittorrent 直开（用户定案，不用 WebUI）：添加磁力时服务端直接拉起本机 qBittorrent 并带上磁力参数，下载进度与文件管理全部在 qBt 内进行（本页下载中心仅保留任务台账，无进度同步）；已开着的 qBt 实例会由其单实例机制接收任务。种子直链会暂存为临时 .torrent 后拉起。'
+                  : '下载中心（侧边栏「下载」）粘贴磁力/种子直链即可下载；完成后自动触发媒体库增量扫描并按文件名匹配绑定，剧集 Tab 随即出现播放按钮。Windows 下 aria2 建议关闭证书校验（schannel 吊销检查会导致 HTTPS tracker 握手失败）。' }}
               </div>
             </div>
-            <div class="svc-status">
-              <template v-if="dlError">
-                <span class="svc-err">{{ dlError }}</span>
-              </template>
-              <template v-else-if="dlEngine">
-                <span>
-                  {{ dlEngine.available
-                    ? (dlEngine.mode === 'external-app' ? 'qBittorrent 直开就绪' : `aria2 ${dlEngine.version ?? ''}（${dlEngine.mode === 'external' ? '外部实例' : '托管模式'}）`)
-                    : '引擎不可用' }}
-                </span>
-                <span v-if="dlEngine.available">目录 {{ dlEngine.downloadDir }}</span>
-                <span v-else class="svc-err">{{ dlEngine.error }}</span>
-              </template>
-              <span v-else class="svc-muted">引擎状态未知——保存设置后自动探测</span>
-              <div class="btn-row">
-                <NButton secondary size="small" :loading="dlSaving" @click="saveDownloadSettings">保存并应用</NButton>
-                <NButton quaternary size="small" :disabled="!settings.svcEnabled" @click="loadDownloadSettings">重新读取</NButton>
-              </div>
-            </div>
-            <div class="svc-tip">
-              {{ isQb
-                ? 'qBittorrent 直开（用户定案，不用 WebUI）：添加磁力时服务端直接拉起本机 qBittorrent 并带上磁力参数，下载进度与文件管理全部在 qBt 内进行（本页下载中心仅保留任务台账，无进度同步）；已开着的 qBt 实例会由其单实例机制接收任务。种子直链会暂存为临时 .torrent 后拉起。'
-                : '下载中心（侧边栏「下载」）粘贴磁力/种子直链即可下载；完成后自动触发媒体库增量扫描并按文件名匹配绑定，剧集 Tab 随即出现播放按钮。Windows 下 aria2 建议关闭证书校验（schannel 吊销检查会导致 HTTPS tracker 握手失败）。' }}
-            </div>
-          </div>
-        </NFormItem>
+          </NCollapseItem>
 
         <!-- v0.19 SU1 订阅自动化 -->
-        <NFormItem label="订阅自动化（追番自动下载 Sonarr-lite；条目在详情页剧集 Tab 开启「追番下载」）">
-          <div class="svc-box">
-            <div class="svc-grid dl-grid">
-              <div class="sub-row2">
-                <NInputNumber v-model:value="sub.intervalMinutes" :min="30" :max="360" placeholder="检索间隔（分钟，30~360）">
-                  <template #prefix>间隔</template>
-                </NInputNumber>
-                <NInputNumber v-model:value="sub.minSizeMb" :min="0" placeholder="资源大小下限（MB，0=不限）">
-                  <template #prefix>下限</template>
-                </NInputNumber>
-              </div>
-              <div class="sub-row2">
-                <NInputNumber v-model:value="sub.autoDailyLimit" :min="0" :max="1000" placeholder="每日自动入队上限">
-                  <template #prefix>日限</template>
-                </NInputNumber>
-                <NInputNumber v-model:value="sub.autoMaxSizeMb" :min="0" placeholder="单任务大小上限（MB，0=不限）">
-                  <template #prefix>单限</template>
-                </NInputNumber>
-              </div>
-              <div class="sub-row2">
-                <NInputNumber v-model:value="sub.defaultAutoScore" :min="0" :max="100" placeholder="新订阅匹配度阈值（0=手动确认）">
-                  <template #prefix>阈值</template>
-                </NInputNumber>
-                <div class="dl-switches" style="margin: 0">
-                  <span class="dl-switch-item">已入队集数忽略后续命中 <NSwitch v-model:value="sub.skipEnqueuedEpisode" size="small" /></span>
+          <NCollapseItem name="sub">
+            <template #header>
+              <span class="adv-head">
+                <span class="adv-head-title">订阅自动化</span>
+                <span class="adv-head-sub">追番自动下载 Sonarr-lite；条目在详情页剧集 Tab 开启「追番下载」</span>
+              </span>
+            </template>
+            <div class="svc-box">
+              <div class="svc-grid dl-grid">
+                <div class="sub-row2">
+                  <NInputNumber v-model:value="sub.intervalMinutes" :min="30" :max="360" placeholder="检索间隔（分钟，30~360）">
+                    <template #prefix>间隔</template>
+                  </NInputNumber>
+                  <NInputNumber v-model:value="sub.minSizeMb" :min="0" placeholder="资源大小下限（MB，0=不限）">
+                    <template #prefix>下限</template>
+                  </NInputNumber>
+                </div>
+                <div class="sub-row2">
+                  <NInputNumber v-model:value="sub.autoDailyLimit" :min="0" :max="1000" placeholder="每日自动入队上限">
+                    <template #prefix>日限</template>
+                  </NInputNumber>
+                  <NInputNumber v-model:value="sub.autoMaxSizeMb" :min="0" placeholder="单任务大小上限（MB，0=不限）">
+                    <template #prefix>单限</template>
+                  </NInputNumber>
+                </div>
+                <div class="sub-row2">
+                  <NInputNumber v-model:value="sub.defaultAutoScore" :min="0" :max="100" placeholder="新订阅匹配度阈值（0=手动确认）">
+                    <template #prefix>阈值</template>
+                  </NInputNumber>
+                  <div class="dl-switches" style="margin: 0">
+                    <span class="dl-switch-item">已入队集数忽略后续命中 <NSwitch v-model:value="sub.skipEnqueuedEpisode" size="small" /></span>
+                  </div>
+                </div>
+                <div class="sub-row2" style="grid-column: 1 / -1">
+                  <NDynamicTags v-model:value="sub.globalFansubs" size="small" placeholder="输入字幕组名回车添加（全局偏好，评分+15）" />
+                </div>
+                <div class="dl-switches">
+                  <span class="dl-switch-item">全自动仅限已匹配条目 <NSwitch v-model:value="sub.autoOnlyMatched" size="small" /></span>
                 </div>
               </div>
-              <div class="sub-row2" style="grid-column: 1 / -1">
-                <NDynamicTags v-model:value="sub.globalFansubs" size="small" placeholder="输入字幕组名回车添加（全局偏好，评分+15）" />
+              <div class="svc-status">
+                <template v-if="subError"><span class="svc-err">{{ subError }}</span></template>
+                <span v-else class="svc-muted">命中默认进入下载中心「待确认命中」队列人工把关；条目阈值>0 时，匹配度达标的命中自动入队</span>
+                <div class="btn-row">
+                  <NButton secondary size="small" :loading="subSaving" :disabled="!settings.svcEnabled" @click="saveSubscriptionSettings">保存订阅设置</NButton>
+                </div>
               </div>
-              <div class="dl-switches">
-                <span class="dl-switch-item">全自动仅限已匹配条目 <NSwitch v-model:value="sub.autoOnlyMatched" size="small" /></span>
+              <div class="svc-tip">
+                服务端按间隔检索已订阅条目的 RSS 新集资源（过滤已下载/已看过的集数与历史命中）；v0.20 起自动入队改为
+                「匹配度阈值」（条目级，0=全手动），三重保护 = 每日自动入队上限 + 单任务大小上限 + 仅已匹配条目（保护不满足时降级待确认）；
+                匹配度评分 = 标题匹配/季号一致/字幕组偏好/清晰度/字幕标记加权，明细在命中徽章 Tooltip 可见。
               </div>
             </div>
-            <div class="svc-status">
-              <template v-if="subError"><span class="svc-err">{{ subError }}</span></template>
-              <span v-else class="svc-muted">命中默认进入下载中心「待确认命中」队列人工把关；条目阈值>0 时，匹配度达标的命中自动入队</span>
-              <div class="btn-row">
-                <NButton secondary size="small" :loading="subSaving" :disabled="!settings.svcEnabled" @click="saveSubscriptionSettings">保存订阅设置</NButton>
-              </div>
-            </div>
-            <div class="svc-tip">
-              服务端按间隔检索已订阅条目的 RSS 新集资源（过滤已下载/已看过的集数与历史命中）；v0.20 起自动入队改为
-              「匹配度阈值」（条目级，0=全手动），三重保护 = 每日自动入队上限 + 单任务大小上限 + 仅已匹配条目（保护不满足时降级待确认）；
-              匹配度评分 = 标题匹配/季号一致/字幕组偏好/清晰度/字幕标记加权，明细在命中徽章 Tooltip 可见。
-            </div>
-          </div>
-        </NFormItem>
+          </NCollapseItem>
 
         <!-- v0.22 AI 分析剧集（AI0 Provider 抽象：OpenAI 兼容接口；关闭/失败时全链路行为与启发式一致） -->
-        <NFormItem label="AI 分析（OpenAI 兼容接口，语义判定命中与解析文件名；关闭时零影响）">
-          <div class="svc-box">
-            <div class="svc-grid dl-grid">
-              <div class="dl-switches" style="margin: 0">
-                <span class="dl-switch-item">启用 AI <NSwitch v-model:value="ai.enabled" size="small" /></span>
-                <span class="dl-switch-item">非本篇自动忽略 <NSwitch v-model:value="ai.autoIgnoreNonEpisode" size="small" /></span>
+          <NCollapseItem name="ai">
+            <template #header>
+              <span class="adv-head">
+                <span class="adv-head-title">AI 分析</span>
+                <span class="adv-head-sub">OpenAI 兼容接口，语义判定命中与解析文件名；关闭时零影响</span>
+              </span>
+            </template>
+            <div class="svc-box">
+              <div class="svc-grid dl-grid">
+                <div class="dl-switches" style="margin: 0">
+                  <span class="dl-switch-item">启用 AI <NSwitch v-model:value="ai.enabled" size="small" /></span>
+                  <span class="dl-switch-item">非本篇自动忽略 <NSwitch v-model:value="ai.autoIgnoreNonEpisode" size="small" /></span>
+                </div>
+                <div class="sub-row2">
+                  <NInput v-model:value="ai.baseUrl" placeholder="https://api.openai.com/v1（可填 Ollama 地址）" />
+                  <NInput v-model:value="ai.model" placeholder="模型名（如 gpt-4o-mini / qwen2.5:7b）" />
+                </div>
+                <div class="sub-row2">
+                  <NInput v-model:value="ai.apiKey" type="password" show-password-on="click" placeholder="API Key（本地 Ollama 留空）" />
+                  <NInputNumber v-model:value="ai.maxCallsPerHour" :min="0" :max="10000" placeholder="每小时调用上限（0=不限）">
+                    <template #prefix>配额</template>
+                  </NInputNumber>
+                </div>
+                <div class="sub-row2">
+                  <NInputNumber v-model:value="ai.maxTokens" :min="0" :max="32768" placeholder="0=不注入">
+                    <template #prefix>max_tokens</template>
+                  </NInputNumber>
+                  <NInputNumber v-model:value="ai.aiBindThreshold" :min="0" :max="100" placeholder="0=关闭自动绑定">
+                    <template #prefix>绑定阈值</template>
+                  </NInputNumber>
+                </div>
+                <div class="sub-row2" style="grid-column: 1 / -1">
+                  <NInput v-model:value="ai.extraHeaders" type="textarea" :rows="2"
+                          placeholder="自定义请求头（每行「名称: 值」，如非标网关通道需 x-opencode-session: 会话标识；普通 OpenAI/Ollama 留空）" />
+                </div>
+                <div class="sub-row2" style="grid-column: 1 / -1">
+                  <NInputNumber v-model:value="ai.timeoutSeconds" :min="5" :max="120" placeholder="单次请求超时（秒）">
+                    <template #prefix>超时</template>
+                  </NInputNumber>
+                </div>
               </div>
-              <div class="sub-row2">
-                <NInput v-model:value="ai.baseUrl" placeholder="https://api.openai.com/v1（可填 Ollama 地址）" />
-                <NInput v-model:value="ai.model" placeholder="模型名（如 gpt-4o-mini / qwen2.5:7b）" />
+              <div class="svc-status ai-status">
+                <template v-if="aiError"><span class="svc-err">{{ aiError }}</span></template>
+                <span v-else-if="ai.ready" class="svc-ok">AI 已就绪（{{ ai.model }}）· 本小时调用 {{ ai.callsThisHour }} 次 · 累计 {{ ai.totalCalls }} 次</span>
+                <span v-else class="svc-muted">未就绪——开启开关并填写 OpenAI 兼容接口地址与模型名；判定一次落库缓存，失败静默降级为启发式</span>
+                <span v-if="aiPingResult" :class="/^连通正常/.test(aiPingResult) ? 'svc-ok' : 'svc-err'">{{ aiPingResult }}</span>
+                <div class="btn-row ai-btn-row">
+                  <NButton secondary size="small" :loading="aiPinging" :disabled="!settings.svcEnabled || !ai.ready" @click="pingAi">测试连通</NButton>
+                  <NButton secondary size="small" :loading="aiSaving" :disabled="!settings.svcEnabled" @click="saveAiSettings">保存 AI 设置</NButton>
+                </div>
               </div>
-              <div class="sub-row2">
-                <NInput v-model:value="ai.apiKey" type="password" show-password-on="click" placeholder="API Key（本地 Ollama 留空）" />
-                <NInputNumber v-model:value="ai.maxCallsPerHour" :min="0" :max="10000" placeholder="每小时调用上限（0=不限）">
-                  <template #prefix>配额</template>
-                </NInputNumber>
-              </div>
-              <div class="sub-row2">
-                <NInputNumber v-model:value="ai.maxTokens" :min="0" :max="32768" placeholder="0=不注入">
-                  <template #prefix>max_tokens</template>
-                </NInputNumber>
-                <NInputNumber v-model:value="ai.aiBindThreshold" :min="0" :max="100" placeholder="0=关闭自动绑定">
-                  <template #prefix>绑定阈值</template>
-                </NInputNumber>
-              </div>
-              <div class="sub-row2" style="grid-column: 1 / -1">
-                <NInput v-model:value="ai.extraHeaders" type="textarea" :rows="2"
-                        placeholder="自定义请求头（每行「名称: 值」，如非标网关通道需 x-opencode-session: 会话标识；普通 OpenAI/Ollama 留空）" />
-              </div>
-              <div class="sub-row2" style="grid-column: 1 / -1">
-                <NInputNumber v-model:value="ai.timeoutSeconds" :min="5" :max="120" placeholder="单次请求超时（秒）">
-                  <template #prefix>超时</template>
-                </NInputNumber>
+              <div class="svc-tip">
+                就绪后：① 订阅命中自动做「本篇/主题曲/非本篇」语义判定（命中行 AI 徽章，评分达标的非本篇命中不再自动入队）；
+                ② 订阅扩展检索词可 AI 生成（罗马字/英文名候选，修复中文名全句在 RSS 子串匹配下查不到的问题）；
+                ③ 媒体库未识别文件可 AI 解析文件名，解析结果带「匹配置信度」——≥ 绑定阈值（默认 85，0=关闭）直接自动绑定并标注来源，低于阈值留待确认；
+                ④ 下载中心 RSS 直链弹层可 AI 解析订阅地址（规则映射优先）。判定仅在落库时调用一次并缓存，不会重复烧钱。
               </div>
             </div>
-            <div class="svc-status ai-status">
-              <template v-if="aiError"><span class="svc-err">{{ aiError }}</span></template>
-              <span v-else-if="ai.ready" class="svc-ok">AI 已就绪（{{ ai.model }}）· 本小时调用 {{ ai.callsThisHour }} 次 · 累计 {{ ai.totalCalls }} 次</span>
-              <span v-else class="svc-muted">未就绪——开启开关并填写 OpenAI 兼容接口地址与模型名；判定一次落库缓存，失败静默降级为启发式</span>
-              <span v-if="aiPingResult" :class="/^连通正常/.test(aiPingResult) ? 'svc-ok' : 'svc-err'">{{ aiPingResult }}</span>
-              <div class="btn-row ai-btn-row">
-                <NButton secondary size="small" :loading="aiPinging" :disabled="!settings.svcEnabled || !ai.ready" @click="pingAi">测试连通</NButton>
-                <NButton secondary size="small" :loading="aiSaving" :disabled="!settings.svcEnabled" @click="saveAiSettings">保存 AI 设置</NButton>
-              </div>
-            </div>
-            <div class="svc-tip">
-              就绪后：① 订阅命中自动做「本篇/主题曲/非本篇」语义判定（命中行 AI 徽章，评分达标的非本篇命中不再自动入队）；
-              ② 订阅扩展检索词可 AI 生成（罗马字/英文名候选，修复中文名全句在 RSS 子串匹配下查不到的问题）；
-              ③ 媒体库未识别文件可 AI 解析文件名，解析结果带「匹配置信度」——≥ 绑定阈值（默认 85，0=关闭）直接自动绑定并标注来源，低于阈值留待确认；
-              ④ 下载中心 RSS 直链弹层可 AI 解析订阅地址（规则映射优先）。判定仅在落库时调用一次并缓存，不会重复烧钱。
-            </div>
-          </div>
-        </NFormItem>
+          </NCollapseItem>
 
         <!-- v0.26 HN1/HN6 在线解析（hanime1.me 在线播放）：NSFW 门 + Cookie 注入 + 连通测试。
              NSFW 解锁开关只控入口显隐（详情页剧集 Tab「在线解析」），解析能力由「启用在线解析」控制 -->
-        <NFormItem label="在线解析（hanime1.me 在线播放 · R-18，默认关闭）">
-          <div class="svc-box">
-            <div class="dl-switches" style="margin: 0 0 8px">
-              <span class="dl-switch-item">启用在线解析 <NSwitch v-model:value="hanime.enabled" size="small" /></span>
-              <span
-                class="dl-switch-item"
-                title="开启后详情页「剧集」Tab 出现「在线解析」入口；关闭即隐藏（已在播的页面不受影响）"
-              >
-                解锁 NSFW 入口
-                <NSwitch
-                  size="small"
-                  :value="settings.hanimeNsfw"
-                  @update:value="(v: boolean) => settings.applyPatch({ hanimeNsfw: v })"
-                />
+          <NCollapseItem name="hanime">
+            <template #header>
+              <span class="adv-head">
+                <span class="adv-head-title">在线解析</span>
+                <span class="adv-head-sub">hanime1.me 在线播放 · R-18，默认关闭</span>
               </span>
-            </div>
-            <div class="sub-row2" style="margin-bottom: 8px">
-              <NInput
-                v-model:value="hanimeCookieDraft"
-                type="textarea"
-                :rows="2"
-                placeholder="浏览器 Cookie（可选，明文不回显）。触发人机质询时必填：浏览器打开 hanime1.com 通过验证 → F12 → 网络 → 任一请求 → 复制请求头 Cookie 整段粘贴此处"
-              />
-            </div>
-            <div class="svc-status ai-status">
-              <template v-if="hanimeError"><span class="svc-err">{{ hanimeError }}</span></template>
-              <span v-else-if="hanimeTestOk" class="svc-ok">{{ hanimeTestOk }}</span>
-              <span v-else-if="hanime.hasCookie" class="svc-muted">已配置 Cookie{{ hanime.enabled ? ' · 已启用' : ' · 当前停用' }}——入口在详情页「剧集」Tab「在线解析」</span>
-              <span v-else class="svc-muted">未配置 Cookie——站点 WAF 拦机房出口（服务端需住宅出口代理）；触发质询时按上方说明粘贴 Cookie</span>
-              <div class="btn-row ai-btn-row">
-                <NButton secondary size="small" :loading="hanimeTesting" :disabled="!settings.svcEnabled" @click="testHanime">测试连通</NButton>
-                <NButton secondary size="small" :loading="hanimeSaving" :disabled="!settings.svcEnabled" @click="saveHanime">保存</NButton>
-                <NButton v-if="hanime.hasCookie" quaternary size="small" :disabled="hanimeSaving" @click="clearHanimeCookie">清除 Cookie</NButton>
+            </template>
+            <div class="svc-box">
+              <div class="dl-switches" style="margin: 0 0 8px">
+                <span class="dl-switch-item">启用在线解析 <NSwitch v-model:value="hanime.enabled" size="small" /></span>
+                <span
+                  class="dl-switch-item"
+                  title="开启后详情页「剧集」Tab 出现「在线解析」入口；关闭即隐藏（已在播的页面不受影响）"
+                >
+                  解锁 NSFW 入口
+                  <NSwitch
+                    size="small"
+                    :value="settings.hanimeNsfw"
+                    @update:value="(v: boolean) => settings.applyPatch({ hanimeNsfw: v })"
+                  />
+                </span>
+              </div>
+              <div class="sub-row2" style="margin-bottom: 8px">
+                <NInput
+                  v-model:value="hanimeCookieDraft"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="浏览器 Cookie（可选，明文不回显）。触发人机质询时必填：浏览器打开 hanime1.com 通过验证 → F12 → 网络 → 任一请求 → 复制请求头 Cookie 整段粘贴此处"
+                />
+              </div>
+              <div class="svc-status ai-status">
+                <template v-if="hanimeError"><span class="svc-err">{{ hanimeError }}</span></template>
+                <span v-else-if="hanimeTestOk" class="svc-ok">{{ hanimeTestOk }}</span>
+                <span v-else-if="hanime.hasCookie" class="svc-muted">已配置 Cookie{{ hanime.enabled ? ' · 已启用' : ' · 当前停用' }}——入口在详情页「剧集」Tab「在线解析」</span>
+                <span v-else class="svc-muted">未配置 Cookie——站点 WAF 拦机房出口（服务端需住宅出口代理）；触发质询时按上方说明粘贴 Cookie</span>
+                <div class="btn-row ai-btn-row">
+                  <NButton secondary size="small" :loading="hanimeTesting" :disabled="!settings.svcEnabled" @click="testHanime">测试连通</NButton>
+                  <NButton secondary size="small" :loading="hanimeSaving" :disabled="!settings.svcEnabled" @click="saveHanime">保存</NButton>
+                  <NButton v-if="hanime.hasCookie" quaternary size="small" :disabled="hanimeSaving" @click="clearHanimeCookie">清除 Cookie</NButton>
+                </div>
+              </div>
+              <div class="svc-tip">
+                页面解析与视频转发都在服务端进行：主站被 WAF 拦机房出口时自动走备用域 hanime1.com 并按
+                直连→代理容灾（视频流经服务端 Range 转发，签名直链不落前端）；403 分「IP 封禁 / 人机质询」
+                两类给出文案，质询仅能用浏览器 Cookie 过。剧集 Tab 搜索后可播放或「绑定」到单集（重进直达）。
               </div>
             </div>
-            <div class="svc-tip">
-              页面解析与视频转发都在服务端进行：主站被 WAF 拦机房出口时自动走备用域 hanime1.com 并按
-              直连→代理容灾（视频流经服务端 Range 转发，签名直链不落前端）；403 分「IP 封禁 / 人机质询」
-              两类给出文案，质询仅能用浏览器 Cookie 过。剧集 Tab 搜索后可播放或「绑定」到单集（重进直达）。
-            </div>
-          </div>
-        </NFormItem>
+          </NCollapseItem>
+        </NCollapse>
 
         <NFormItem label="诊断信息（仅存本地，不含 Token；遇到异常可复制后反馈）">
           <div class="diag-box">
@@ -1384,6 +1425,39 @@ async function onImportFile(ev: Event) {
   font-size: 12px;
   opacity: 0.55;
   line-height: 1.6;
+}
+
+/* v0.30 补记三 高级功能折叠组（媒体服务/WebDAV/BT/订阅自动化/AI/在线解析，默认全收起） */
+.adv-collapse {
+  margin-bottom: 18px;
+}
+
+.adv-collapse :deep(.n-collapse-item__header) {
+  padding: 10px 0;
+}
+
+.adv-collapse :deep(.n-collapse-item__content-inner) {
+  padding-top: 2px;
+}
+
+.adv-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  text-align: left;
+}
+
+.adv-head-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--av-text);
+}
+
+.adv-head-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--av-text-tertiary);
 }
 
 .cache-meta {
