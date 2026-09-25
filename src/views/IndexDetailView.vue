@@ -5,6 +5,7 @@ import { NAlert, NButton, NIcon, NPagination, NResult, NSpin, NTag } from 'naive
 import { ListOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useSettingsStore } from '../stores/settings'
+import { useLibraryStore } from '../stores/library'
 import { coverCardUrl } from '../utils/image'
 import type { IndexInfo, IndexSubjectItem } from '../types/bangumi'
 import AnimeCard from '../components/AnimeCard.vue'
@@ -13,6 +14,7 @@ import EmptyHint from '../components/EmptyHint.vue'
 const route = useRoute()
 const router = useRouter()
 const settings = useSettingsStore()
+const library = useLibraryStore()
 
 const PAGE_SIZE = 30
 
@@ -119,6 +121,7 @@ function open(id: number) {
               :original="it.name"
               :poster="coverCardUrl(it.images, settings.imageQuality)"
               :extra="it.comment || (it.date ? `日期 ${it.date}` : '')"
+              :in-library="library.has(it.id)"
               @open="open"
             />
           </div>

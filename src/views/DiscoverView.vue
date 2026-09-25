@@ -6,6 +6,7 @@ import { CompassOutline } from '@vicons/ionicons5'
 import { dataSource } from '../api/dataSource'
 import { useNsfwStore } from '../stores/nsfw'
 import { useSettingsStore } from '../stores/settings'
+import { useLibraryStore } from '../stores/library'
 import { coverCardUrl } from '../utils/image'
 import type { CalendarDay, SearchResultItem } from '../types/bangumi'
 import AnimeCard from '../components/AnimeCard.vue'
@@ -14,6 +15,7 @@ import EmptyHint from '../components/EmptyHint.vue'
 const router = useRouter()
 const settings = useSettingsStore()
 const nsfw = useNsfwStore()
+const library = useLibraryStore()
 
 const activeTab = ref('hot')
 
@@ -181,6 +183,7 @@ function open(id: number) {
               :poster="coverCardUrl(it.images, settings.imageQuality)"
               :score="it.rating?.score"
               :extra="`${(it.collection?.doing ?? 0).toLocaleString()} 人在追`"
+              :in-library="library.has(it.id)"
               @open="open"
             />
           </div>
@@ -209,6 +212,7 @@ function open(id: number) {
               :poster="coverCardUrl(it.images, settings.imageQuality)"
               :score="it.rating?.score"
               :extra="it.date ? `开播 ${it.date}` : ''"
+              :in-library="library.has(it.id)"
               @open="open"
             />
           </div>

@@ -649,7 +649,7 @@ async function onImportFile(ev: Event) {
         <NFormItem label="内容过滤">
           <div class="switch-row">
             <NSwitch v-model:value="draft.hideNsfw" />
-            <span class="switch-label">隐藏 R18 内容（控制所有支持 R18 的接口：每周新番、热门在播、搜索结果、条目详情）</span>
+            <span class="switch-label">隐藏 R18 内容（新番、搜索、详情等全接口生效）</span>
           </div>
         </NFormItem>
 
@@ -728,31 +728,27 @@ async function onImportFile(ev: Event) {
 
         <!-- v0.23 SB4 播放体验（本机设置，立即生效）；v0.28 P1 实时转码并入本区块 -->
         <NFormItem label="播放体验">
-          <div class="playback-box">
-            <NSwitch v-model:value="draft.autoNext">
-              <template #checked>开</template>
-              <template #unchecked>关</template>
-            </NSwitch>
-            <div class="playback-hint">
+          <div class="playback-col">
+            <div class="playback-box" title="看完一集自动播放下一集（默认关，播放页有快捷开关）">
+              <NSwitch v-model:value="draft.autoNext">
+                <template #checked>开</template>
+                <template #unchecked>关</template>
+              </NSwitch>
               <span class="playback-hint-title">自动连播</span>
-              <span>自然看完一集后自动播放下一集（默认关）；播放页 meta 行有快捷开关</span>
             </div>
-          </div>
-          <div class="playback-box">
-            <NSwitch v-model:value="draft.transcodeEnabled">
-              <template #checked>开</template>
-              <template #unchecked>关</template>
-            </NSwitch>
-            <div class="playback-hint">
+            <div
+              class="playback-box"
+              title="浏览器不可解的编码（HEVC/10bit 等）由服务端转码播放（默认开，耗 CPU）；关闭则原样播放，可能黑屏"
+            >
+              <NSwitch v-model:value="draft.transcodeEnabled">
+                <template #checked>开</template>
+                <template #unchecked>关</template>
+              </NSwitch>
               <span class="playback-hint-title">实时转码</span>
-              <span>
-                视频编码浏览器不可解（HEVC/10bit/mpeg4 等）时服务端实时转码播放（默认开）；
-                占用服务端 CPU，seek 起播约 2~3 秒。关闭后此类文件按原路径播放（可能黑屏/花屏）
-              </span>
               <NSelect
                 v-model:value="draft.transcodePreset"
                 size="tiny"
-                style="width: 180px; margin-top: 6px"
+                style="width: 180px"
                 :options="[
                   { label: '质量档：超 fast（最流畅）', value: 'superfast' },
                   { label: '质量档：fast', value: 'fast' },
@@ -765,17 +761,13 @@ async function onImportFile(ev: Event) {
 
         <!-- v0.29 Q2 更新提醒（本机设置，随「保存设置」生效） -->
         <NFormItem label="更新提醒">
-          <div class="playback-box">
-            <NSwitch v-model:value="draft.updateNotify">
-              <template #checked>开</template>
-              <template #unchecked>关</template>
-            </NSwitch>
-            <div class="playback-hint">
+          <div class="playback-col">
+            <div class="playback-box" title="启动/切回应用时，追番库今日有新话则提醒一次（默认开）">
+              <NSwitch v-model:value="draft.updateNotify">
+                <template #checked>开</template>
+                <template #unchecked>关</template>
+              </NSwitch>
               <span class="playback-hint-title">今日更新提醒</span>
-              <span>
-                启动或切回应用时，追番库中今日有新话且未看完的条目 toast 提醒一次（每天至多一次，默认开）；
-                关闭后零打扰
-              </span>
             </div>
           </div>
         </NFormItem>
@@ -1266,7 +1258,14 @@ async function onImportFile(ev: Event) {
   gap: 10px;
 }
 
-/* v0.23 SB4 播放体验（开关 + 说明横排） */
+/* v0.23 SB4 播放体验（开关 + 标题横排，每块独占一行；完整说明收在 title 悬停提示里） */
+.playback-col {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .playback-box {
   width: 100%;
   display: flex;
@@ -1274,19 +1273,16 @@ async function onImportFile(ev: Event) {
   gap: 12px;
 }
 
-.playback-hint {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-  color: var(--av-text-tertiary);
-  line-height: 1.5;
+.playback-box :deep(.n-switch) {
+  flex-shrink: 0;
 }
 
 .playback-hint-title {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--av-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* v0.14 S5 媒体服务 */

@@ -17,6 +17,7 @@ import { dataSource } from '../api/dataSource'
 import EmptyHint from '../components/EmptyHint.vue'
 import type { SearchAdvanced } from '../api/bangumi'
 import { useSettingsStore } from '../stores/settings'
+import { useLibraryStore } from '../stores/library'
 import { charAvatarUrl, coverCardUrl } from '../utils/image'
 import { loadJson, saveJson } from '../utils/storage'
 import type { CharacterSearchItem, PersonSearchItem, SearchResultItem } from '../types/bangumi'
@@ -27,6 +28,7 @@ const router = useRouter()
 const route = useRoute()
 const message = useMessage()
 const settings = useSettingsStore()
+const library = useLibraryStore()
 
 /** 预设标签分组 */
 const TAG_GROUPS: { label: string; tags: string[] }[] = [
@@ -437,6 +439,7 @@ function characterAvatar(images: CharacterSearchItem['images']): string {
             :poster="coverCardUrl(it.images, settings.imageQuality)"
             :score="it.rating?.score"
             :extra="it.date ? `开播 ${it.date}` : ''"
+            :in-library="library.has(it.id)"
             @open="open"
           />
         </div>
