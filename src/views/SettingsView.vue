@@ -269,6 +269,7 @@ const dl = reactive({
   autoScan: true,
   seedTimeMinutes: 0,
   checkCertificate: false,
+  proxy: '',
 })
 
 /** v0.18 引擎类型选项（qBittorrent = 外部应用直开，用户定案不用 WebUI） */
@@ -299,6 +300,7 @@ async function loadDownloadSettings() {
       autoScan: s.autoScan,
       seedTimeMinutes: s.seedTimeMinutes,
       checkCertificate: s.checkCertificate,
+      proxy: s.proxy ?? '',
     })
     dlEngine.value = await mediaService.downloadEngine()
   } catch (e) {
@@ -327,6 +329,7 @@ async function saveDownloadSettings() {
       autoScan: dl.autoScan,
       seedTimeMinutes: Number(dl.seedTimeMinutes) || 0,
       checkCertificate: dl.checkCertificate,
+      proxy: dl.proxy.trim(),
     })
     Object.assign(dl, { ...s, trackersText: s.trackers.join('\n') })
     dlEngine.value = await mediaService.downloadEngine()
@@ -1006,7 +1009,13 @@ async function onImportFile(ev: Event) {
                     <NInput v-model:value="dl.uploadLimit" placeholder="上传限速（如 2M，留空不限）" clearable />
                   </div>
                 </template>
-                <NInput v-model:value="dl.downloadDir" placeholder="下载目录（相对服务工作目录，默认 ./data/downloads）" />
+                <NInput v-model:value="dl.downloadDir" placeholder="下载目录（相对路径基于运行数据目录，默认 ./data/downloads）" />
+                <NInput
+                  v-if="!isQb"
+                  v-model:value="dl.proxy"
+                  placeholder="下载代理（可选，如 http://127.0.0.1:7897）——aria2 不读系统代理，配置后 HTTP(S) tracker 走此代理；UDP tracker/DHT 不受影响"
+                  clearable
+                />
                 <NInput
                   v-model:value="dl.trackersText"
                   type="textarea"

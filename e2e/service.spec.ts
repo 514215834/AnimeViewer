@@ -16,7 +16,13 @@ const PORT = 18877
 const SVC_URL = `http://127.0.0.1:${PORT}`
 const RUNTIME_JAVA = join(import.meta.dirname, '..', 'src-tauri', 'resources', 'service', 'runtime', 'bin', 'java.exe')
 const SERVICE_JAR = join(import.meta.dirname, '..', 'src-tauri', 'resources', 'service', 'service.jar')
-const FFMPEG = join(import.meta.dirname, '..', 'src-tauri', 'resources', 'service', 'bin', 'ffmpeg.exe')
+// ffmpeg 路径探测：随包 bin（完整版）→ 本机工具目录 → PATH（精简版工作副本无 bin 时仍可跑）
+const FFMPEG_CANDIDATES = [
+  join(import.meta.dirname, '..', 'src-tauri', 'resources', 'service', 'bin', 'ffmpeg.exe'),
+  'G:/ffmpeg/bin/ffmpeg.exe',
+  'ffmpeg',
+]
+const FFMPEG = FFMPEG_CANDIDATES.find((p) => p !== 'ffmpeg' && existsSync(p)) ?? 'ffmpeg'
 const SVC_CWD = join(tmpdir(), 'av-e2e-svc')
 const MEDIA_DIR = join(tmpdir(), 'av-e2e-media')
 

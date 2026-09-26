@@ -293,6 +293,8 @@ export interface SvcDownloadSettings {
   autoScan: boolean
   seedTimeMinutes: number
   checkCertificate: boolean
+  /** v1.0 下载代理（可空）：非空注入 aria2 --all-proxy，HTTP(S) tracker announce 走此代理（UDP/DHT 不受影响） */
+  proxy: string
 }
 
 export interface SvcDownloadAddRequest {
