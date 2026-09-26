@@ -93,6 +93,20 @@ fn chrono_like_now() -> String {
     format!("t+{t}s")
 }
 
+/// 壳侧诊断日志：%APPDATA%/AnimeViewer/logs/shell.log——拉起失败/资源缺失也落盘，
+/// 用户环境"内置服务不可达"类问题先看此文件（壳视角命令行）再 service.log（服务端输出）
+fn log_shell(msg: &str) {
+    let Some(appdata) = appdata_root() else { return };
+    let log_dir = appdata.join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let line = format!("[{}] {msg}\n", chrono_like_now());
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("shell.log"))
+        .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
 fn spawn_service(app: &tauri::AppHandle) -> Result<Child, String> {
     let service_dir = simplify(
         app.path()
@@ -103,7 +117,15 @@ fn spawn_service(app: &tauri::AppHandle) -> Result<Child, String> {
     let java = service_dir.join("runtime").join("bin").join("java.exe");
     let jar = service_dir.join("service.jar");
     if !java.exists() || !jar.exists() {
-        // dev 模式（tauri dev）无拼装产物：静默跳过，壳内 Web 功能不受影响
+        // dev 模式（tauri dev）无拼装产物：静默跳过，壳内 Web 功能不受影响。
+        // 日志先行（payload 缺失也是诊断信息），再返回——保证 shell.log 一定有壳侧轨迹
+        let _ = log_shell(&format!(
+            "spawn: service payload 缺失（java={} exists={} / jar={} exists={}），跳过拉起",
+            java.to_string_lossy(),
+            java.exists(),
+            jar.to_string_lossy(),
+            jar.exists(),
+        ));
         return Err("service payload not bundled (dev 模式无 resources/service，跳过拉起)".into());
     }
     let appdata = appdata_root().ok_or("APPDATA 环境变量不存在")?;
@@ -141,33 +163,41 @@ fn spawn_service(app: &tauri::AppHandle) -> Result<Child, String> {
     }
 
     // 壳侧诊断：记录实际使用的资源目录与完整命令行（排查资源定位/参数问题）
-    let diag = format!(
-        "[{}] spawn: resource_dir={}\n  java={}\n  args={:?}\n",
-        chrono_like_now(),
+    log_shell(&format!(
+        "spawn: resource_dir={}\n  java={}\n  args={:?}",
         app.path().resource_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(),
         java.to_string_lossy(),
         args,
-    );
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_dir.join("shell.log"))
-        .and_then(|mut f| std::io::Write::write_all(&mut f, diag.as_bytes()));
+    ));
 
     Command::new(java)
         .args(args)
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err))
         .spawn()
-        .map_err(|e| format!("拉起服务端失败: {e}"))
+        .map_err(|e| {
+            log_shell(&format!("spawn 失败: {e}"));
+            format!("拉起服务端失败: {e}")
+        })
 }
 
 #[derive(serde::Serialize)]
 struct ServiceStatus {
     running: bool,
+    /// 端口可达（壳侧 TCP 探测，绕开 WebView2 网络栈——系统代理/CORS 等因素不参与判定）
+    ready: bool,
     url: String,
     token: Option<String>,
     error: Option<String>,
+}
+
+/// 壳侧健康判定：TCP 连 127.0.0.1:8787 成功即视为 Tomcat 已就绪。
+/// 不在 WebView2 里 fetch /api/health——桌面端 fetch 受系统代理等环境因素干扰，
+/// 桥接是壳的职责，应在壳进程内闭环判定。
+fn port_ready() -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    let addr: SocketAddr = format!("127.0.0.1:{SERVICE_PORT}").parse().expect("static addr");
+    TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(800)).is_ok()
 }
 
 /// 前端自动桥接入口：确保子进程在位（死亡兜底重拉一次）并回读 data/token；
@@ -199,6 +229,7 @@ fn service_status(app: tauri::AppHandle, state: tauri::State<ServiceProcess>) ->
         .filter(|t| !t.is_empty());
     ServiceStatus {
         running: alive,
+        ready: port_ready(),
         url: SERVICE_URL.into(),
         token,
         error,
