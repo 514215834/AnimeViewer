@@ -1214,6 +1214,16 @@ async function onImportFile(ev: Event) {
           </NCollapseItem>
         </NCollapse>
 
+        <!-- v1.0 D3 关于与开源许可（桌面版随包分发的第三方组件，GPL 合规标注） -->
+        <NFormItem v-if="desktop" label="关于与开源许可">
+          <div class="license-box">
+            <span>桌面版随包分发的第三方组件（均以独立进程调用，不与应用构成单一程序，许可不传染）：</span>
+            <span>· ffmpeg / ffprobe —— gyan.dev full build（GPL v3，含 libx264）；源码见 ffmpeg.org，许可文本随包附于安装目录 service\licenses\</span>
+            <span>· aria2 1.37.0 —— 官方 Windows build（GPL v2）；源码见 github.com/aria2/aria2，许可文本随包同上</span>
+            <span>· 应用壳 Tauri（MIT/Apache-2.0）；界面 Vue 3、Naive UI、ArtPlayer、hls.js 等遵循各自开源许可</span>
+          </div>
+        </NFormItem>
+
         <NFormItem label="诊断信息（仅存本地，不含 Token；遇到异常可复制后反馈）">
           <div class="diag-box">
             <div class="diag-meta">
@@ -1470,6 +1480,16 @@ async function onImportFile(ev: Event) {
 }
 
 .svc-mode-status {
+  font-size: 12.5px;
+  color: var(--av-text-secondary);
+}
+
+/* v1.0 D3 关于与开源许可 */
+.license-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   font-size: 12.5px;
   color: var(--av-text-secondary);
 }
