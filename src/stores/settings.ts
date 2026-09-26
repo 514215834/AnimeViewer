@@ -5,6 +5,8 @@ export type DataSource = 'online' | 'demo'
 export type ThemeMode = 'dark' | 'light'
 /** 图片清晰度：极致=400px 高清=200px 省流=150px（lain 封面仅支持 200/400 两档缩放 + 150px common） */
 export type ImageQuality = 'extreme' | 'high' | 'saver'
+/** v1.0 T4 桌面通知范围：doing=仅「在看」条目，all=全部追番库 */
+export type NotifyScope = 'doing' | 'all'
 
 export interface SettingsState {
   theme: ThemeMode
@@ -40,6 +42,11 @@ export interface SettingsState {
   transcodePreset: 'superfast' | 'fast' | 'medium'
   /** v0.29 Q2 更新提醒：启动/切回应用时今日追番有新话的 toast 提醒（默认开） */
   updateNotify: boolean
+  /** v1.0 T4 桌面端「今日更新」系统通知（Tauri 版专属；默认关，关闭后仅保留应用内提醒） */
+  desktopNotifyEnabled: boolean
+  desktopNotifyScope: NotifyScope
+  /** 通知检查间隔（分钟） */
+  desktopNotifyIntervalMin: number
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -71,6 +78,9 @@ export const DEFAULT_SETTINGS: SettingsState = {
   transcodeEnabled: true,
   transcodePreset: 'superfast',
   updateNotify: true,
+  desktopNotifyEnabled: false,
+  desktopNotifyScope: 'doing',
+  desktopNotifyIntervalMin: 60,
 }
 
 export const useSettingsStore = defineStore('settings', {

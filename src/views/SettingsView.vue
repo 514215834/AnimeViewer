@@ -20,11 +20,13 @@ import {
 } from 'naive-ui'
 import { SettingsOutline, ServerOutline, TrashOutline } from '@vicons/ionicons5'
 import { DEFAULT_SETTINGS, useSettingsStore } from '../stores/settings'
-import type { ImageQuality, SettingsState } from '../stores/settings'
+import type { ImageQuality, NotifyScope, SettingsState } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
 import { useNsfwStore } from '../stores/nsfw'
 import { useSyncStore } from '../stores/sync'
 import { applyImageMirror } from '../utils/image'
+import { sendTestNotification } from '../utils/notify'
+import { isTauri } from '../utils/tauri'
 import { bangumiApi, ApiError, clearApiCache } from '../api/bangumi'
 import { idbClear, idbStats } from '../utils/idbCache'
 import type { IdbStats } from '../utils/idbCache'
@@ -126,6 +128,39 @@ function applyDraftBase() {
 }
 
 const libraryDirtyCount = computed(() => sync.pendingPushCount)
+
+/* ── v1.0 T4 桌面通知（Tauri 打包版专属；开关默认关闭——2026-09-12 评审决议） ── */
+const desktop = isTauri()
+const NOTIFY_SCOPE_OPTIONS: { label: string; value: NotifyScope }[] = [
+  { label: '仅「在看」条目', value: 'doing' },
+  { label: '全部追番库', value: 'all' },
+]
+const NOTIFY_INTERVAL_OPTIONS: { label: string; value: number }[] = [
+  { label: '15 分钟', value: 15 },
+  { label: '30 分钟', value: 30 },
+  { label: '1 小时', value: 60 },
+  { label: '2 小时', value: 120 },
+  { label: '6 小时', value: 240 },
+]
+const testingNotify = ref(false)
+async function testNotify() {
+  if (testingNotify.value) return
+  testingNotify.value = true
+  try {
+    // 先落盘草稿中的通知配置，保证测试的就是保存后的行为
+    settings.applyPatch({
+      desktopNotifyEnabled: draft.desktopNotifyEnabled,
+      desktopNotifyScope: draft.desktopNotifyScope,
+      desktopNotifyIntervalMin: draft.desktopNotifyIntervalMin,
+    })
+    const ok = await sendTestNotification()
+    if (ok) message.success('测试通知已发送（未弹出请检查系统通知权限 / 勿扰模式）')
+    else message.error('通知不可用：需要 Tauri 桌面端环境且系统已授权通知')
+  } finally {
+    testingNotify.value = false
+  }
+}
+
 
 /* ── H4 诊断信息：本地错误日志只读展示 + 一键复制，不做任何上报 ── */
 const appVersion = __APP_VERSION__
@@ -536,6 +571,9 @@ function save() {
     transcodeEnabled: draft.transcodeEnabled,
     transcodePreset: draft.transcodePreset,
     updateNotify: draft.updateNotify,
+    desktopNotifyEnabled: draft.desktopNotifyEnabled,
+    desktopNotifyScope: draft.desktopNotifyScope,
+    desktopNotifyIntervalMin: draft.desktopNotifyIntervalMin,
   })
   Object.assign(draft, settings.$state)
   clearApiCache()
@@ -772,6 +810,41 @@ async function onImportFile(ev: Event) {
               <span class="playback-hint-title">今日更新提醒</span>
             </div>
           </div>
+        </NFormItem>
+
+        <!-- v1.0 T4 桌面通知（Tauri 打包版专属；Web 环境仅展示说明） -->
+        <NFormItem label="桌面通知（Tauri 桌面版专属）">
+          <div v-if="desktop" class="notify-box">
+            <div class="playback-box" title="开启后按检查间隔比对周历与追番库，仅对今日新集弹系统通知（默认关，关闭后仅保留应用内提醒）">
+              <NSwitch v-model:value="draft.desktopNotifyEnabled">
+                <template #checked>开</template>
+                <template #unchecked>关</template>
+              </NSwitch>
+              <span class="playback-hint-title">今日更新系统通知</span>
+            </div>
+            <div v-if="draft.desktopNotifyEnabled" class="notify-opts">
+              <div class="notify-opt">
+                <span class="notify-opt-label">通知范围</span>
+                <NSelect
+                  v-model:value="draft.desktopNotifyScope"
+                  :options="NOTIFY_SCOPE_OPTIONS"
+                  size="small"
+                  style="width: 200px"
+                />
+              </div>
+              <div class="notify-opt">
+                <span class="notify-opt-label">检查间隔</span>
+                <NSelect
+                  v-model:value="draft.desktopNotifyIntervalMin"
+                  :options="NOTIFY_INTERVAL_OPTIONS"
+                  size="small"
+                  style="width: 160px"
+                />
+              </div>
+              <NButton size="small" secondary :loading="testingNotify" @click="testNotify">发送测试通知</NButton>
+            </div>
+          </div>
+          <span v-else class="notify-web-hint">当前为浏览器环境；系统通知仅在 Tauri 桌面版可用，Web 端保留上方「更新提醒」应用内提醒</span>
         </NFormItem>
 
         <NFormItem label="缓存管理（详情/子资源/R18 探测的离线缓存，不影响收藏与设置数据）">
@@ -1324,6 +1397,38 @@ async function onImportFile(ev: Event) {
   color: var(--av-text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* v1.0 T4 桌面通知配置（选项横排可换行；Web 环境提示行） */
+.notify-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.notify-opts {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.notify-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notify-opt-label {
+  font-size: 13px;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.notify-web-hint {
+  font-size: 12.5px;
+  opacity: 0.75;
 }
 
 /* v0.14 S5 媒体服务 */

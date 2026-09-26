@@ -5,6 +5,7 @@ import type { GlobalThemeOverrides } from 'naive-ui'
 import { useSettingsStore } from './stores/settings'
 import { useSyncStore } from './stores/sync'
 import { useLibraryStore } from './stores/library'
+import { startNotifyScheduler } from './utils/notify'
 
 const settings = useSettingsStore()
 const sync = useSyncStore()
@@ -27,9 +28,11 @@ watch(
 )
 
 // 启动时静默自动同步一次（有 Token 且在线模式时）；
-// 演示模式（含运行中切换）触发演示追番库异步播种（v0.10 P1，demo 模块按需加载）
+// 演示模式（含运行中切换）触发演示追番库异步播种（v0.10 P1，demo 模块按需加载）；
+// v1.0 T4 桌面通知调度器（仅 Tauri 环境生效，Web 下零开销空操作）
 onMounted(() => {
   void sync.autoSyncOnce()
+  startNotifyScheduler()
 })
 watch(
   () => settings.isDemo,

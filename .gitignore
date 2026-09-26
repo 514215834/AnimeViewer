@@ -21,6 +21,9 @@ tsconfig.tsbuildinfo
 .zcode/
 .tmp_*.json
 
-# Tauri 构建产物残留（v1.0 桌面化时重建工程）
+# 桌面端构建产物留存目录（从 src-tauri/target/release 拷贝；target/ 与 gen/ 由 src-tauri/.gitignore 忽略）
 release/
-src-tauri/
+
+# E2E 产物与报告
+test-results/
+playwright-report/

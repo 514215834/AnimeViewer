@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "AnimeViewer 桌面端默认能力：HTTP 转发（自定义 UA / 免 CORS，放行 https 以支持自定义反代）+ 系统通知",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://**" }]
+    },
+    "notification:default"
+  ]
+}

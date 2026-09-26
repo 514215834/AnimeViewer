@@ -1,6 +1,7 @@
 import { useSettingsStore } from '../stores/settings'
 import { createTtlCache } from '../utils/cache'
 import { idbGet, idbSet, idbClear } from '../utils/idbCache'
+import { desktopUserAgent, isTauri } from '../utils/tauri'
 import type {
   BangumiMe,
   CalendarDay,
@@ -88,6 +89,16 @@ function baseUrl(): string {
   return (s.apiBaseUrl || DEFAULT_BASE).replace(/\/+$/, '')
 }
 
+/** v1.0 T2 桌面端请求通道：惰性加载 tauri-plugin-http（动态 import，Web 构建产物不含此模块）。
+ *  请求经 Rust 侧发出——可注入自定义 User-Agent（浏览器属 Forbidden header 不可设），
+ *  且不受 CORS 限制（legacy /calendar 预检限制、OAuth 跨域隐患均消失） */
+type TauriFetch = (input: string, init?: RequestInit) => Promise<Response>
+let tauriFetchImpl: TauriFetch | null = null
+async function ensureTauriFetch(): Promise<TauriFetch> {
+  tauriFetchImpl ??= (await import('@tauri-apps/plugin-http')).fetch as TauriFetch
+  return tauriFetchImpl
+}
+
 async function doFetch<T>(path: string, init: RequestInit | undefined, token: string | undefined): Promise<T> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -96,7 +107,15 @@ async function doFetch<T>(path: string, init: RequestInit | undefined, token: st
   if (token) headers.Authorization = `Bearer ${token}`
   let res: Response
   try {
-    res = await fetch(baseUrl() + path, { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    if (isTauri()) {
+      res = await (await ensureTauriFetch())(baseUrl() + path, {
+        ...init,
+        headers: { ...headers, 'User-Agent': desktopUserAgent() },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
+    } else {
+      res = await fetch(baseUrl() + path, { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    }
   } catch (e) {
     // v0.27 C2（§5N 补记三回退件复用）：网络层失败（超时 / DNS 污染被阻断 / CORS 预检失败落到的
     // TypeError "Failed to fetch"——无 HTTP 状态）转可读错误，不再把技术性文本抛给上层；
