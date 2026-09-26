@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { desktopServiceState } from '../utils/desktopService'
 import MainLayout from '../layouts/MainLayout.vue'
 
 const router = createRouter({
@@ -32,7 +33,9 @@ const router = createRouter({
 })
 
 router.afterEach((to) => {
-  document.title = to.meta.title ? `${to.meta.title} · AnimeViewer` : 'AnimeViewer'
+  // 桌面端窗口标题拼壳构建时刻（用户自证 exe 代次——多代拷贝混存的排障锚点；Web 端 buildAt 为空不加）
+  const build = desktopServiceState.buildAt ? ` (build ${desktopServiceState.buildAt})` : ''
+  document.title = to.meta.title ? `${to.meta.title} · AnimeViewer${build}` : `AnimeViewer${build}`
 })
 
 export default router

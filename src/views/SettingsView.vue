@@ -889,7 +889,9 @@ async function onImportFile(ev: Event) {
                   <NRadioButton value="external">外接服务</NRadioButton>
                 </NRadioGroup>
                 <span v-if="draft.desktopSvcMode === 'builtin'" class="svc-mode-status">
-                  <template v-if="desktopServiceState.ready">已就绪 · {{ desktopServiceState.url }}（配置已自动填充）</template>
+                  <template v-if="desktopServiceState.ready">
+                    已就绪 · {{ desktopServiceState.url }}（配置已自动填充 · 壳 build {{ desktopServiceState.buildAt }}）
+                  </template>
                   <template v-else-if="desktopServiceState.checking">内置服务启动中…（{{ desktopServiceState.elapsed }}s；杀软首次扫描可能耗时较长，就绪后自动填充）</template>
                   <template v-else-if="desktopServiceState.error">{{ desktopServiceState.error }}</template>
                   <template v-else>等待检测</template>

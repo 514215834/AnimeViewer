@@ -93,6 +93,32 @@ fn chrono_like_now() -> String {
     format!("t+{t}s")
 }
 
+/// 构建时刻（build.rs 注入，epoch 秒）：用户侧自证 exe 代次——同一目录可能存在多代拷贝，
+/// 桌面化排障第一原则是确认「跑的哪一版」
+fn build_at() -> String {
+    let ts: u64 = env!("AV_BUILD_AT").parse().unwrap_or(0);
+    // 简易 UTC → 本地粗略显示（+8h，仅用于代次识别，不作精确时间）
+    let local = ts + 8 * 3600;
+    let days = local / 86400;
+    let secs = local % 86400;
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    // epoch 1970-01-01 起的民用日期（简化算法足够标识代次）
+    let mut y = 1970i64;
+    let mut d = days as i64;
+    loop {
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let len = if leap { 366 } else { 365 };
+        if d < len { break; }
+        d -= len;
+        y += 1;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let ml = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut mo = 0;
+    while d >= ml[mo] { d -= ml[mo]; mo += 1; }
+    format!("{y}-{:02}-{:02} {:02}:{:02}:{:02}", mo + 1, d + 1, h, m, s)
+}
+
 /// 壳侧诊断日志：%APPDATA%/AnimeViewer/logs/shell.log——拉起失败/资源缺失也落盘，
 /// 用户环境"内置服务不可达"类问题先看此文件（壳视角命令行）再 service.log（服务端输出）
 fn log_shell(msg: &str) {
@@ -189,6 +215,8 @@ struct ServiceStatus {
     url: String,
     token: Option<String>,
     error: Option<String>,
+    /// 壳构建时刻（用户侧自证 exe 代次）
+    build_at: String,
 }
 
 /// 壳侧健康判定：TCP 连 127.0.0.1:8787 成功即视为 Tomcat 已就绪。
@@ -233,6 +261,7 @@ fn service_status(app: tauri::AppHandle, state: tauri::State<ServiceProcess>) ->
         url: SERVICE_URL.into(),
         token,
         error,
+        build_at: build_at(),
     }
 }
 
@@ -258,6 +287,16 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![service_status])
         .setup(|app| {
+            // 版本自证：窗口标题带构建时刻 + shell.log 首行记录（用户侧多代 exe 混存的排障锚点）
+            let build_tag = format!("AnimeViewer · 动漫追番面板 (build {})", build_at());
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_title(&build_tag);
+            }
+            log_shell(&format!(
+                "shell 启动：build={} pid={}",
+                build_at(),
+                std::process::id()
+            ));
             // 启动即拉起内置服务；失败不阻断（如 dev 模式无产物），service_status 兜底重拉
             let state: tauri::State<ServiceProcess> = app.state();
             match spawn_service(app.handle()) {

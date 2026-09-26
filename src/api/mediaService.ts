@@ -397,7 +397,7 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = 10000): 
       signal: ctrl.signal,
       headers: { 'X-AV-Token': svcToken, ...(init?.headers ?? {}) },
     })
-    if (res.status === 401) throw new ServiceError('unauthorized', '媒体服务 Token 不正确')
+    if (res.status === 401) throw new ServiceError('unauthorized', '媒体服务 Token 不正确（内置服务请点设置页「重新检测」或重启应用自动同步）')
     if (res.status === 409) {
       // 409 语义随端点不同（扫描进行中 / 任务已存在 / 任务已结束）——真实原因在响应体
       let msg = '扫描正在进行中'
