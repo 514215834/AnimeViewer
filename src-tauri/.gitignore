@@ -2,3 +2,5 @@
 /target/
 # Tauri 生成目录（schema / 平台工程）
 /gen/
+# 内置服务拼装产物（jlink JRE + fat jar + D3 二进制，scripts/build-service.mjs 可重建）
+/resources/

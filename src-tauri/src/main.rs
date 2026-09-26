@@ -1,6 +1,8 @@
 // 发布版隐藏控制台窗口
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use tauri::Manager;
 
 /// Windows 系统代理 → 环境变量桥接：plugin-http 的 reqwest 仅读 HTTP(S)_PROXY 环境变量，
@@ -47,6 +49,162 @@ fn apply_system_proxy() {
     }
 }
 
+// ── v1.0 D2 内置媒体服务 sidecar ──────────────────────────────────────────────
+// 壳启动即拉起 resources/service/（jlink 裁剪 JRE + service.jar，scripts/build-service.mjs 拼装），
+// 注入：--av.data-dir=%APPDATA%/AnimeViewer/data（数据与 Web 形态工作目录隔离）、
+//       --av.parent-pid=<壳pid>（服务端心跳，壳失联后 ~5s 优雅退出并收尾 aria2）、
+//       包内 bin/{ffmpeg,ffprobe,aria2c}.exe 存在时注入对应路径（D3 起随包，存在才注入）。
+// 退出策略：壳退出**不硬杀**子进程——硬杀会跳过 @PreDestroy 使 aria2c 变孤儿，
+//   由服务端 parent-pid 心跳自行优雅退出（watchdog 单元测试 + 实弹验证通过）。
+
+const SERVICE_PORT: u16 = 8787;
+const SERVICE_URL: &str = "http://127.0.0.1:8787";
+
+/// 服务端子进程句柄（setup 拉起；service_status 兜底重拉）
+struct ServiceProcess {
+    child: Mutex<Option<Child>>,
+    /// 上次拉起时刻：重拉冷却用——服务端异常退出时（如杀软扫描锁文件首跑竞态）
+    /// 防止前端轮询驱动的无脑重拉风暴
+    last_spawn: Mutex<Option<std::time::Instant>>,
+}
+
+const RESPAWN_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn appdata_root() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("AnimeViewer"))
+}
+
+/// 去掉 Tauri resource_dir 的 `\\?\` 扩展前缀：CreateProcess 认这种路径，
+/// 但 JVM 打不开 `-jar \\?\G:\...` 形式的 jar（Boot loader 类加载失败 → ClassNotFoundException）
+fn simplify(p: std::path::PathBuf) -> std::path::PathBuf {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(stripped) => std::path::PathBuf::from(stripped.to_owned()),
+        None => p,
+    }
+}
+
+/// 简易本地时间戳（诊断日志用，不引 chrono）
+fn chrono_like_now() -> String {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("t+{t}s")
+}
+
+fn spawn_service(app: &tauri::AppHandle) -> Result<Child, String> {
+    let service_dir = simplify(
+        app.path()
+            .resource_dir()
+            .map_err(|e| format!("resource_dir: {e}"))?,
+    )
+    .join("service");
+    let java = service_dir.join("runtime").join("bin").join("java.exe");
+    let jar = service_dir.join("service.jar");
+    if !java.exists() || !jar.exists() {
+        // dev 模式（tauri dev）无拼装产物：静默跳过，壳内 Web 功能不受影响
+        return Err("service payload not bundled (dev 模式无 resources/service，跳过拉起)".into());
+    }
+    let appdata = appdata_root().ok_or("APPDATA 环境变量不存在")?;
+    let data_dir = appdata.join("data");
+    let log_dir = appdata.join("logs");
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("service.log"))
+        .map_err(|e| format!("打开服务日志失败: {e}"))?;
+    let log_err = log.try_clone().map_err(|e| e.to_string())?;
+
+    let mut args: Vec<String> = vec![
+        "-jar".into(),
+        jar.to_string_lossy().into_owned(),
+        "--server.address=127.0.0.1".into(),
+        format!("--server.port={SERVICE_PORT}"),
+        format!("--av.data-dir={}", data_dir.to_string_lossy()),
+        format!("--av.parent-pid={}", std::process::id()),
+    ];
+    let bin_dir = service_dir.join("bin");
+    let ffmpeg = bin_dir.join("ffmpeg.exe");
+    let ffprobe = bin_dir.join("ffprobe.exe");
+    let aria2 = bin_dir.join("aria2c.exe");
+    if ffmpeg.exists() {
+        args.push(format!("--av.ffmpeg-path={}", ffmpeg.to_string_lossy()));
+        if ffprobe.exists() {
+            args.push(format!("--av.ffprobe-path={}", ffprobe.to_string_lossy()));
+        }
+    }
+    if aria2.exists() {
+        args.push(format!("--av.aria2.path={}", aria2.to_string_lossy()));
+    }
+
+    // 壳侧诊断：记录实际使用的资源目录与完整命令行（排查资源定位/参数问题）
+    let diag = format!(
+        "[{}] spawn: resource_dir={}\n  java={}\n  args={:?}\n",
+        chrono_like_now(),
+        app.path().resource_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(),
+        java.to_string_lossy(),
+        args,
+    );
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("shell.log"))
+        .and_then(|mut f| std::io::Write::write_all(&mut f, diag.as_bytes()));
+
+    Command::new(java)
+        .args(args)
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err))
+        .spawn()
+        .map_err(|e| format!("拉起服务端失败: {e}"))
+}
+
+#[derive(serde::Serialize)]
+struct ServiceStatus {
+    running: bool,
+    url: String,
+    token: Option<String>,
+    error: Option<String>,
+}
+
+/// 前端自动桥接入口：确保子进程在位（死亡兜底重拉一次）并回读 data/token；
+/// HTTP 就绪由前端自行轮询 /api/health 判定（本命令不做网络请求）
+#[tauri::command]
+fn service_status(app: tauri::AppHandle, state: tauri::State<ServiceProcess>) -> ServiceStatus {
+    let mut guard = state.child.lock().expect("service state poisoned");
+    let mut alive = match guard.as_mut() {
+        Some(c) => matches!(c.try_wait(), Ok(None)),
+        _ => false,
+    };
+    let mut error: Option<String> = None;
+    if !alive {
+        let mut last = state.last_spawn.lock().expect("spawn state poisoned");
+        if last.map_or(true, |t| t.elapsed() >= RESPAWN_COOLDOWN) {
+            match spawn_service(&app) {
+                Ok(c) => {
+                    *guard = Some(c);
+                    alive = true;
+                }
+                Err(e) => error = Some(e),
+            }
+            *last = Some(std::time::Instant::now());
+        }
+    }
+    let token = appdata_root()
+        .and_then(|d| std::fs::read_to_string(d.join("data").join("token")).ok())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    ServiceStatus {
+        running: alive,
+        url: SERVICE_URL.into(),
+        token,
+        error,
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     apply_system_proxy();
@@ -63,6 +221,26 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .manage(ServiceProcess {
+            child: Mutex::new(None),
+            last_spawn: Mutex::new(None),
+        })
+        .invoke_handler(tauri::generate_handler![service_status])
+        .setup(|app| {
+            // 启动即拉起内置服务；失败不阻断（如 dev 模式无产物），service_status 兜底重拉
+            let state: tauri::State<ServiceProcess> = app.state();
+            match spawn_service(app.handle()) {
+                Ok(child) => {
+                    *state.child.lock().expect("service state poisoned") = Some(child);
+                    *state.last_spawn.lock().expect("spawn state poisoned") = Some(std::time::Instant::now());
+                }
+                Err(e) => eprintln!("[AnimeViewer] 内置服务未拉起: {e}"),
+            }
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // 退出不做硬杀：服务端 parent-pid 心跳在壳退出后 ~5s 自行优雅退出
+        });
 }

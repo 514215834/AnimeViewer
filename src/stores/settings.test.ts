@@ -39,6 +39,8 @@ describe('settings 持久化', () => {
     expect(s.desktopNotifyEnabled).toBe(false)
     expect(s.desktopNotifyScope).toBe('doing')
     expect(s.desktopNotifyIntervalMin).toBe(60)
+    // v1.0 D2 内置媒体服务模式默认内置（桌面版自动桥接）
+    expect(s.desktopSvcMode).toBe('builtin')
   })
 
   it('applyPatch 写状态并落盘，重建 store 后读回（模拟刷新）', () => {

@@ -7,6 +7,8 @@ export type ThemeMode = 'dark' | 'light'
 export type ImageQuality = 'extreme' | 'high' | 'saver'
 /** v1.0 T4 桌面通知范围：doing=仅「在看」条目，all=全部追番库 */
 export type NotifyScope = 'doing' | 'all'
+/** v1.0 D2 内置媒体服务模式（仅桌面版有意义）：builtin=随应用启动的 sidecar（地址/Token 自动填充），external=手动填写（Web 形态同款） */
+export type DesktopSvcMode = 'builtin' | 'external'
 
 export interface SettingsState {
   theme: ThemeMode
@@ -47,6 +49,8 @@ export interface SettingsState {
   desktopNotifyScope: NotifyScope
   /** 通知检查间隔（分钟） */
   desktopNotifyIntervalMin: number
+  /** v1.0 D2 内置/外接媒体服务模式（桌面版专属；默认内置） */
+  desktopSvcMode: DesktopSvcMode
 }
 
 const STORAGE_KEY = 'animeviewer:settings'
@@ -81,6 +85,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   desktopNotifyEnabled: false,
   desktopNotifyScope: 'doing',
   desktopNotifyIntervalMin: 60,
+  desktopSvcMode: 'builtin',
 }
 
 export const useSettingsStore = defineStore('settings', {

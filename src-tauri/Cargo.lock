@@ -45,6 +45,7 @@ dependencies = [
 name = "anime-viewer"
 version = "1.0.0"
 dependencies = [
+ "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-http",

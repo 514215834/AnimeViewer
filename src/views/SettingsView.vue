@@ -27,6 +27,7 @@ import { useSyncStore } from '../stores/sync'
 import { applyImageMirror } from '../utils/image'
 import { sendTestNotification } from '../utils/notify'
 import { isTauri } from '../utils/tauri'
+import { desktopServiceState, recheckBuiltinService } from '../utils/desktopService'
 import { bangumiApi, ApiError, clearApiCache } from '../api/bangumi'
 import { idbClear, idbStats } from '../utils/idbCache'
 import type { IdbStats } from '../utils/idbCache'
@@ -574,6 +575,7 @@ function save() {
     desktopNotifyEnabled: draft.desktopNotifyEnabled,
     desktopNotifyScope: draft.desktopNotifyScope,
     desktopNotifyIntervalMin: draft.desktopNotifyIntervalMin,
+    desktopSvcMode: draft.desktopSvcMode,
   })
   Object.assign(draft, settings.$state)
   clearApiCache()
@@ -880,15 +882,40 @@ async function onImportFile(ev: Event) {
               </span>
             </template>
             <div class="svc-box">
-              <div class="svc-grid">
-                <NInput v-model:value="draft.svcUrl" placeholder="服务地址，如 http://127.0.0.1:8787" clearable />
-                <NInput
-                  v-model:value="draft.svcToken"
-                  type="password"
-                  show-password-on="click"
-                  placeholder="配对 Token（服务首次启动时打印到控制台并写入 data/token）"
-                />
+              <!-- v1.0 D2 内置/外接模式（桌面版专属；Web 构建无此行，行为同外接） -->
+              <div v-if="desktop" class="svc-mode-row">
+                <NRadioGroup v-model:value="draft.desktopSvcMode" size="small">
+                  <NRadioButton value="builtin">内置服务（推荐）</NRadioButton>
+                  <NRadioButton value="external">外接服务</NRadioButton>
+                </NRadioGroup>
+                <span v-if="draft.desktopSvcMode === 'builtin'" class="svc-mode-status">
+                  <template v-if="desktopServiceState.ready">已就绪 · {{ desktopServiceState.url }}（配置已自动填充）</template>
+                  <template v-else-if="desktopServiceState.checking">内置服务启动中…</template>
+                  <template v-else-if="desktopServiceState.error">{{ desktopServiceState.error }}</template>
+                  <template v-else>等待检测</template>
+                </span>
+                <NButton
+                  v-if="draft.desktopSvcMode === 'builtin'"
+                  size="tiny"
+                  quaternary
+                  :loading="desktopServiceState.checking"
+                  @click="recheckBuiltinService"
+                >
+                  重新检测
+                </NButton>
               </div>
+              <template v-if="!desktop || draft.desktopSvcMode === 'external'">
+                <div class="svc-grid">
+                  <NInput v-model:value="draft.svcUrl" placeholder="服务地址，如 http://127.0.0.1:8787" clearable />
+                  <NInput
+                    v-model:value="draft.svcToken"
+                    type="password"
+                    show-password-on="click"
+                    placeholder="配对 Token（服务首次启动时打印到控制台并写入 data/token）"
+                  />
+                </div>
+              </template>
+              <div v-else class="svc-tip">内置服务随应用自动启动并自动填充地址与 Token；改用自建服务请切换「外接服务」。</div>
               <div class="svc-status">
                 <template v-if="svcError">
                   <span class="svc-err">{{ svcError }}</span>
@@ -1429,6 +1456,20 @@ async function onImportFile(ev: Event) {
 .notify-web-hint {
   font-size: 12.5px;
   opacity: 0.75;
+}
+
+/* v1.0 D2 内置/外接媒体服务模式行 */
+.svc-mode-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.svc-mode-status {
+  font-size: 12.5px;
+  color: var(--av-text-secondary);
 }
 
 /* v0.14 S5 媒体服务 */
