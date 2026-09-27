@@ -196,11 +196,20 @@ fn spawn_service(app: &tauri::AppHandle) -> Result<Child, String> {
         args,
     ));
 
-    Command::new(java)
-        .args(args)
+    let mut cmd = Command::new(java);
+    cmd.args(args)
         .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_err))
-        .spawn()
+        .stderr(Stdio::from(log_err));
+    // CREATE_NO_WINDOW：壳是 GUI 程序（windows_subsystem="windows"），派生控制台程序 java.exe 时
+    // Windows 会为其新建控制台窗口（用户看到的"cmd 窗口"），此标志抑制之；
+    // stdout/stderr 已重定向 service.log，窗口里本无内容；java 之下的 aria2c/ffmpeg 等孙进程
+    // 继承该不可见控制台，同样不再弹窗。dev 模式壳本身有控制台，继承场景下此标志无副作用。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd.spawn()
         .map_err(|e| {
             log_shell(&format!("spawn 失败: {e}"));
             format!("拉起服务端失败: {e}")

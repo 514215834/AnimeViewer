@@ -27,6 +27,11 @@ tauri-plugin-notification = "2"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 
+[features]
+# 裸 cargo build 缺此 feature 时，壳运行期会加载 devUrl（localhost:5173）而非内嵌资源
+# （2026-09-27 补记五踩坑：用户见「localhost 拒绝连接」）；npm run tauri build 会自动注入
+custom-protocol = ["tauri/custom-protocol"]
+
 [profile.release]
 # 面板类应用：体积优先，牺牲少量运行时性能换更小的绿色版 exe
 codegen-units = 1
