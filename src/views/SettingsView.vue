@@ -34,7 +34,7 @@ import type { IdbStats } from '../utils/idbCache'
 import { clearErrLog, formatDiagnostics, readErrLog } from '../utils/errlog'
 import type { ErrLogEntry } from '../utils/errlog'
 import { exportMedia, importMedia } from '../utils/mediaStore'
-import { mediaService, ServiceError, type SvcDownloadEngine, type SvcHealth, type SvcStatus } from '../api/mediaService'
+import { mediaService, ServiceError, type SvcDownloadEngine, type SvcHealth, type SvcNetworkSettings, type SvcStatus } from '../api/mediaService'
 import MediaLibraryDrawer from '../components/MediaLibraryDrawer.vue'
 
 const message = useMessage()
@@ -341,6 +341,53 @@ async function saveDownloadSettings() {
   }
 }
 
+/* ── v1.0 补记四 后端出口网络线路（配置存服务端 SQLite settings 表，保存即时生效——
+ *   Bangumi 匹配 / 订阅检索 / 在线解析 / 在线流转发 / 种子抓取共用；与 BT 下载代理相互独立） ── */
+const netSaving = ref(false)
+const netError = ref('')
+const net = reactive({
+  proxyMode: 'auto' as SvcNetworkSettings['proxyMode'],
+  proxyHost: '',
+  proxyPort: 7897 as number | null,
+})
+const NET_MODE_OPTIONS = [
+  { label: 'auto · 直连失败自动经代理重试（默认）', value: 'auto' },
+  { label: 'direct · 仅直连', value: 'direct' },
+  { label: 'proxy · 仅代理', value: 'proxy' },
+]
+const netSummary = computed(() =>
+  net.proxyHost.trim()
+    ? `线路 ${net.proxyMode} · 代理 ${net.proxyHost.trim()}:${net.proxyPort ?? '?'}`
+    : `线路 ${net.proxyMode} · 未配置代理地址`,
+)
+
+async function loadNetworkSettings() {
+  if (!settings.svcEnabled) return
+  netError.value = ''
+  try {
+    Object.assign(net, await mediaService.networkSettings())
+  } catch (e) {
+    netError.value = e instanceof ServiceError ? e.message : String(e)
+  }
+}
+
+async function saveNetworkSettings() {
+  netSaving.value = true
+  netError.value = ''
+  try {
+    Object.assign(net, await mediaService.saveNetworkSettings({
+      proxyMode: net.proxyMode,
+      proxyHost: net.proxyHost.trim(),
+      proxyPort: net.proxyPort ? Number(net.proxyPort) : null,
+    }))
+    message.success('网络线路已保存，即时生效')
+  } catch (e) {
+    netError.value = e instanceof ServiceError ? e.message : String(e)
+  } finally {
+    netSaving.value = false
+  }
+}
+
 /* ── v0.19 SU1 订阅设置（配置存服务端 SQLite settings 表；检索间隔/滤广告下限/全自动三重保护） ── */
 const subSaving = ref(false)
 const subError = ref('')
@@ -559,6 +606,7 @@ onMounted(() => {
   void sync.ensureProfile()
   void refreshCacheStats()
   if (settings.svcEnabled) void testService(true)
+  void loadNetworkSettings()
   void loadDownloadSettings()
   void loadSubscriptionSettings()
   void loadAiSettings()
@@ -574,7 +622,6 @@ function save() {
     autoNext: draft.autoNext,
     transcodeEnabled: draft.transcodeEnabled,
     transcodePreset: draft.transcodePreset,
-    updateNotify: draft.updateNotify,
     desktopNotifyEnabled: draft.desktopNotifyEnabled,
     desktopNotifyScope: draft.desktopNotifyScope,
     desktopNotifyIntervalMin: draft.desktopNotifyIntervalMin,
@@ -804,23 +851,10 @@ async function onImportFile(ev: Event) {
           </div>
         </NFormItem>
 
-        <!-- v0.29 Q2 更新提醒（本机设置，随「保存设置」生效） -->
-        <NFormItem label="更新提醒">
-          <div class="playback-col">
-            <div class="playback-box" title="启动/切回应用时，追番库今日有新话则提醒一次（默认开）">
-              <NSwitch v-model:value="draft.updateNotify">
-                <template #checked>开</template>
-                <template #unchecked>关</template>
-              </NSwitch>
-              <span class="playback-hint-title">今日更新提醒</span>
-            </div>
-          </div>
-        </NFormItem>
-
-        <!-- v1.0 T4 桌面通知（Tauri 打包版专属；Web 环境仅展示说明） -->
+        <!-- v1.0 T4 桌面通知（Tauri 打包版专属；Web 环境仅展示说明。v1.0 补记四：应用内「更新提醒」已移除，与桌面通知重复） -->
         <NFormItem label="桌面通知（Tauri 桌面版专属）">
           <div v-if="desktop" class="notify-box">
-            <div class="playback-box" title="开启后按检查间隔比对周历与追番库，仅对今日新集弹系统通知（默认关，关闭后仅保留应用内提醒）">
+            <div class="playback-box" title="开启后按检查间隔比对周历与追番库，仅对今日新集弹系统通知（默认关）">
               <NSwitch v-model:value="draft.desktopNotifyEnabled">
                 <template #checked>开</template>
                 <template #unchecked>关</template>
@@ -849,7 +883,7 @@ async function onImportFile(ev: Event) {
               <NButton size="small" secondary :loading="testingNotify" @click="testNotify">发送测试通知</NButton>
             </div>
           </div>
-          <span v-else class="notify-web-hint">当前为浏览器环境；系统通知仅在 Tauri 桌面版可用，Web 端保留上方「更新提醒」应用内提醒</span>
+          <span v-else class="notify-web-hint">当前为浏览器环境；系统通知仅在 Tauri 桌面版可用</span>
         </NFormItem>
 
         <NFormItem label="缓存管理（详情/子资源/R18 探测的离线缓存，不影响收藏与设置数据）">
@@ -942,6 +976,39 @@ async function onImportFile(ev: Event) {
               <div class="svc-tip">
                 服务默认地址 http://127.0.0.1:8787，默认仅本机可访问；部署与局域网开启方式见服务端 README。
                 配置后剧集 Tab 会显示媒体库已收录集的播放按钮。
+              </div>
+            </div>
+          </NCollapseItem>
+
+          <!-- v1.0 补记四 后端出口网络线路（Bangumi 匹配/订阅检索/在线解析/在线流转发/种子抓取共用；保存即时生效） -->
+          <NCollapseItem name="net">
+            <template #header>
+              <span class="adv-head">
+                <span class="adv-head-title">网络线路（后端出口代理）</span>
+                <span class="adv-head-sub">后端走外网请求（Bangumi 匹配、订阅检索、在线解析、在线流转发）的线路与代理</span>
+              </span>
+            </template>
+            <div class="svc-box">
+              <div class="svc-grid dl-grid">
+                <NSelect v-model:value="net.proxyMode" :options="NET_MODE_OPTIONS" placeholder="线路模式" />
+                <NInput v-model:value="net.proxyHost" placeholder="代理地址，如 127.0.0.1（留空=未配置）" clearable />
+                <NInputNumber v-model:value="net.proxyPort" :min="1" :max="65535" placeholder="代理端口">
+                  <template #prefix>端口</template>
+                </NInputNumber>
+              </div>
+              <div class="svc-status">
+                <template v-if="netError">
+                  <span class="svc-err">{{ netError }}</span>
+                </template>
+                <span v-else>{{ netSummary }}</span>
+                <div class="btn-row">
+                  <NButton secondary size="small" :loading="netSaving" :disabled="!settings.svcEnabled" @click="saveNetworkSettings">保存并应用</NButton>
+                  <NButton quaternary size="small" :disabled="!settings.svcEnabled" @click="loadNetworkSettings">重新读取</NButton>
+                </div>
+              </div>
+              <div class="svc-tip">
+                auto 直连失败自动经代理重试一次（成功线路粘性记忆）；direct 强制直连；proxy 强制走代理（需填地址与端口）。
+                代理为 HTTP(S) 出口，本机 Clash 场景填 127.0.0.1 与 7897。与 BT 下载块的「下载代理」（aria2 专用）相互独立。
               </div>
             </div>
           </NCollapseItem>
@@ -1573,6 +1640,11 @@ async function onImportFile(ev: Event) {
   flex-wrap: wrap;
   font-size: 12px;
   color: var(--av-text-secondary);
+}
+
+/* v1.0 补记四：状态行内的按钮行独占一行（横向 wrap 会把引擎就绪信息与保存/重读按钮挤同一行） */
+.svc-status .btn-row {
+  width: 100%;
 }
 
 /* v0.22 AI 区块状态行：长文案 + 按钮纵向堆叠（横向 flex 会把就绪文字与保存按钮挤同一行） */

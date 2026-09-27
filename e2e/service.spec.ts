@@ -128,3 +128,19 @@ test('mp4 直连流：Range 请求 206 + Content-Range（媒体库文件 id 动�
   const buf = await res.arrayBuffer()
   expect(buf.byteLength).toBe(1024)
 })
+
+test('网络线路设置：读取 yml 默认 → 改线路保存 → API 回读已生效', async ({ page }) => {
+  await page.goto('/#/settings')
+  await page.locator('.adv-head-title', { hasText: '网络线路' }).click()
+  // yml 默认：auto + 127.0.0.1:7897（无存储覆盖时 GET /api/network/settings 返回默认值）
+  await expect(page.locator('.svc-status')).toContainText('线路 auto · 代理 127.0.0.1:7897', { timeout: 15_000 })
+  // 切 direct 保存（折叠块 display-directive=if，打开的块内「保存并应用」唯一）
+  await page.locator('.svc-grid .n-select').first().click()
+  await page.getByText('direct · 仅直连', { exact: true }).click()
+  await page.getByRole('button', { name: '保存并应用' }).click()
+  await expect(page.locator('.svc-status')).toContainText('线路 direct', { timeout: 15_000 })
+  // API 回读：保存即时生效（Provider 刷新缓存）
+  const s = await (await svcApi('/api/network/settings')).json()
+  expect(s.proxyMode).toBe('direct')
+  expect(s.proxyHost).toBe('127.0.0.1')
+})

@@ -305,6 +305,17 @@ export interface SvcDownloadAddRequest {
   episodeSort?: number
 }
 
+/** v1.0 补记四 后端出口网络设置（线路模式 + 代理地址；Bangumi 匹配/订阅检索/在线解析/在线流转发/种子抓取） */
+export type NetworkProxyMode = 'auto' | 'direct' | 'proxy'
+
+export interface SvcNetworkSettings {
+  /** auto=直连失败自动经代理重试（默认）/ direct=仅直连 / proxy=仅代理 */
+  proxyMode: NetworkProxyMode
+  proxyHost: string
+  /** 未配置时为 null */
+  proxyPort: number | null
+}
+
 /** 磁力解析纯函数（添加弹窗预览用）：infohash / dn 显示名 / 自带 tracker 数 */
 export function parseMagnet(uri: string): { infoHash?: string; displayName?: string; trackers: number } {
   const out: { infoHash?: string; displayName?: string; trackers: number } = { trackers: 0 }
@@ -580,6 +591,19 @@ export const mediaService = {
   },
   saveDownloadSettings(s: SvcDownloadSettings): Promise<SvcDownloadSettings> {
     return request<SvcDownloadSettings>('/api/downloads/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    })
+  },
+
+  /* ── v1.0 补记四 后端出口网络线路（设置页读写，保存即时生效） ── */
+
+  networkSettings(): Promise<SvcNetworkSettings> {
+    return request<SvcNetworkSettings>('/api/network/settings')
+  },
+  saveNetworkSettings(s: SvcNetworkSettings): Promise<SvcNetworkSettings> {
+    return request<SvcNetworkSettings>('/api/network/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),

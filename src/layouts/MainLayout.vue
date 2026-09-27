@@ -33,8 +33,6 @@ import {
 import { useSettingsStore } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
 import { mediaService } from '../api/mediaService'
-import { dataSource } from '../api/dataSource'
-import { loadJson, saveJson } from '../utils/storage'
 
 const route = useRoute()
 const router = useRouter()
@@ -91,46 +89,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (notifyTimer) window.clearInterval(notifyTimer)
 })
-
-/* ── v0.29 Q2 更新提醒：启动/切回应用时对比追番库与周历（本地对比，零新增 API）——
- *   今日有新话且未看完 → toast 一次；设置开关关闭零打扰；localStorage 按日节流（每天至多一次），不与 v0.19 轮询通道重复打扰 ── */
-const UPDATE_NOTIFY_KEY = 'animeviewer:update-notify'
-
-async function checkTodayUpdates() {
-  if (!settings.updateNotify) return
-  const today = new Date().toISOString().slice(0, 10)
-  if (loadJson<string>(UPDATE_NOTIFY_KEY, '') === today) return
-  try {
-    const days = await dataSource.calendar(true)
-    const d = new Date().getDay()
-    const todayId = d === 0 ? 7 : d
-    const todayIds = new Set(days.find((x) => x.weekday.id === todayId)?.items.map((i) => i.id) ?? [])
-    const hits = library.list.filter((e) => {
-      if (e.status !== 'doing' || !todayIds.has(e.subjectId)) return false
-      // 新集判定：周历话数（较新鲜）优先，回退条目 epsTotal；话数未知无法判定 → 跳过
-      const eps = days.find((x) => x.weekday.id === todayId)?.items.find((i) => i.id === e.subjectId)?.eps
-      return eps && eps > 0 ? e.progress < eps : e.epsTotal > 0 ? e.progress < e.epsTotal : false
-    })
-    if (!hits.length) return
-    saveJson(UPDATE_NOTIFY_KEY, today)
-    const names = hits.slice(0, 3).map((e) => e.nameCn || e.name).join('、')
-    message.info(`今日更新提醒：${hits.length} 部追番有新话——${names}${hits.length > 3 ? ' 等' : ''}，去「今日」查看`, {
-      duration: 8000,
-    })
-  } catch {
-    // 周历不可达：静默（提醒是增强能力，不打扰正常浏览）
-  }
-}
-
-onMounted(() => {
-  void checkTodayUpdates()
-  document.addEventListener('visibilitychange', onVisibility)
-})
-onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisibility))
-
-function onVisibility() {
-  if (document.visibilityState === 'visible') void checkTodayUpdates()
-}
 
 /** v0.10 P4：≤768px 判定（JS 驱动布局切换，桌面布局不动） */
 const isMobile = ref(false)
