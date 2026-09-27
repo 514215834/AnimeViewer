@@ -9,9 +9,11 @@ import {
   mergeMediaImport,
   positionIdOf,
   positionKey,
+  selectDemoOriginKeys,
   watchRatio,
   WATCH_COMPLETE_RATIO,
   type MediaBinding,
+  type MediaStoreEntry,
   type WatchPosition,
 } from './mediaCore'
 
@@ -187,5 +189,74 @@ describe('v0.15 在线源与播放历史（mediaCore 扩展）', () => {
     expect(resolvePositionOwner(pos('demo-clip'), [])).toBeNull()
     expect(resolvePositionOwner(pos('f:missing:1'), [])).toBeNull()
     expect(resolvePositionOwner(pos(''), [])).toBeNull()
+  })
+})
+
+describe('selectDemoOriginKeys 播放数据双库迁移选择（v0.30 补记六）', () => {
+  const e = (key: string, value?: unknown): MediaStoreEntry => ({ key, value })
+
+  it('演示绑定级联其文件记录/字幕/进度，真实数据与设备级键留主库', () => {
+    const fk = 'f:EP01.mkv:100'
+    const entries: MediaStoreEntry[] = [
+      e('b:900001:1', { subjectId: 900001, sort: 1, type: 'file', fileKey: fk, name: 'x' }),
+      e(fk, { fileKey: fk, name: 'EP01.mkv', size: 100 }),
+      e(`sub:${fk}`, { fileKey: fk, name: 'a.vtt', vtt: '' }),
+      e(`p:${fk}`, { id: fk, position: 5, duration: 10, updatedAt: 1 }),
+      e('p:demo-clip', { id: 'demo-clip', position: 3, duration: 9, updatedAt: 2 }),
+      e('dm:900002:1', { subjectId: 900002, sort: 1, items: [] }),
+      e('i:900003', 30),
+      e('b:425:1', { subjectId: 425, sort: 1, type: 'file', fileKey: 'f:Real.mkv:1', name: 'r' }),
+      e('f:Real.mkv:1', { fileKey: 'f:Real.mkv:1', name: 'Real.mkv', size: 1 }),
+      e('p:svc:425:2', { id: 'svc:425:2', position: 1, duration: 2, updatedAt: 3 }),
+      e('dm:425:1', { subjectId: 425, sort: 1, items: [] }),
+      e('d:last', { name: 'dir' }),
+      e('k:hanime18-confirmed', true),
+    ]
+    const move = selectDemoOriginKeys(entries)
+    for (const k of ['b:900001:1', fk, `sub:${fk}`, `p:${fk}`, 'p:demo-clip', 'dm:900002:1', 'i:900003']) {
+      expect(move.has(k), k).toBe(true)
+    }
+    for (const k of ['b:425:1', 'f:Real.mkv:1', 'p:svc:425:2', 'dm:425:1', 'd:last', 'k:hanime18-confirmed']) {
+      expect(move.has(k), k).toBe(false)
+    }
+  })
+
+  it('演示条目的 URL/在线解析/服务源进度随绑定搬移', () => {
+    const entries: MediaStoreEntry[] = [
+      e('b:900004:2', { subjectId: 900004, sort: 2, type: 'url', url: 'https://a/x.mp4', name: 'u' }),
+      e('p:u:https://a/x.mp4', { id: 'u:https://a/x.mp4', position: 1, duration: 2, updatedAt: 3 }),
+      e('b:900005:1', { subjectId: 900005, sort: 1, type: 'online', videoCode: 'hc1', name: 'o' }),
+      e('p:o:hc1', { id: 'o:hc1', position: 1, duration: 2, updatedAt: 3 }),
+      e('p:svc:900006:3', { id: 'svc:900006:3', position: 1, duration: 2, updatedAt: 3 }),
+      e('p:u:https://real/z.mp4', { id: 'u:https://real/z.mp4', position: 1, duration: 2, updatedAt: 3 }),
+    ]
+    const move = selectDemoOriginKeys(entries)
+    expect(move.has('b:900004:2')).toBe(true)
+    expect(move.has('p:u:https://a/x.mp4')).toBe(true)
+    expect(move.has('b:900005:1')).toBe(true)
+    expect(move.has('p:o:hc1')).toBe(true)
+    expect(move.has('p:svc:900006:3')).toBe(true)
+    expect(move.has('p:u:https://real/z.mp4')).toBe(false)
+  })
+
+  it('同一文件被真实绑定共用时不搬（句柄/字幕/进度留主库防丢）', () => {
+    const fk = 'f:Shared.mkv:7'
+    const entries: MediaStoreEntry[] = [
+      e('b:900001:1', { subjectId: 900001, sort: 1, type: 'file', fileKey: fk, name: 'd' }),
+      e('b:425:1', { subjectId: 425, sort: 1, type: 'file', fileKey: fk, name: 'r' }),
+      e(fk, { fileKey: fk, name: 'Shared.mkv', size: 7 }),
+      e(`sub:${fk}`, { fileKey: fk, name: 's.vtt', vtt: '' }),
+      e(`p:${fk}`, { id: fk, position: 5, duration: 10, updatedAt: 1 }),
+    ]
+    const move = selectDemoOriginKeys(entries)
+    expect(move.has('b:900001:1')).toBe(true)
+    expect(move.has(fk)).toBe(false)
+    expect(move.has(`sub:${fk}`)).toBe(false)
+    expect(move.has(`p:${fk}`)).toBe(false)
+  })
+
+  it('空库/无演示键返回空集（幂等迁移第二次零命中）', () => {
+    expect(selectDemoOriginKeys([]).size).toBe(0)
+    expect(selectDemoOriginKeys([e('b:425:1', { subjectId: 425, sort: 1, type: 'file', fileKey: 'f:a:1' }), e('d:last', {})]).size).toBe(0)
   })
 })

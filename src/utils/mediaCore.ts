@@ -1,5 +1,6 @@
 /** v0.13 PL4 播放数据模型（纯逻辑层，供单测）：键规则 / 完播判定 / 文件名识别 / 导出合并。
- *  存储实现在 mediaStore.ts（IndexedDB），本文件不依赖任何浏览器存储 API。 */
+ *  存储实现在 mediaStore.ts（IndexedDB），本文件仅依赖演示条目 ID 段判断（纯函数，无浏览器存储 API）。 */
+import { isDemoSubjectId } from '../api/demoIds'
 
 /** PL3 自然看完判定阈值：播放进度 ≥95% 视为看完 */
 export const WATCH_COMPLETE_RATIO = 0.95
@@ -229,4 +230,66 @@ export function mergeMediaImport(
   }
 
   return { bindings: [...bindings.values()], positions: [...positions.values()], result: { bindingsAdded, positionsMerged } }
+}
+
+/* ── v0.30 补记六 播放数据双库迁移选择（纯函数）：从主库全量记录里挑出「演示起源」键搬入演示库。
+ *  规则：① 演示条目（900001~900014）的绑定键；② 演示固定进度 demo-clip 与 svc:{演示条目}:{sort}；
+ *  ③ 演示绑定引用的文件/URL/在线码进度与文件记录、同名字幕（同一文件被真实绑定共用时留主库防丢句柄）；
+ *  ④ 演示条目的弹幕 dm: 与片头记忆 i:。目录句柄 d: 与 18+ 记忆 k: 属设备级偏好，永不搬移。 */
+export interface MediaStoreEntry {
+  key: string
+  value: unknown
+}
+
+export function selectDemoOriginKeys(entries: readonly MediaStoreEntry[]): Set<string> {
+  const move = new Set<string>()
+  const demoFileKeys = new Set<string>()
+  const realFileKeys = new Set<string>()
+  const demoPosIds = new Set<string>([DEMO_POSITION_ID])
+
+  for (const { key, value } of entries) {
+    const m = /^b:(\d+):\d+$/.exec(key)
+    if (!m) continue
+    const b = (value ?? {}) as Partial<MediaBinding>
+    if (isDemoSubjectId(Number(m[1]))) {
+      move.add(key)
+      if (b.fileKey) demoFileKeys.add(b.fileKey)
+      if (b.url) demoPosIds.add(`u:${b.url}`)
+      if (b.videoCode) demoPosIds.add(`o:${b.videoCode}`)
+    } else if (b.fileKey) {
+      realFileKeys.add(b.fileKey)
+    }
+  }
+  // 被真实绑定共用的文件不搬（句柄/字幕/进度留主库，防在线模式播放丢句柄）
+  for (const fk of demoFileKeys) if (!realFileKeys.has(fk)) demoPosIds.add(fk)
+
+  for (const { key } of entries) {
+    let m = /^p:svc:(\d+):\d+$/.exec(key)
+    if (m && isDemoSubjectId(Number(m[1]))) {
+      move.add(key)
+      continue
+    }
+    m = /^p:(.+)$/.exec(key)
+    if (m && demoPosIds.has(m[1])) {
+      move.add(key)
+      continue
+    }
+    m = /^dm:(\d+):\d+$/.exec(key)
+    if (m && isDemoSubjectId(Number(m[1]))) {
+      move.add(key)
+      continue
+    }
+    m = /^i:(\d+)$/.exec(key)
+    if (m && isDemoSubjectId(Number(m[1]))) {
+      move.add(key)
+      continue
+    }
+    if (key.startsWith('f:') && demoFileKeys.has(key) && !realFileKeys.has(key)) {
+      move.add(key)
+      continue
+    }
+    const sub = /^sub:(.+)$/.exec(key)
+    if (sub && demoFileKeys.has(sub[1]) && !realFileKeys.has(sub[1])) move.add(key)
+  }
+  return move
 }

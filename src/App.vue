@@ -5,6 +5,7 @@ import type { GlobalThemeOverrides } from 'naive-ui'
 import { useSettingsStore } from './stores/settings'
 import { useSyncStore } from './stores/sync'
 import { useLibraryStore } from './stores/library'
+import { migrateDemoMediaData } from './utils/mediaStore'
 
 const settings = useSettingsStore()
 const sync = useSyncStore()
@@ -27,8 +28,10 @@ watch(
 )
 
 // 启动时静默自动同步一次（有 Token 且在线模式时）；
+// 播放数据双库一次性迁移（v0.30 补记六：旧单库演示起源记录搬入演示库，幂等）；
 // 演示模式（含运行中切换）触发演示追番库异步播种（v0.10 P1，demo 模块按需加载）
 onMounted(() => {
+  void migrateDemoMediaData()
   void sync.autoSyncOnce()
 })
 watch(
