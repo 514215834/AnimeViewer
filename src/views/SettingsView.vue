@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import {
   NAlert,
   NButton,
@@ -35,6 +35,7 @@ import { mediaService, ServiceError, type SvcDownloadEngine, type SvcHealth, typ
 import MediaLibraryDrawer from '../components/MediaLibraryDrawer.vue'
 
 const message = useMessage()
+const dialog = useDialog()
 const settings = useSettingsStore()
 const library = useLibraryStore()
 const sync = useSyncStore()
@@ -97,11 +98,27 @@ function startOAuthLogin() {
 }
 
 function logout() {
-  settings.applyPatch({ accessToken: '', refreshToken: '' })
-  Object.assign(draft, settings.$state)
-  sync.account = null
-  sync.profile = null
-  message.info('已退出登录（已清除本地 Token）')
+  const doLogout = () => {
+    settings.applyPatch({ accessToken: '', refreshToken: '' })
+    Object.assign(draft, settings.$state)
+    sync.account = null
+    sync.profile = null
+    message.info('已退出登录（已清除本地 Token，账户数据保留在本机账户库）')
+  }
+  // v0.31 G4（§5S）：有未推送改动时提示去向——数据随命名空间保留，重登同账户可继续推送
+  const pending = sync.pendingPushCount
+  if (pending > 0 && !settings.isDemo) {
+    const who = sync.account?.nickname || sync.account?.username || `用户 ${sync.account?.id ?? ''}`
+    dialog.warning({
+      title: '退出登录',
+      content: `当前账户（${who}）有 ${pending} 条改动未推送到云端。\n退出后这些改动会保留在本机账户库（u${sync.account?.id ?? ''}），重新登录该账户后可继续推送。`,
+      positiveText: '仍要退出',
+      negativeText: '取消',
+      onPositiveClick: doLogout,
+    })
+    return
+  }
+  doLogout()
 }
 
 /** 保存基础连接配置（Base URL / Token / OAuth 凭据），供各操作按钮在保存前调用 */
@@ -136,6 +153,7 @@ const diagnosticsText = computed(() =>
       `AnimeViewer v${appVersion}`,
       `数据源：${settings.isDemo ? '演示数据' : '在线 API'}（${settings.apiBaseUrl}）`,
       `图片反代：${settings.mirrorImageUrl || '官方源'}`,
+      `账户库：${settings.accountNs}${sync.account ? `（${sync.account.nickname || sync.account.username}）` : ''}`,
       `上次同步：${sync.lastSyncText} · 待推送 ${libraryDirtyCount.value} 条 · 追番 ${library.count} 条`,
     ],
     errLogs.value,

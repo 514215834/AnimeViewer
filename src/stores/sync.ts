@@ -2,10 +2,20 @@ import { defineStore } from 'pinia'
 import { ApiError, bangumiApi, clearApiCache } from '../api/bangumi'
 import { dataSource } from '../api/dataSource'
 import { useLibraryStore } from './library'
-import type { WatchStatus } from './library'
+import type { LibraryEntry, WatchStatus } from './library'
 import { useSettingsStore } from './settings'
 import type { BangumiMe, EpisodeMarkType, UserProfile, UserSubjectCollection } from '../types/bangumi'
-import { loadJson, saveJson } from '../utils/storage'
+import { loadJson, removeItem, saveJson } from '../utils/storage'
+import {
+  ADOPTED_KEY,
+  LEGACY_ACCOUNT_KEYS,
+  countLegacyPending,
+  nsKey,
+  persistedAccountNs,
+  planAdoption,
+  type AdoptionMarker,
+  type LegacySnapshot,
+} from '../utils/accountNs'
 
 const LAST_SYNC_KEY = 'animeviewer:sync:lastAt'
 const PENDING_EPS_KEY = 'animeviewer:sync:pendingEps'
@@ -28,11 +38,39 @@ export async function pool<T>(items: T[], concurrency: number, worker: (item: T)
   const queue = [...items]
   const runners = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
     while (queue.length) {
-      const item = queue.shift()!
-      await worker(item)
+      const item = queue.shift()
+      await worker(item!)
     }
   })
   await Promise.all(runners)
+}
+
+/** v0.31 G2（§5S）：读取升级前旧无后缀键存量快照；六键全空返回 null（收编无可做） */
+export function snapshotLegacy(): LegacySnapshot | null {
+  const items = loadJson<Record<string, object> | null>(LEGACY_ACCOUNT_KEYS[0], null)
+  const characters = loadJson<Record<string, object> | null>(LEGACY_ACCOUNT_KEYS[1], null)
+  const persons = loadJson<Record<string, object> | null>(LEGACY_ACCOUNT_KEYS[2], null)
+  const removed = loadJson<Record<string, number> | null>(LEGACY_ACCOUNT_KEYS[3], null)
+  const pendingEps = loadJson<object[] | null>(LEGACY_ACCOUNT_KEYS[4], null)
+  const lastSyncAt = loadJson<number | null>(LEGACY_ACCOUNT_KEYS[5], null)
+  if (
+    !items &&
+    !characters &&
+    !persons &&
+    !removed &&
+    !pendingEps &&
+    lastSyncAt == null
+  ) {
+    return null
+  }
+  return {
+    items: items ?? {},
+    characters: characters ?? {},
+    persons: persons ?? {},
+    removed: removed ?? {},
+    pendingEps: pendingEps ?? [],
+    lastSyncAt,
+  }
 }
 
 export interface SyncResult {
@@ -59,13 +97,23 @@ export const useSyncStore = defineStore('sync', {
     account: null as BangumiMe | null,
     /** E5 用户资料（头像/昵称/签名），随同步或设置页加载 */
     profile: null as UserProfile | null,
-    lastSyncAt: loadJson<number | null>(LAST_SYNC_KEY, null),
+    /** v0.31 G1（§5S）：账户级持久化键均带命名空间后缀，accountKey 变更经 reloadPending 重载 */
+    lastSyncAt: loadJson<number | null>(nsKey(LAST_SYNC_KEY, persistedAccountNs()), null),
     lastError: '',
     logs: [] as string[],
     /** E1 单集增量标记待推送队列（持久化，失败保留重放） */
-    pendingEpisodeMarks: loadJson<PendingEpisodeMark[]>(PENDING_EPS_KEY, []),
+    pendingEpisodeMarks: loadJson<PendingEpisodeMark[]>(nsKey(PENDING_EPS_KEY, persistedAccountNs()), []),
     /** 单集队列重放中的运行时标志（防并发重入） */
     flushingEps: false,
+    /* ── v0.31 G3/G2 账户绑定（§5S）── */
+    /** ensureBinding 重入闸（me() 网络往返期间防抖） */
+    bindingInProgress: false,
+    /** 绑定/换号检测被同步进行中阻塞时的延后标记（syncNow/flush finally 重试） */
+    pendingRebind: false,
+    /** 换号成功通知（MainLayout watch → toast 后清空；store 内不依赖 UI 通道） */
+    bindingNotice: '',
+    /** G2 收编裁决挂起状态（MainLayout 弹窗 → resolveAdoption；重启后按 adopted 标记重新判定） */
+    adoptionPrompt: null as { dirtyCount: number } | null,
   }),
   getters: {
     lastSyncText: (s) => (s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString('zh-CN') : '从未同步'),
@@ -86,7 +134,14 @@ export const useSyncStore = defineStore('sync', {
       if (this.logs.length > 30) this.logs.length = 30
     },
     persistPending() {
-      saveJson(PENDING_EPS_KEY, this.pendingEpisodeMarks)
+      saveJson(nsKey(PENDING_EPS_KEY, useSettingsStore().accountNs), this.pendingEpisodeMarks)
+    },
+    /** v0.31 G3（§5S）：账户命名空间切换时重载队列与上次同步时间（前置条件：accountKey 已 applyPatch） */
+    reloadPending() {
+      const ns = useSettingsStore().accountNs
+      this.pendingEpisodeMarks = loadJson<PendingEpisodeMark[]>(nsKey(PENDING_EPS_KEY, ns), [])
+      this.lastSyncAt = loadJson<number | null>(nsKey(LAST_SYNC_KEY, ns), null)
+      this.persistPending()
     },
     /** 条目被移出追番时清空其待推单集标记：避免队列重放时 400 兜底把已移除的条目重新收藏到云端 */
     purgePendingEpisodeMarks(subjectId: number) {
@@ -131,6 +186,9 @@ export const useSyncStore = defineStore('sync', {
       const library = useLibraryStore()
       if (epType === 0) library.markEpisodeLocal(subjectId, sort, watched)
       else library.markSpecialEpisodeLocal(subjectId, epType, sort, watched)
+      // v0.31 G1 连带修复（§5S 摸底）：演示标记的 episodeId 是演示模块假 id，入共享队列后在线模式
+      // 重放会打真实云端（400 兜底甚至会给真实账户收藏演示条目）——演示模式仅更新本地库，不入队不推送
+      if (useSettingsStore().isDemo) return
       const type: PendingEpisodeMark['type'] = watched ? 2 : 0
       this.pendingEpisodeMarks = [
         ...this.pendingEpisodeMarks.filter((m) => !(m.subjectId === subjectId && m.episodeId === episodeId)),
@@ -144,9 +202,13 @@ export const useSyncStore = defineStore('sync', {
       const settings = useSettingsStore()
       const library = useLibraryStore()
       if (settings.isDemo || !settings.accessToken.trim()) return 0
+      // v0.31 G3（§5S）：绑定未完成（账户识别中/失败）不得重放——队列属于某一账户命名空间，
+      // 未确认当前 Token 身份与命名空间一致前重放 = 跨账户推送（摸底风险 2）
+      if (!settings.accountKey) return 0
       if (this.flushingEps) return 0
       if (!this.pendingEpisodeMarks.length) return 0
       this.flushingEps = true
+      const token0 = settings.accessToken.trim()
       try {
         if (!username) {
           try {
@@ -157,10 +219,20 @@ export const useSyncStore = defineStore('sync', {
             return 0
           }
         }
+        // 身份一致性闸：当前 Token 对应账户必须与本队列命名空间一致，否则整批留队待原账户
+        const meId = this.account?.id
+        const meNs = meId ? `u${meId}` : ''
+        if (meNs && settings.accountKey !== meNs) return 0
         let ok = 0
         const remaining: PendingEpisodeMark[] = []
         const marks = [...this.pendingEpisodeMarks].sort((a, b) => a.at - b.at)
-        for (const m of marks) {
+        for (let i = 0; i < marks.length; i++) {
+          const m = marks[i]
+          // token 中途被改（同步未阻塞的窗口）：剩余标记留队，属于原命名空间账户
+          if (settings.accessToken.trim() !== token0) {
+            remaining.push(...marks.slice(i))
+            break
+          }
           try {
             await bangumiApi.putEpisodeMark(m.episodeId, m.type)
             ok++
@@ -189,6 +261,7 @@ export const useSyncStore = defineStore('sync', {
         return ok
       } finally {
         this.flushingEps = false
+        this.retryPendingRebind()
       }
     },
     /** 拉取云端收藏并合并到本地，再推送本地待同步改动 */
@@ -198,21 +271,30 @@ export const useSyncStore = defineStore('sync', {
       const fail = (message: string): SyncResult => ({ ok: false, message, created: 0, updated: 0, pushed: 0, failed: 0 })
       if (settings.isDemo) return fail('演示模式不支持云同步，请切换到在线模式')
       if (!settings.accessToken.trim()) return fail('未配置 Access Token，无法云同步')
+      // v0.31 G3（§5S）：绑定未完成不得同步——拉取会把云端数据合并进错误命名空间，推送会跨账户
+      if (!settings.accountKey) return fail('账户绑定未完成（账户识别中或失败），请稍后重试')
       if (this.syncing) return fail('同步正在进行中')
 
       this.syncing = true
       this.lastError = ''
+      // v0.31 G3 护栏：token 中途被改（设置页保存不经过闸）时按条中止，剩余 dirty 留在原命名空间账户
+      const token0 = settings.accessToken.trim()
       let created = 0
       let updated = 0
       let conflictLocal = 0
       let pushed = 0
       let failed = 0
       try {
-        // 1. 账户与资料
+        // 1. 账户与资料（身份一致性闸：当前 Token 对应账户必须与已绑定命名空间一致，否则中止——
+        //    绑定校验（ensureBinding）稍后会切换命名空间，本次同步不推不拉）
         const me = await bangumiApi.me()
         this.account = me
         const username = me.username || String(me.id ?? '')
         if (!username) return fail('无法获取当前账户用户名')
+        const meNs = me.id ? `u${me.id}` : ''
+        if (meNs && settings.accountKey !== meNs) {
+          return fail('登录账户与本地数据命名空间不一致（账户绑定校验未完成），请稍后重试')
+        }
         void this.loadProfile(username)
 
         // 2. 拉取云端动画收藏（分页全量）
@@ -280,6 +362,12 @@ export const useSyncStore = defineStore('sync', {
         // 4. 推送本地改动（dirty 即待同步队列，失败保留下次重放）
         const dirtyItems = library.list.filter((e) => e.dirty)
         const pushOne = async (entry: (typeof dirtyItems)[number]) => {
+          // token 中途被改：本条及剩余改动留在原命名空间账户，不推给新 Token 对应账户
+          if (settings.accessToken.trim() !== token0) {
+            failed++
+            this.log(`账户 Token 已变更，中止剩余推送（${entry.nameCn || entry.name} 留待原账户）`)
+            return
+          }
           try {
             // F6：私有评分与笔记随 upsert 推送（rate=0 删除云端评分，空串清除评价；未设置的字段不动云端现状）
             const review =
@@ -406,7 +494,7 @@ export const useSyncStore = defineStore('sync', {
         }
 
         this.lastSyncAt = Date.now()
-        saveJson(LAST_SYNC_KEY, this.lastSyncAt)
+        saveJson(nsKey(LAST_SYNC_KEY, settings.accountNs), this.lastSyncAt)
         clearApiCache()
         const message = `同步完成：云端 ${valid.length} 条，本地新增 ${created} / 更新 ${updated}，推送 ${pushed}${failed ? `（失败 ${failed}，已保留待重试）` : ''}${epMarks ? `，单集标记 ${epMarks}` : ''}${charPushed ? `，角色收藏 ${charPushed}` : ''}${personPushed ? `，人物收藏 ${personPushed}` : ''}${epPulled ? `，单集拉取 ${epPulled}` : ''}`
         this.log(message)
@@ -419,7 +507,125 @@ export const useSyncStore = defineStore('sync', {
         return fail(`同步失败：${message}`)
       } finally {
         this.syncing = false
+        this.retryPendingRebind()
       }
+    },
+    /** v0.31 G3 护栏（§5S）：绑定检测被 syncing/flushing 阻塞时延后，同步/重放结束后立即补做 */
+    retryPendingRebind() {
+      if (this.pendingRebind) {
+        this.pendingRebind = false
+        void this.ensureBinding()
+      }
+    },
+    /**
+     * v0.31 G3 账户绑定与换号检测（§5S）：Token 变更 watch 单一入口调用（logout/设置保存/verifyToken/OAuth 回调全覆盖）。
+     * Token 空 → 归 local 命名空间；非空 → me() 取 id，与 settings.accountKey 比对不同则切库
+     * （library.reloadNamespaced + reloadPending，内存态 account/profile 清空重载）。
+     * me() 失败保持现状（已绑定不清 accountKey，未绑定不收编），下次启动/同步时重试。
+     * 收编迁移（G2）随绑定完成幂等触发。
+     */
+    async ensureBinding(): Promise<void> {
+      if (this.bindingInProgress) return
+      if (this.syncing || this.flushingEps) {
+        this.pendingRebind = true
+        return
+      }
+      this.bindingInProgress = true
+      try {
+        const settings = useSettingsStore()
+        const library = useLibraryStore()
+        const token = settings.accessToken.trim()
+        let me: BangumiMe | null = null
+        if (token) {
+          try {
+            me = await bangumiApi.me()
+          } catch {
+            this.log('账户识别失败（网络或 Token 无效），保持当前数据命名空间')
+            return
+          }
+        }
+        const target = me ? `u${me.id}` : ''
+        if (settings.accountKey !== target) {
+          const prev = settings.accountNs
+          settings.applyPatch({ accountKey: target })
+          library.reloadNamespaced()
+          this.reloadPending()
+          if (me) {
+            this.account = me
+            this.profile = null
+            this.bindingNotice = `已切换到账户 ${me.nickname || me.username || me.id}（本机数据命名空间 u${me.id}）`
+          } else {
+            this.account = null
+            this.profile = null
+          }
+          this.log(`账户命名空间切换：${prev} → ${target || 'local'}`)
+        }
+        this.checkAdoption()
+      } finally {
+        this.bindingInProgress = false
+      }
+    },
+    /**
+     * v0.31 G2 一次性收编（§5S，幂等）：升级前旧无后缀键存量 → 当前账户命名空间。
+     * adopted 标记先行（防崩溃重复收编）；真实账户 + 有未推送改动 → 挂 adoptionPrompt 交用户裁决
+     * （推送到该账户 / 保留本地不推送）；匿名或零脏直接收编（不弹窗）。
+     */
+    checkAdoption() {
+      const marker = loadJson<AdoptionMarker | null>(ADOPTED_KEY, null)
+      if (marker) return
+      const legacy = snapshotLegacy()
+      if (!legacy) {
+        // 无存量：直接写标记，后续启动不再探测
+        saveJson(ADOPTED_KEY, { at: Date.now(), adoptedBy: useSettingsStore().accountNs })
+        return
+      }
+      const settings = useSettingsStore()
+      const dirty = countLegacyPending(legacy)
+      if (settings.accountKey && dirty > 0) {
+        this.adoptionPrompt = { dirtyCount: dirty }
+        return // 等待用户裁决（MainLayout 弹窗 → resolveAdoption）
+      }
+      // 匿名收编或真实账户零脏：直接并入（push=true 保持原样——匿名无推送通道，真实账户零脏无需清）
+      this.applyAdoption(legacy, true)
+    },
+    /** v0.31 G2 收编落地：planAdoption → 写入两 store 当前命名空间 → 删旧键 → 写 adopted 标记（先标记后删键，崩溃不重复收编） */
+    applyAdoption(legacy: LegacySnapshot, push: boolean) {
+      const settings = useSettingsStore()
+      const library = useLibraryStore()
+      const plan = planAdoption(legacy, push)
+      library.adoptLegacy(
+        plan.items as Record<string, LibraryEntry>,
+        plan.characters as Parameters<typeof library.adoptLegacy>[1],
+        plan.persons as Parameters<typeof library.adoptLegacy>[2],
+        plan.removed,
+      )
+      this.pendingEpisodeMarks = [...this.pendingEpisodeMarks, ...(plan.pendingEps as PendingEpisodeMark[])]
+      if (plan.lastSyncAt && (!this.lastSyncAt || plan.lastSyncAt > this.lastSyncAt)) {
+        this.lastSyncAt = plan.lastSyncAt
+      }
+      this.persistPending()
+      saveJson(nsKey(LAST_SYNC_KEY, settings.accountNs), this.lastSyncAt)
+      saveJson(ADOPTED_KEY, { at: Date.now(), adoptedBy: settings.accountNs })
+      for (const k of LEGACY_ACCOUNT_KEYS) removeItem(k)
+      this.log(`存量数据已收编到命名空间 ${settings.accountNs}（${push ? '保留推送标记' : '本地保留不推送'}）`)
+    },
+    /** v0.31 G2 收编裁决（MainLayout 弹窗调用）：push=true 保留脏标记并立即同步推送；false 脏清零永不推送 */
+    async resolveAdoption(push: boolean): Promise<{ ok: boolean; message: string }> {
+      const prompt = this.adoptionPrompt
+      this.adoptionPrompt = null
+      if (!prompt) return { ok: false, message: '当前没有待裁决的存量收编' }
+      const settings = useSettingsStore()
+      const legacy = snapshotLegacy()
+      if (!legacy) {
+        saveJson(ADOPTED_KEY, { at: Date.now(), adoptedBy: settings.accountNs })
+        return { ok: false, message: '存量数据已不存在（可能已被收编）' }
+      }
+      this.applyAdoption(legacy, push)
+      if (!push) return { ok: true, message: `已收编到本机：${prompt.dirtyCount} 条改动保留不推送` }
+      const r = await this.syncNow()
+      return r.ok
+        ? { ok: true, message: `已收编 ${prompt.dirtyCount} 条改动并完成同步` }
+        : { ok: false, message: `已收编，但同步未完成：${r.message}` }
     },
     /** 应用启动时的静默自动同步（每次会话最多尝试一次） */
     async autoSyncOnce() {

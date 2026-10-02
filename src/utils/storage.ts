@@ -19,3 +19,12 @@ export function saveJson(key: string, value: unknown): void {
     // 存储被禁用或超限时静默失败
   }
 }
+
+/** v0.31 G2 收编迁移用：静默删除指定键 */
+export function removeItem(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // 存储被禁用时静默失败
+  }
+}

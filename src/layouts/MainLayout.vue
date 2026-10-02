@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, h, type Component } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, h, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NLayout,
@@ -13,6 +13,7 @@ import {
   NBadge,
   NDrawer,
   NDrawerContent,
+  useDialog,
   useMessage,
 } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
@@ -32,6 +33,7 @@ import {
 } from '@vicons/ionicons5'
 import { useSettingsStore } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
+import { useSyncStore } from '../stores/sync'
 import { mediaService } from '../api/mediaService'
 import { dataSource } from '../api/dataSource'
 import { loadJson, saveJson } from '../utils/storage'
@@ -40,9 +42,47 @@ const route = useRoute()
 const router = useRouter()
 const settings = useSettingsStore()
 const library = useLibraryStore()
+const sync = useSyncStore()
 const message = useMessage()
+const dialog = useDialog()
 
 const collapsed = ref(false)
+
+/* ── v0.31 G2/G4 账户绑定通知与存量收编裁决（§5S）：绑定/换号 toast + 收编弹窗二选一。
+ *    immediate 必须：路由初始导航为异步——App.onMounted 的 ensureBinding 先于本组件挂载执行，
+ *    bindingNotice/adoptionPrompt 可能已带着值等在这里（IAB 实测复现：非 immediate 永不追认旧值） ── */
+watch(
+  () => sync.bindingNotice,
+  (n) => {
+    if (!n) return
+    message.info(n)
+    sync.bindingNotice = ''
+  },
+  { immediate: true },
+)
+watch(
+  () => sync.adoptionPrompt,
+  (p) => {
+    if (!p) return
+    const who = sync.account?.nickname || sync.account?.username || `用户 ${sync.account?.id ?? ''}`
+    dialog.warning({
+      title: '收编升级前的存量数据',
+      content: `本机检测到升级前的存量追番数据：${p.dirtyCount} 条未推送改动（含单集进度标记）。\n当前登录账户：${who}。\n\n「推送到该账户」：收编后立即同步，把改动写入该账户云端；\n「仅保留在本机」：改动清脏永不推送（云端零写入）。`,
+      positiveText: '推送到该账户',
+      negativeText: '仅保留在本机',
+      maskClosable: false,
+      closable: false,
+      onPositiveClick: () => void handleAdoption(true),
+      onNegativeClick: () => void handleAdoption(false),
+    })
+  },
+  { immediate: true },
+)
+async function handleAdoption(push: boolean) {
+  const r = await sync.resolveAdoption(push)
+  if (r.ok) message.success(r.message)
+  else message.warning(r.message)
+}
 
 /* ── v0.19 SU3 应用内通知：60s 轮询 summary —— 待确认命中数 → 「下载」角标；新命中/新完成 → toast ── */
 const pendingHits = ref(0)

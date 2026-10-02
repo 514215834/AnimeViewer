@@ -27,13 +27,22 @@ watch(
   { immediate: true },
 )
 
-// 启动时静默自动同步一次（有 Token 且在线模式时）；
-// 播放数据双库一次性迁移（v0.30 补记六：旧单库演示起源记录搬入演示库，幂等）；
-// 演示模式（含运行中切换）触发演示追番库异步播种（v0.10 P1，demo 模块按需加载）
+// 启动编排：① 账户绑定/换号检测（含 v0.31 G2 存量收编，幂等）→ ② 静默自动同步（绑定完成后才推拉，
+// 杜绝「绑定未完成时把 A 的 dirty 推给 B 的云端」摸底风险 1）；
+// ③ 播放数据双库一次性迁移（v0.30 补记六：旧单库演示起源记录搬入演示库，幂等）；
+// ④ 演示模式（含运行中切换）触发演示追番库异步播种（v0.10 P1，demo 模块按需加载）
 onMounted(() => {
   void migrateDemoMediaData()
-  void sync.autoSyncOnce()
+  void (async () => {
+    await sync.ensureBinding()
+    void sync.autoSyncOnce()
+  })()
 })
+// v0.31 G3（§5S）：Token 变更单一入口（设置页保存/验证、退出登录、OAuth 回调均经 settings.applyPatch 触发）
+watch(
+  () => settings.accessToken,
+  () => void sync.ensureBinding(),
+)
 watch(
   () => settings.isDemo,
   (isDemo) => {

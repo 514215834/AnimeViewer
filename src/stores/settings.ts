@@ -13,6 +13,10 @@ export interface SettingsState {
   /** 图片镜像地址：将 lain.bgm.tv 主机替换为该地址（保留路径），留空使用官方源 */
   mirrorImageUrl: string
   accessToken: string
+  /** v0.31 G1 账户命名空间归属（§5S）：`u{me.id}`（已登录）/ ''（匿名 → local 命名空间）。
+   *  非用户可编辑字段，由 sync.ensureBinding 按登录账户写入；追番库/角色/人物/墓碑/待推队列等
+   *  账户级存储键以此为后缀隔离，换号不串库 */
+  accountKey: string
   hideNsfw: boolean
   imageQuality: ImageQuality
   /** 可选：自建 Bangumi 应用的 OAuth 凭据（bgm.tv/dev/app 注册后获得） */
@@ -54,6 +58,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   apiBaseUrl: 'https://api.bgm.tv',
   mirrorImageUrl: '',
   accessToken: DEFAULT_ACCESS_TOKEN,
+  accountKey: '',
   hideNsfw: true,
   imageQuality: 'extreme',
   oauthClientId: '',
@@ -84,6 +89,8 @@ export const useSettingsStore = defineStore('settings', {
     webdavEnabled: (s) => !!s.webdavUrl.trim(),
     /** WebDAV 根地址（去尾斜杠，供路径拼接） */
     webdavRoot: (s) => s.webdavUrl.trim().replace(/\/+$/, ''),
+    /** v0.31 G1 账户命名空间：accountKey 为空（匿名/未完成绑定）归 local */
+    accountNs: (s) => s.accountKey || 'local',
   },
   actions: {
     persist() {

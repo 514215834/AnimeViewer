@@ -10,7 +10,8 @@ import { demoCalendar } from '../api/demo'
  */
 function freshEnv(seedOnline: Record<string, unknown> = {}, seedDemo: Record<string, unknown> | null = null) {
   localStorage.clear()
-  if (Object.keys(seedOnline).length) localStorage.setItem('animeviewer:library', JSON.stringify(seedOnline))
+  // v0.31 G1（§5S）：在线库按账户命名空间装载——测试匿名环境种子写 :local 后缀键
+  if (Object.keys(seedOnline).length) localStorage.setItem('animeviewer:library:local', JSON.stringify(seedOnline))
   if (seedDemo) localStorage.setItem('animeviewer:library:demo', JSON.stringify(seedDemo))
   setActivePinia(createPinia())
   // 测试一律清空 Token，杜绝测试触发真实网络请求

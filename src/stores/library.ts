@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { loadJson, saveJson } from '../utils/storage'
+import { nsKey, persistedAccountNs } from '../utils/accountNs'
 import { useSettingsStore } from './settings'
 import { isDemoSubjectId } from '../api/demoIds'
 
@@ -92,10 +93,15 @@ function normalizeSpecial(raw: unknown): Record<string, number[]> | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
-/** 演示/在线追番库分库装载：演示库首次进入时由 App.vue 触发 ensureDemoSeed 异步播种（v0.10 P1 起 demo 模块按需加载）；
- *  历史版本曾共用一个存储，混入在线库的演示条目在此一次性迁出演示库（演示条目不参与云同步，dirty 无意义故清除） */
+/**
+ * 演示/在线追番库分库装载：演示库首次进入时由 App.vue 触发 ensureDemoSeed 异步播种（v0.10 P1 起 demo 模块按需加载）；
+ * 历史版本曾共用一个存储，混入在线库的演示条目在此一次性迁出演示库（演示条目不参与云同步，dirty 无意义故清除）。
+ * v0.31 G1（§5S）：在线侧四组数据按账户命名空间装载（`{基础键}:{accountKey}`，accountKey 空 → local），
+ * 换号经 reloadNamespaced() 重载，persist 写同款后缀键。
+ */
 function loadNamespacedItems(): { online: Record<string, LibraryEntry>; demo: Record<string, LibraryEntry>; needsSeed: boolean } {
-  const online = loadJson<Record<string, LibraryEntry>>(STORAGE_KEY, {})
+  const ns = persistedAccountNs()
+  const online = loadJson<Record<string, LibraryEntry>>(nsKey(STORAGE_KEY, ns), {})
   const storedDemo = loadJson<Record<string, LibraryEntry> | null>(DEMO_STORAGE_KEY, null)
   const demo: Record<string, LibraryEntry> = storedDemo ?? {}
   let migrated = false
@@ -107,7 +113,7 @@ function loadNamespacedItems(): { online: Record<string, LibraryEntry>; demo: Re
     }
   }
   if (migrated) saveJson(DEMO_STORAGE_KEY, demo)
-  if (migrated) saveJson(STORAGE_KEY, online)
+  if (migrated) saveJson(nsKey(STORAGE_KEY, ns), online)
   return { online, demo, needsSeed: !storedDemo }
 }
 
@@ -116,13 +122,14 @@ function loadNamespacedItems(): { online: Record<string, LibraryEntry>; demo: Re
 export const useLibraryStore = defineStore('library', {
   state: (): LibraryState => {
     const { online, demo, needsSeed } = loadNamespacedItems()
+    const ns = persistedAccountNs()
     return {
       items: online,
       demoItems: demo,
       needsDemoSeed: needsSeed,
-      characters: loadJson<Record<string, CollectedCharacter>>(CHARACTERS_KEY, {}),
-      persons: loadJson<Record<string, CollectedPerson>>(PERSONS_KEY, {}),
-      removedSubjects: loadJson<Record<string, number>>(REMOVED_KEY, {}),
+      characters: loadJson<Record<string, CollectedCharacter>>(nsKey(CHARACTERS_KEY, ns), {}),
+      persons: loadJson<Record<string, CollectedPerson>>(nsKey(PERSONS_KEY, ns), {}),
+      removedSubjects: loadJson<Record<string, number>>(nsKey(REMOVED_KEY, ns), {}),
     }
   },
   getters: {
@@ -545,11 +552,38 @@ export const useLibraryStore = defineStore('library', {
       return { added, skipped }
     },
     persist() {
-      saveJson(STORAGE_KEY, JSON.parse(JSON.stringify(this.items)))
+      const ns = useSettingsStore().accountNs
+      saveJson(nsKey(STORAGE_KEY, ns), JSON.parse(JSON.stringify(this.items)))
       saveJson(DEMO_STORAGE_KEY, JSON.parse(JSON.stringify(this.demoItems)))
-      saveJson(CHARACTERS_KEY, JSON.parse(JSON.stringify(this.characters)))
-      saveJson(PERSONS_KEY, JSON.parse(JSON.stringify(this.persons)))
-      saveJson(REMOVED_KEY, JSON.parse(JSON.stringify(this.removedSubjects)))
+      saveJson(nsKey(CHARACTERS_KEY, ns), JSON.parse(JSON.stringify(this.characters)))
+      saveJson(nsKey(PERSONS_KEY, ns), JSON.parse(JSON.stringify(this.persons)))
+      saveJson(nsKey(REMOVED_KEY, ns), JSON.parse(JSON.stringify(this.removedSubjects)))
+    },
+    /** v0.31 G3（§5S）：账户命名空间切换时重载在线侧四组数据（demo 库不受账户维度影响，一并重载保持一致）。
+     *  前置条件：settings.accountKey 已由 ensureBinding applyPatch 并持久化 */
+    reloadNamespaced() {
+      const { online, demo } = loadNamespacedItems()
+      this.items = online
+      this.demoItems = demo
+      const ns = useSettingsStore().accountNs
+      this.characters = loadJson<Record<string, CollectedCharacter>>(nsKey(CHARACTERS_KEY, ns), {})
+      this.persons = loadJson<Record<string, CollectedPerson>>(nsKey(PERSONS_KEY, ns), {})
+      this.removedSubjects = loadJson<Record<string, number>>(nsKey(REMOVED_KEY, ns), {})
+      this.persist()
+    },
+    /** v0.31 G2（§5S）收编：旧无后缀键数据并入当前账户库。目标库保证为空（收编只发生在首次绑定），
+     *  同键合并时保留现值（防御性）；调用方已按 planAdoption 处理 dirty 语义 */
+    adoptLegacy(
+      items: Record<string, LibraryEntry>,
+      characters: Record<string, CollectedCharacter>,
+      persons: Record<string, CollectedPerson>,
+      removed: Record<string, number>,
+    ) {
+      this.items = { ...items, ...this.items }
+      this.characters = { ...characters, ...this.characters }
+      this.persons = { ...persons, ...this.persons }
+      this.removedSubjects = { ...removed, ...this.removedSubjects }
+      this.persist()
     },
   },
 })
