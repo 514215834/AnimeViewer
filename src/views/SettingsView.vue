@@ -448,6 +448,8 @@ async function pingAi() {
 const hanime = reactive({ enabled: false, hasCookie: false })
 /** Cookie 草稿：明文不回显，非空保存=更新，留空=不改动 */
 const hanimeCookieDraft = ref('')
+/** v0.32 补记八：UA 草稿——质询 cf_clearance 与浏览器 UA 绑定，须配对粘贴；回显非敏感可编辑，留空=不改动 */
+const hanimeUaDraft = ref('')
 const hanimeSaving = ref(false)
 const hanimeTesting = ref(false)
 const hanimeError = ref('')
@@ -461,6 +463,7 @@ async function loadHanimeConfig() {
     hanime.enabled = c.enabled
     hanime.hasCookie = c.hasCookie
     hanimeCookieDraft.value = ''
+    hanimeUaDraft.value = c.ua
   } catch (e) {
     hanimeError.value = e instanceof ServiceError ? e.message : String(e)
   }
@@ -473,10 +476,12 @@ async function saveHanime() {
     const c = await mediaService.saveHanimeConfig({
       enabled: hanime.enabled,
       ...(hanimeCookieDraft.value.trim() ? { cookie: hanimeCookieDraft.value.trim() } : {}),
+      ...(hanimeUaDraft.value.trim() ? { ua: hanimeUaDraft.value.trim() } : {}),
     })
     hanime.enabled = c.enabled
     hanime.hasCookie = c.hasCookie
     hanimeCookieDraft.value = ''
+    hanimeUaDraft.value = c.ua
     message.success('在线解析设置已保存')
   } catch (e) {
     hanimeError.value = e instanceof ServiceError ? e.message : String(e)
@@ -1161,7 +1166,13 @@ async function onImportFile(ev: Event) {
                   v-model:value="hanimeCookieDraft"
                   type="textarea"
                   :rows="2"
-                  placeholder="浏览器 Cookie（可选，明文不回显）。触发人机质询时必填：浏览器打开 hanime1.com 通过验证 → F12 → 网络 → 任一请求 → 复制请求头 Cookie 整段粘贴此处"
+                  placeholder="浏览器 Cookie（可选，明文不回显）。触发人机质询时必填：浏览器打开 hanime1.me 通过验证 → F12 → 网络 → 任一请求 → 复制请求头 Cookie 整段粘贴此处（质询 Cookie 与 User-Agent 绑定，请同时填写下方 UA）"
+                />
+              </div>
+              <div class="sub-row2" style="margin-bottom: 8px">
+                <NInput
+                  v-model:value="hanimeUaDraft"
+                  placeholder="浏览器 User-Agent（与质询 Cookie 绑定，建议配对填写）：同一条请求头复制 User-Agent 整串粘贴；留空 = 不改动（服务端默认 Chrome/126）"
                 />
               </div>
               <div class="svc-status ai-status">
@@ -1176,9 +1187,10 @@ async function onImportFile(ev: Event) {
                 </div>
               </div>
               <div class="svc-tip">
-                页面解析与视频转发都在服务端进行：主站被 WAF 拦机房出口时自动走备用域 hanime1.com 并按
-                直连→代理容灾（视频流经服务端 Range 转发，签名直链不落前端）；403 分「IP 封禁 / 人机质询」
-                两类给出文案，质询仅能用浏览器 Cookie 过。剧集 Tab 搜索后可播放或「绑定」到单集（重进直达）。
+                页面解析与视频转发都在服务端进行：hanime1.com 已 301 并入 hanime1.me（唯一实体，WAF 拦机房出口），
+                服务端按 直连→代理 容灾（视频流经服务端 Range 转发，签名直链不落前端）；质询 Cookie 按域名区域 +
+                出口 IP + User-Agent 三重绑定——粘贴 Cookie 后仍被质询时，配对粘贴同一请求头的 UA，并确认浏览器
+                与服务端走同一代理出口。剧集 Tab 搜索后可播放或「绑定」到单集（重进直达）。
               </div>
             </div>
           </NCollapseItem>
