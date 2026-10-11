@@ -272,8 +272,12 @@ async function bind(item: SvcHanimeSearchItem) {
   max-height: 82vh;
   display: flex;
   flex-direction: column;
-  background: var(--av-panel, #1c1c24);
-  border: 1px solid var(--av-border);
+  /* v0.32 GL2：自定义模态面板与 naive 浮层统一走玻璃令牌（off 档实色 = 标准面板色）；
+     旧值 var(--av-panel, #1c1c24) 的 --av-panel 为未定义令牌（恒走 fallback） */
+  background: var(--av-glass-bg);
+  backdrop-filter: var(--av-glass-filter);
+  -webkit-backdrop-filter: var(--av-glass-filter);
+  border: 1px solid var(--av-glass-border);
   border-radius: 14px;
   padding: 16px 18px;
 }

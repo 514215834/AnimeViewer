@@ -379,7 +379,7 @@ function removePerson(id: number, title: string) {
 
 .char-lib-pending {
   font-size: 11px;
-  color: #e6a23c;
+  color: var(--av-warn);
 }
 
 .person-career {
@@ -429,8 +429,8 @@ function removePerson(id: number, title: string) {
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 12px;
-  color: #d99a2b;
-  background: rgba(217, 154, 43, 0.12);
+  color: var(--av-warn);
+  background: rgb(var(--av-warn-rgb) / 0.12);
 }
 
 .lib-tag-chip {
@@ -473,7 +473,7 @@ function removePerson(id: number, title: string) {
   max-width: 100%;
   border-radius: 0 0 0 var(--av-radius);
   background: var(--av-progress-grad);
-  box-shadow: 0 0 8px rgba(138, 123, 255, 0.7);
+  box-shadow: 0 0 8px rgb(var(--av-primary-rgb) / 0.7);
   pointer-events: none;
 }
 
@@ -509,7 +509,7 @@ function removePerson(id: number, title: string) {
 .lib-score {
   font-size: 12px;
   font-weight: 600;
-  color: #ffd75e;
+  color: var(--av-gold);
   flex-shrink: 0;
 }
 

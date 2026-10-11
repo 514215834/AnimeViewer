@@ -6,6 +6,7 @@ import {
   NButton,
   NCollapse,
   NCollapseItem,
+  NColorPicker,
   NDynamicTags,
   NForm,
   NFormItem,
@@ -20,7 +21,8 @@ import {
 } from 'naive-ui'
 import { SettingsOutline, ServerOutline, TrashOutline } from '@vicons/ionicons5'
 import { DEFAULT_SETTINGS, useSettingsStore } from '../stores/settings'
-import type { ImageQuality, SettingsState } from '../stores/settings'
+import type { GlassLevel, ImageQuality, SettingsState, ThemeMode } from '../stores/settings'
+import { THEME_PRESETS } from '../utils/theme'
 import { useLibraryStore } from '../stores/library'
 import { useNsfwStore } from '../stores/nsfw'
 import { useSyncStore } from '../stores/sync'
@@ -631,6 +633,58 @@ async function onImportFile(ev: Event) {
           在线模式需要浏览器能访问 api.bgm.tv。若当前网络直连超时，可开启代理后重试，
           或自建反向代理并将下方 API 地址指向它。切换到演示模式可离线体验全部界面功能。
         </NAlert>
+
+        <!-- v0.32 TH2/TH3（§5T）外观（本机设置，立即生效）：主题模式 / 主题色 / 玻璃效果。
+             不走 draft+保存按钮：观感类设置即时反馈优于批量保存，与图片清晰度同模式 -->
+        <NFormItem label="外观">
+          <div class="appearance-col">
+            <div class="appearance-box">
+              <NRadioGroup
+                :value="settings.theme"
+                @update:value="(v: ThemeMode) => settings.applyPatch({ theme: v })"
+              >
+                <NRadioButton value="dark">暗色</NRadioButton>
+                <NRadioButton value="light">亮色</NRadioButton>
+              </NRadioGroup>
+              <span class="appearance-hint">主题模式（侧栏底部开关可快捷切换）</span>
+            </div>
+            <div class="appearance-box">
+              <div class="swatch-row">
+                <button
+                  v-for="p in THEME_PRESETS"
+                  :key="p.value"
+                  type="button"
+                  class="swatch"
+                  :class="{ active: settings.themeColor === p.value }"
+                  :style="{ background: p.value }"
+                  :title="p.label"
+                  :aria-label="`主题色：${p.label}`"
+                  @click="settings.applyPatch({ themeColor: p.value })"
+                />
+                <NColorPicker
+                  :value="settings.themeColor"
+                  :show-alpha="false"
+                  :modes="['hex']"
+                  size="small"
+                  class="swatch-picker"
+                  @update:value="(v: string) => settings.applyPatch({ themeColor: v })"
+                />
+              </div>
+              <span class="appearance-hint">主题色（8 预设 + 取色器任意色；按钮/进度线/选中态/光晕全部跟随）</span>
+            </div>
+            <div class="appearance-box">
+              <NRadioGroup
+                :value="settings.glassLevel"
+                @update:value="(v: GlassLevel) => settings.applyPatch({ glassLevel: v })"
+              >
+                <NRadioButton value="off">关（实色）</NRadioButton>
+                <NRadioButton value="standard">标准</NRadioButton>
+                <NRadioButton value="strong">强</NRadioButton>
+              </NRadioGroup>
+              <span class="appearance-hint">毛玻璃效果（对话框 / 抽屉 / 侧栏等面板；浏览器不支持时自动实色）</span>
+            </div>
+          </div>
+        </NFormItem>
 
         <NFormItem label="API Base URL（可配置化：支持自建反向代理 / 镜像，可下拉选择或直接输入）">
           <NSelect
@@ -1342,6 +1396,58 @@ async function onImportFile(ev: Event) {
   color: var(--av-text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* v0.32 TH2/TH3（§5T）外观区（控制横排 + 说明小字纵排，同 playback 模式防 flex 折行） */
+.appearance-col {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.appearance-box {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.appearance-hint {
+  font-size: 12px;
+  color: var(--av-text-tertiary);
+}
+
+.swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.swatch {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.swatch:hover {
+  transform: scale(1.12);
+}
+
+.swatch.active {
+  box-shadow: 0 0 0 2px var(--av-surface), 0 0 0 4px var(--av-ring);
+}
+
+.swatch-picker {
+  width: 110px;
 }
 
 /* v0.14 S5 媒体服务 */

@@ -223,7 +223,7 @@ onMounted(async () => {
     miniProgressBar: true,
     hotkey: true,
     mutex: true,
-    theme: '#8a7bff',
+    theme: settings.themeColor,
     lang: 'zh-cn',
     plugins: [
       danmukuFactory({

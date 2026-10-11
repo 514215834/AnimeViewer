@@ -108,7 +108,7 @@ html.light .poster-shade {
   max-width: 100%;
   border-radius: 0 0 0 var(--av-radius);
   background: var(--av-progress-grad);
-  box-shadow: 0 0 8px rgba(138, 123, 255, 0.7);
+  box-shadow: 0 0 8px rgb(var(--av-primary-rgb) / 0.7);
   pointer-events: none;
 }
 
@@ -133,7 +133,7 @@ html.light .poster-shade {
 html.light .score-badge {
   background: rgba(255, 255, 255, 0.65);
   border-color: rgba(20, 20, 50, 0.1);
-  color: #a07c00;
+  color: var(--av-gold-ink);
 }
 
 /* H1 已追徽章：渐变胶囊 */
@@ -147,7 +147,7 @@ html.light .score-badge {
   padding: 2px 9px;
   border-radius: 999px;
   font-weight: 600;
-  box-shadow: 0 2px 10px rgba(138, 123, 255, 0.45);
+  box-shadow: 0 2px 10px rgb(var(--av-primary-rgb) / 0.45);
 }
 
 .card-info {

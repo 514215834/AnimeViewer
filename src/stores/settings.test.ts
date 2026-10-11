@@ -80,3 +80,30 @@ describe('settings 持久化', () => {
     expect(s.accessToken).toBe('')
   })
 })
+
+/* ═══ v0.32 TH2/GL1（§5T）：themeColor 单一事实源 + glassLevel 三档持久化 ═══ */
+describe('settings v0.32 外观字段', () => {
+  beforeEach(() => freshEnv())
+
+  it('默认主题色为品牌紫、玻璃档默认 standard（视觉连续）', () => {
+    const s = useSettingsStore()
+    expect(s.themeColor).toBe('#8a7bff')
+    expect(s.glassLevel).toBe('standard')
+  })
+
+  it('老版本持久化缺 themeColor/glassLevel 时按默认补齐（迁移）', () => {
+    freshEnv({ theme: 'light', accessToken: 'user-token' })
+    const s = useSettingsStore()
+    expect(s.themeColor).toBe('#8a7bff')
+    expect(s.glassLevel).toBe('standard')
+    expect(s.theme).toBe('light')
+  })
+
+  it('themeColor/glassLevel applyPatch 落盘，重建 store 读回（模拟刷新）', () => {
+    useSettingsStore().applyPatch({ themeColor: '#4c8dff', glassLevel: 'strong' })
+    setActivePinia(createPinia())
+    const s2 = useSettingsStore()
+    expect(s2.themeColor).toBe('#4c8dff')
+    expect(s2.glassLevel).toBe('strong')
+  })
+})

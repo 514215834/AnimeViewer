@@ -1,29 +1,35 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { NConfigProvider, NDialogProvider, NGlobalStyle, NMessageProvider, darkTheme, dateZhCN, zhCN } from 'naive-ui'
-import type { GlobalThemeOverrides } from 'naive-ui'
 import { useSettingsStore } from './stores/settings'
 import { useSyncStore } from './stores/sync'
 import { useLibraryStore } from './stores/library'
 import { migrateDemoMediaData } from './utils/mediaStore'
+import { buildThemeOverrides, themeCssVars } from './utils/theme'
 
 const settings = useSettingsStore()
 const sync = useSyncStore()
 const library = useLibraryStore()
 
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    primaryColor: '#8a7bff',
-    primaryColorHover: '#a092ff',
-    primaryColorPressed: '#6f61e0',
-    borderRadius: '8px',
-  },
-}
+// v0.32 TH1（§5T）：主题色单一事实源 = settings.themeColor，CSS 变量与 naive themeOverrides 均派生自它
+// （utils/theme.ts），「两处手工同步」销账；themeColor 变更双轨一次同步
+const themeOverrides = computed(() => buildThemeOverrides(settings.themeColor))
 
-// 主题切换：naive-ui 走 JS 主题，自定义令牌走 html.light class（styles.css --av-* 变量）
+// 主题切换：naive-ui 走 JS 主题，自定义令牌走 html.light class（styles.css --av-* 变量）；
+// 主题色经内联变量覆盖 styles.css :root 默认值（默认紫），玻璃档位经 data-glass 驱动三档令牌
 watch(
-  () => settings.theme,
-  (t) => document.documentElement.classList.toggle('light', t !== 'dark'),
+  () => [settings.theme, settings.themeColor] as const,
+  ([, color]) => {
+    document.documentElement.classList.toggle('light', settings.theme !== 'dark')
+    for (const [k, v] of Object.entries(themeCssVars(color))) document.documentElement.style.setProperty(k, v)
+  },
+  { immediate: true },
+)
+watch(
+  () => settings.glassLevel,
+  (level) => {
+    document.documentElement.dataset.glass = level
+  },
   { immediate: true },
 )
 

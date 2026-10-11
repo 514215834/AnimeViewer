@@ -36,6 +36,7 @@ import { useSettingsStore } from '../stores/settings'
 import { useSyncStore } from '../stores/sync'
 import type { WatchStatus } from '../stores/library'
 import { charAvatarUrl, coverCardUrl, upgradeStoredCover } from '../utils/image'
+import { AV_GOLD } from '../utils/theme'
 import { listBindings, saveDanmaku } from '../utils/mediaStore'
 import { parseDanmakuXml } from '../utils/danmaku'
 import type { MediaBinding } from '../utils/mediaCore'
@@ -655,7 +656,7 @@ onBeforeUnmount(() => {
               <div v-if="subject.name_cn && subject.name" class="detail-sub">{{ subject.name }}</div>
 
               <div class="rate-row">
-                <NRate :value="(subject.rating?.score ?? 0) / 2" allow-half readonly size="small" color="#ffd75e" />
+                <NRate :value="(subject.rating?.score ?? 0) / 2" allow-half readonly size="small" :color="AV_GOLD" />
                 <span class="rate-num">{{ subject.rating?.score?.toFixed(1) ?? '—' }}</span>
                 <span class="rate-total">{{ subject.rating?.total ?? 0 }} 人评分</span>
               </div>
@@ -728,7 +729,7 @@ onBeforeUnmount(() => {
                     allow-half
                     :value="(entry.myRate ?? 0) / 2"
                     size="medium"
-                    color="#ffd75e"
+                    :color="AV_GOLD"
                     @update:value="(v: number) => setReview({ rate: Math.round(v * 2) })"
                   />
                   <span v-if="entry.myRate" class="my-review-num">{{ entry.myRate }}/10</span>
@@ -1194,7 +1195,7 @@ html.light .detail-poster :deep(.poster-frame) {
 }
 
 :deep(.n-tabs--segment-type .n-tabs-tab--active) {
-  background: linear-gradient(135deg, rgba(138, 123, 255, 0.4), rgba(138, 123, 255, 0.16)) !important;
+  background: linear-gradient(135deg, rgb(var(--av-primary-rgb) / 0.4), rgb(var(--av-primary-rgb) / 0.16)) !important;
 }
 
 .detail-meta {
@@ -1227,7 +1228,7 @@ html.light .detail-poster :deep(.poster-frame) {
   font-size: 24px;
   font-weight: 800;
   color: var(--av-gold);
-  text-shadow: 0 0 18px rgba(255, 215, 94, 0.35);
+  text-shadow: 0 0 18px rgb(var(--av-gold-rgb) / 0.35);
 }
 
 .rate-total {
@@ -1309,7 +1310,7 @@ html.light .detail-poster :deep(.poster-frame) {
 .my-review-num {
   font-size: 13px;
   font-weight: 700;
-  color: #ffd75e;
+  color: var(--av-gold);
 }
 
 .my-review-hint {

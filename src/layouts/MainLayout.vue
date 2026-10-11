@@ -13,6 +13,7 @@ import {
   NBadge,
   NDrawer,
   NDrawerContent,
+  NPopover,
   useDialog,
   useMessage,
 } from 'naive-ui'
@@ -30,6 +31,7 @@ import {
   MoonOutline,
   SunnyOutline,
   MenuOutline,
+  ColorPaletteOutline,
 } from '@vicons/ionicons5'
 import { useSettingsStore } from '../stores/settings'
 import { useLibraryStore } from '../stores/library'
@@ -37,6 +39,7 @@ import { useSyncStore } from '../stores/sync'
 import { mediaService } from '../api/mediaService'
 import { dataSource } from '../api/dataSource'
 import { loadJson, saveJson } from '../utils/storage'
+import { THEME_PRESETS } from '../utils/theme'
 
 const route = useRoute()
 const router = useRouter()
@@ -255,6 +258,27 @@ function onMenuSelectMobile(key: string) {
         />
         <div class="sider-footer">
           <div class="footer-row">
+            <!-- v0.32 TH2（§5T）：主题色快捷色板（8 预设；取色器自定义在设置页「外观」区） -->
+            <NPopover v-if="!collapsed" trigger="click" placement="right-end">
+              <template #trigger>
+                <NButton quaternary size="tiny" class="palette-btn" aria-label="主题色">
+                  <NIcon :component="ColorPaletteOutline" />
+                </NButton>
+              </template>
+              <div class="palette-grid">
+                <button
+                  v-for="p in THEME_PRESETS"
+                  :key="p.value"
+                  type="button"
+                  class="palette-swatch"
+                  :class="{ active: settings.themeColor === p.value }"
+                  :style="{ background: p.value }"
+                  :title="p.label"
+                  :aria-label="`主题色：${p.label}`"
+                  @click="settings.applyPatch({ themeColor: p.value })"
+                />
+              </div>
+            </NPopover>
             <NIcon v-if="!collapsed" size="15" class="footer-label" :component="MoonOutline" />
             <NSwitch size="small" :value="settings.theme === 'dark'" @update:value="settings.toggleTheme()" />
             <NIcon v-if="!collapsed" size="15" class="footer-label" :component="SunnyOutline" />
@@ -354,7 +378,7 @@ function onMenuSelectMobile(key: string) {
 
 .sider-inner :deep(.n-menu .n-menu-item-content--selected) {
   position: relative;
-  background: linear-gradient(90deg, rgba(138, 123, 255, 0.22), rgba(138, 123, 255, 0.07)) !important;
+  background: linear-gradient(90deg, rgb(var(--av-primary-rgb) / 0.22), rgb(var(--av-primary-rgb) / 0.07)) !important;
 }
 
 .sider-inner :deep(.n-menu .n-menu-item-content--selected::before) {
@@ -367,7 +391,7 @@ function onMenuSelectMobile(key: string) {
   height: 18px;
   border-radius: 3px;
   background: var(--av-progress-grad);
-  box-shadow: 0 0 10px rgba(138, 123, 255, 0.8);
+  box-shadow: 0 0 10px rgb(var(--av-primary-rgb) / 0.8);
 }
 
 .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-menu-item-content-header),
@@ -381,21 +405,21 @@ function onMenuSelectMobile(key: string) {
 }
 
 html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected) {
-  background: linear-gradient(90deg, rgba(138, 123, 255, 0.18), rgba(138, 123, 255, 0.05)) !important;
+  background: linear-gradient(90deg, rgb(var(--av-primary-rgb) / 0.18), rgb(var(--av-primary-rgb) / 0.05)) !important;
 }
 
 html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-menu-item-content-header),
 html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-menu-item-content-header a) {
-  color: #5b4fd6 !important;
+  color: var(--av-primary-shade) !important;
 }
 
 html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-icon) {
-  color: #5b4fd6;
+  color: var(--av-primary-shade);
 }
 
 .sider-footer {
   margin-top: auto;
-  padding: 14px 16px 18px;
+  padding: var(--av-space-md) 16px 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -419,6 +443,37 @@ html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-icon) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* v0.32 TH2 快捷色板弹层 */
+.palette-btn {
+  font-size: 16px;
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding: 2px;
+}
+
+.palette-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.palette-swatch:hover {
+  transform: scale(1.12);
+}
+
+.palette-swatch.active {
+  box-shadow: 0 0 0 2px var(--av-glass-solid), 0 0 0 4px var(--av-ring);
 }
 
 .footer-label {
@@ -450,6 +505,13 @@ html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-icon) {
   padding: 22px 26px 40px;
 }
 
+/* LT2（v0.32）宽屏自适应：≥1600 放宽上限，周历 7 栏/详情双栏受益；卡栅 auto-fill 自然扩列 */
+@media (min-width: 1600px) {
+  .page-container {
+    max-width: 1440px;
+  }
+}
+
 /* ── P4 移动端（结构由 isMobile JS 驱动，此处仅样式） ── */
 .mobile-shell {
   height: 100%;
@@ -467,6 +529,14 @@ html.light .sider-inner :deep(.n-menu .n-menu-item-content--selected .n-icon) {
   border-bottom: 1px solid var(--av-border);
   background: var(--av-surface);
   backdrop-filter: blur(8px);
+}
+
+/* GL2（v0.32）：玻璃档下顶栏升级令牌化毛玻璃；off 档保持 v0.31 原样 */
+html[data-glass='standard'] .m-topbar,
+html[data-glass='strong'] .m-topbar {
+  background: var(--av-glass-bg);
+  backdrop-filter: var(--av-glass-filter);
+  -webkit-backdrop-filter: var(--av-glass-filter);
 }
 
 .m-logo {

@@ -373,7 +373,7 @@ function continueWatch(id: number) {
   height: 15px;
   border-radius: 3px;
   background: var(--av-progress-grad);
-  box-shadow: 0 0 8px rgba(138, 123, 255, 0.6);
+  box-shadow: 0 0 8px rgb(var(--av-primary-rgb) / 0.6);
 }
 
 .today-row {
@@ -467,7 +467,7 @@ function continueWatch(id: number) {
   height: 8px;
   border-radius: 50%;
   background: var(--av-primary);
-  box-shadow: 0 0 8px rgba(138, 123, 255, 0.8);
+  box-shadow: 0 0 8px rgb(var(--av-primary-rgb) / 0.8);
   flex: none;
 }
 
@@ -510,12 +510,12 @@ function continueWatch(id: number) {
 
 .week-chip.today {
   background: var(--av-primary-soft-strong);
-  color: #cfc7ff;
+  color: var(--av-primary-ink);
   font-weight: 700;
 }
 
 html.light .week-chip.today {
-  color: #5b4fd6;
+  color: var(--av-primary-shade);
 }
 
 .week-items {

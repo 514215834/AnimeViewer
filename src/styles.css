@@ -1,13 +1,20 @@
 /* ═══ 设计令牌 ═══
    命名约定：--av-*。暗色为默认（:root），亮色经 html.light 覆盖；
-   App.vue 监听 settings.theme 同步切换 class，与 naive-ui themeOverrides 同源对齐 */
+   App.vue 监听 settings.theme 同步切换 class，与 naive-ui themeOverrides 同源对齐。
+   v0.32 TH1（§5T）：主色唯一事实源 = settings.themeColor——App.vue 经 utils/theme.ts 派生后
+   以内联变量覆盖 :root 默认值；本处字面量仅为 JS 生效前的首帧回退，不再是需双处同步的源 */
 :root {
-  /* 主色（与 App.vue themeOverrides 一致，改动需两处同步） */
+  /* 主色（rgb 分量串供 rgb(var(--av-primary-rgb) / alpha) 现代语法引用） */
+  --av-primary-rgb: 138 123 255;
   --av-primary: #8a7bff;
-  --av-primary-hover: #a092ff;
-  --av-primary-pressed: #6f61e0;
-  --av-primary-soft: rgba(138, 123, 255, 0.16);
-  --av-primary-soft-strong: rgba(138, 123, 255, 0.3);
+  --av-primary-hover: #9d90ff;
+  --av-primary-pressed: #776adb;
+  --av-primary-soft: rgb(var(--av-primary-rgb) / 0.16);
+  --av-primary-soft-strong: rgb(var(--av-primary-rgb) / 0.3);
+  /* 主色高/暗变体文字（主色软底上的高对比字，随主题色派生，App.vue 写入）：
+     ink=暗色下的亮变体、shade=亮色下的暗变体（旧手调 #cfc7ff / #5b4fd6 的派生替代） */
+  --av-primary-ink: #cfc9ff;
+  --av-primary-shade: #5a50a8;
 
   /* 表面 / 边框 / 文字层级 */
   --av-surface: rgba(255, 255, 255, 0.045);
@@ -17,8 +24,12 @@
   --av-text-secondary: rgba(255, 255, 255, 0.62);
   --av-text-tertiary: rgba(255, 255, 255, 0.4);
 
-  /* 语义色 */
+  /* 语义色（不随主题色：金色评分/警告提示保持独立语义，§5T 设计定案） */
   --av-gold: #ffd75e;
+  --av-gold-rgb: 255 215 94;
+  --av-gold-ink: var(--av-gold);
+  --av-warn: #e6a23c;
+  --av-warn-rgb: 230 162 60;
   --av-badge-overlay: rgba(0, 0, 0, 0.65);
   --av-img-placeholder: rgba(128, 128, 128, 0.12);
   --av-scrollbar: rgba(128, 128, 128, 0.4);
@@ -27,24 +38,37 @@
   --av-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28);
   --av-shadow-md: 0 8px 20px rgba(0, 0, 0, 0.36);
   --av-shadow-lg: 0 14px 30px rgba(0, 0, 0, 0.5);
-  --av-shadow-primary: 0 8px 20px rgba(138, 123, 255, 0.28);
+  --av-shadow-primary: 0 8px 20px rgb(var(--av-primary-rgb) / 0.28);
   --av-radius-sm: 6px;
   --av-radius: 10px;
   --av-radius-lg: 14px;
 
+  /* ═══ v0.32 LT1 排版节奏三阶间距（页头/区块/卡栅的统一档位，规格表见迭代文档 §5T） ═══ */
+  --av-space-sm: 8px;
+  --av-space-md: 14px;
+  --av-space-lg: 24px;
+
+  /* ═══ v0.32 GL1 玻璃三档（html[data-glass] = off / standard / strong，App.vue 写入） ═══
+     off 档实色与 naive 默认面板同色（暗 #18181c / 亮 #fff）= v0.31 视觉回退件；
+     backdrop-filter 不可用（@supports）或系统偏好减少透明效果时强制回退 off（见文件尾降级规则） */
+  --av-glass-solid: #18181c;
+  --av-glass-bg: var(--av-glass-solid);
+  --av-glass-filter: none;
+  --av-glass-border: rgba(255, 255, 255, 0.09);
+
   /* ═══ v0.12 B1/B4/B5/B6 氛围与质感 ═══ */
   /* 环境光（body 氛围层两束光 + 点阵纹理色） */
-  --av-glow-1: rgba(138, 123, 255, 0.15);
+  --av-glow-1: rgb(var(--av-primary-rgb) / 0.15);
   --av-glow-2: rgba(96, 165, 250, 0.07);
   --av-dot: rgba(255, 255, 255, 0.02);
   /* hover 主色描边光环（卡片 / 信息行通用） */
-  --av-ring: rgba(138, 123, 255, 0.45);
+  --av-ring: rgb(var(--av-primary-rgb) / 0.45);
   /* 渐变表面 + 内侧高光（统计卡 / 信息行 / 面板盒） */
   --av-surface-grad: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.022));
   --av-card-shadow: 0 6px 18px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  /* 品牌徽章 / 进度线渐变 */
-  --av-badge-grad: linear-gradient(135deg, #9d8fff, #7466ea);
-  --av-progress-grad: linear-gradient(90deg, #a092ff, #7466ea);
+  /* 品牌徽章 / 进度线渐变（v0.32 TH1：随主题色 hover/pressed 派生，不再手调两个中间色） */
+  --av-badge-grad: linear-gradient(135deg, var(--av-primary-hover), var(--av-primary-pressed));
+  --av-progress-grad: linear-gradient(90deg, var(--av-primary-hover), var(--av-primary-pressed));
   /* 详情 Hero 背板压暗层（自透明渐入页面底色） */
   --av-hero-shade: linear-gradient(180deg, rgba(16, 16, 20, 0.25), rgba(16, 16, 20, 0.62) 62%, rgba(16, 16, 20, 0.96));
 }
@@ -61,15 +85,58 @@ html.light {
   --av-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
   --av-shadow-md: 0 8px 20px rgba(0, 0, 0, 0.12);
   --av-shadow-lg: 0 14px 30px rgba(30, 30, 80, 0.18);
-  --av-shadow-primary: 0 8px 20px rgba(138, 123, 255, 0.2);
+  --av-shadow-primary: 0 8px 20px rgb(var(--av-primary-rgb) / 0.2);
+  /* 金色/警告橙亮色可读变体（旧 AnimeCard #a07c00、LibraryView #d99a2b 收口） */
+  --av-gold-ink: #a07c00;
+  --av-warn: #d99a2b;
+  --av-warn-rgb: 217 154 43;
   /* B8：亮色氛围（浅光晕 / 白卡浅投影 / Hero 提亮压暗层） */
-  --av-glow-1: rgba(138, 123, 255, 0.12);
+  --av-glow-1: rgb(var(--av-primary-rgb) / 0.12);
   --av-glow-2: rgba(96, 165, 250, 0.08);
   --av-dot: rgba(20, 20, 50, 0.035);
-  --av-ring: rgba(138, 123, 255, 0.35);
+  --av-ring: rgb(var(--av-primary-rgb) / 0.35);
   --av-surface-grad: linear-gradient(180deg, #ffffff, #fdfdff);
   --av-card-shadow: 0 2px 10px rgba(30, 30, 80, 0.06);
   --av-hero-shade: linear-gradient(180deg, rgba(244, 244, 249, 0.3), rgba(244, 244, 249, 0.78) 62%, rgba(244, 244, 249, 0.98));
+  /* GL1 亮色玻璃三档（off 实色 #fff 与 naive 亮色面板同色） */
+  --av-glass-solid: #ffffff;
+  --av-glass-border: rgba(20, 20, 50, 0.1);
+}
+
+html[data-glass='standard'] {
+  --av-glass-filter: blur(18px) saturate(1.4);
+  --av-glass-bg: rgba(24, 24, 30, 0.62);
+}
+
+html[data-glass='strong'] {
+  --av-glass-filter: blur(28px) saturate(1.5);
+  --av-glass-bg: rgba(20, 20, 26, 0.45);
+}
+
+html.light[data-glass='standard'] {
+  --av-glass-bg: rgba(255, 255, 255, 0.68);
+}
+
+html.light[data-glass='strong'] {
+  --av-glass-bg: rgba(255, 255, 255, 0.55);
+}
+
+/* GL1 降级链：backdrop-filter 不可用 / 系统偏好减少透明 → 强制 off 档实色
+   （只改变量，玻璃规则本身引用变量，选择器无需重复罗列） */
+@supports not (backdrop-filter: blur(1px)) {
+  html[data-glass='standard'],
+  html[data-glass='strong'] {
+    --av-glass-filter: none;
+    --av-glass-bg: var(--av-glass-solid);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html[data-glass='standard'],
+  html[data-glass='strong'] {
+    --av-glass-filter: none;
+    --av-glass-bg: var(--av-glass-solid);
+  }
 }
 
 * {
@@ -110,7 +177,9 @@ html.light body {
   background: transparent !important;
 }
 
-/* B2 侧边栏半透明渐变（暗色透出氛围光；亮色为白玻璃） */
+/* B2 侧边栏半透明渐变（暗色透出氛围光；亮色为白玻璃）。
+   GL2（v0.32）：standard/strong 档升级为毛玻璃（透出氛围层模糊光斑）；
+   off 档保持 v0.31 渐变原样（回退件），故玻璃规则按 data-glass 门控 */
 .n-layout-sider {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015)) !important;
 }
@@ -119,9 +188,38 @@ html.light .n-layout-sider {
   background: rgba(255, 255, 255, 0.75) !important;
 }
 
+html[data-glass='standard'] .n-layout-sider,
+html[data-glass='strong'] .n-layout-sider {
+  background: var(--av-glass-bg) !important;
+  backdrop-filter: var(--av-glass-filter);
+  -webkit-backdrop-filter: var(--av-glass-filter);
+}
+
+/* ═══ v0.32 GL2 浮层面板毛玻璃化 ═══
+   bg/backdrop-filter 引用玻璃令牌：off 档变量退化为实色（暗 #18181c / 亮 #fff，
+   与 naive 默认面板同色）= v0.31 视觉；描边仅玻璃档追加（off 档零差异）。
+   范围 = 大浮层（对话框/模态/抽屉）；tooltip/dropdown/select 等小浮层维持实色（可读性定案）；
+   长列表卡片网格不玻璃化（content-visibility 卡片 + 全员 blur 拖垮滚动合成，性能红线） */
+.n-dialog,
+.n-modal,
+.n-drawer {
+  background: var(--av-glass-bg) !important;
+  backdrop-filter: var(--av-glass-filter) !important;
+  -webkit-backdrop-filter: var(--av-glass-filter) !important;
+}
+
+html[data-glass='standard'] .n-dialog,
+html[data-glass='strong'] .n-dialog,
+html[data-glass='standard'] .n-modal,
+html[data-glass='strong'] .n-modal,
+html[data-glass='standard'] .n-drawer,
+html[data-glass='strong'] .n-drawer {
+  border: 1px solid var(--av-glass-border);
+}
+
 /* ═══ v0.12 B7 细节一致性 ═══ */
 ::selection {
-  background: rgba(138, 123, 255, 0.35);
+  background: rgb(var(--av-primary-rgb) / 0.35);
 }
 
 /* 键盘焦点环：原生 button/a 补齐（naive 组件自带焦点态，排除 .n-button 避免双环） */
@@ -152,9 +250,9 @@ button:not(.n-button):focus-visible {
   background: transparent;
 }
 
-/* ═══ v0.12 B3 页面标题体系 ═══ */
+/* ═══ v0.12 B3 页面标题体系（LT1 排版规格：页头下距 = --av-space-md） ═══ */
 .page-head {
-  margin-bottom: 14px;
+  margin-bottom: var(--av-space-md);
 }
 
 .page-head h2 {
@@ -181,8 +279,9 @@ button:not(.n-button):focus-visible {
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 18px 14px;
-  padding: 18px 2px 24px;
+  /* LT1 排版规格：列距 = --av-space-md；行距 18px 与容器 22/26/40 属卡栅特有节奏（规格表备注） */
+  gap: 18px var(--av-space-md);
+  padding: 18px 2px var(--av-space-lg);
 }
 
 /* 空状态统一由 components/EmptyHint.vue 承担（v0.10 U3），全局样式不再保留 */
@@ -191,8 +290,8 @@ button:not(.n-button):focus-visible {
 @media (max-width: 768px) {
   .card-grid {
     grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
-    gap: 14px 10px;
-    padding: 14px 0 20px;
+    gap: var(--av-space-md) 10px;
+    padding: var(--av-space-md) 0 20px;
   }
 
   .page-head h2 {

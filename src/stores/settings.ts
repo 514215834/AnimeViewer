@@ -1,13 +1,20 @@
 import { defineStore } from 'pinia'
 import { loadJson, saveJson } from '../utils/storage'
+import { DEFAULT_THEME_COLOR } from '../utils/theme'
 
 export type DataSource = 'online' | 'demo'
 export type ThemeMode = 'dark' | 'light'
+/** v0.32 GL1（§5T）玻璃效果强度：off=实色（与 v0.31 视觉一致，回退件）/ standard / strong */
+export type GlassLevel = 'off' | 'standard' | 'strong'
 /** 图片清晰度：极致=400px 高清=200px 省流=150px（lain 封面仅支持 200/400 两档缩放 + 150px common） */
 export type ImageQuality = 'extreme' | 'high' | 'saver'
 
 export interface SettingsState {
   theme: ThemeMode
+  /** v0.32 TH1 主题色单一事实源（§5T）：CSS 变量与 naive themeOverrides 均由它派生（utils/theme.ts） */
+  themeColor: string
+  /** v0.32 GL1 玻璃效果强度（§5T）：off 档实色与 v0.31 视觉一致 */
+  glassLevel: GlassLevel
   dataSource: DataSource
   apiBaseUrl: string
   /** 图片镜像地址：将 lain.bgm.tv 主机替换为该地址（保留路径），留空使用官方源 */
@@ -54,6 +61,8 @@ export const DEFAULT_ACCESS_TOKEN = ''
 
 export const DEFAULT_SETTINGS: SettingsState = {
   theme: 'dark',
+  themeColor: DEFAULT_THEME_COLOR,
+  glassLevel: 'standard',
   dataSource: 'online',
   apiBaseUrl: 'https://api.bgm.tv',
   mirrorImageUrl: '',

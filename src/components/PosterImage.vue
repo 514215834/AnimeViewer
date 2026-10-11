@@ -140,9 +140,9 @@ onBeforeUnmount(() => {
   background: linear-gradient(
     100deg,
     rgba(128, 128, 128, 0.1) 35%,
-    rgba(138, 123, 255, 0.1) 48%,
+    rgb(var(--av-primary-rgb) / 0.1) 48%,
     rgba(255, 255, 255, 0.12) 50%,
-    rgba(138, 123, 255, 0.1) 52%,
+    rgb(var(--av-primary-rgb) / 0.1) 52%,
     rgba(128, 128, 128, 0.1) 65%
   );
   background-size: 200% 100%;
