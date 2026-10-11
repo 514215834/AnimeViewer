@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import {
   NAlert,
@@ -33,7 +33,7 @@ import type { IdbStats } from '../utils/idbCache'
 import { clearErrLog, formatDiagnostics, readErrLog } from '../utils/errlog'
 import type { ErrLogEntry } from '../utils/errlog'
 import { exportMedia, importMedia } from '../utils/mediaStore'
-import { buildHanimeVerifyUrl, mediaService, ServiceError, type SvcDownloadEngine, type SvcHealth, type SvcStatus } from '../api/mediaService'
+import { mediaService, ServiceError, type SvcDownloadEngine, type SvcHealth, type SvcStatus } from '../api/mediaService'
 import MediaLibraryDrawer from '../components/MediaLibraryDrawer.vue'
 
 const message = useMessage()
@@ -505,50 +505,21 @@ async function clearHanimeCookie() {
   }
 }
 
-/* ── v0.33（§5U）人机校验窗口：弹窗打开服务端校验反向代理，用户在弹窗内通过 Cloudflare 验证，
- *    服务端自动捕获 Cookie（Set-Cookie 增量入 jar）与浏览器真实 UA 并落库；本页轮询 cookieUpdatedAt
- *    变化感知回填成功。替代「手动复制 Cookie+UA」流程（保留为备用通道）。 ── */
-const hanimeVerifying = ref(false)
-let hanimeVerifyTimer: number | null = null
-
-async function openHanimeVerify() {
-  if (!settings.svcEnabled || hanimeVerifying.value) return
-  // window.open 必须在用户手势的同步调用栈内执行——await 之后开窗会被浏览器按程序弹窗拦截
-  // （IAB/Chrome 实测必现）。先同步开空白窗并立即导航，再异步取基线启动轮询。
-  const win = window.open('about:blank', 'av-hanime-verify', 'width=1040,height=820')
+/* ── v0.33（§5U）人机校验窗口：弹窗直开真实站点（浏览器 TLS 可正常过 Cloudflare 验证）。
+ *    自动回填通道（服务端校验期反向代理）已实机定案不可达：求解流量经 Java HttpClient TLS
+ *    转发被 CF 风控拒绝签发 clearance（质询循环实证）——代理基建保留（服务端 0.33.0，Tauri
+ *    桌面版转正：真 WebView 直连 + 原生 Cookie API），当前走「弹窗过验证 → 备用通道粘贴」 ── */
+function openHanimeVerify() {
+  const win = window.open('https://hanime1.me/', 'av-hanime-verify')
   if (!win) {
     message.warning('校验窗口被浏览器拦截——请允许本站弹出窗口后重试')
     return
   }
-  win.location.href = buildHanimeVerifyUrl(settings.svcUrl, settings.svcToken)
-  hanimeVerifying.value = true
-  hanimeError.value = ''
-  const baseline = await mediaService.hanimeConfig().then((c) => c.cookieUpdatedAt ?? 0).catch(() => 0)
-  hanimeVerifyTimer = window.setInterval(async () => {
-    if (win.closed) {
-      stopHanimeVerify()
-      return
-    }
-    try {
-      const c = await mediaService.hanimeConfig()
-      if ((c.cookieUpdatedAt ?? 0) > baseline) {
-        stopHanimeVerify()
-        hanime.hasCookie = c.hasCookie
-        hanimeUaDraft.value = c.ua
-        message.success('校验通过：Cookie 与 User-Agent 已自动写入，无需手动粘贴')
-      }
-    } catch {
-      /* 服务瞬时不可达：下一轮再试 */
-    }
-  }, 2000)
-}
-
-function stopHanimeVerify() {
-  hanimeVerifying.value = false
-  if (hanimeVerifyTimer !== null) {
-    window.clearInterval(hanimeVerifyTimer)
-    hanimeVerifyTimer = null
-  }
+  message.info(
+    '在弹窗中通过人机验证后：F12 → 网络 → 任一请求 → 复制请求头 Cookie 整段与 User-Agent，'
+    + '粘贴到下方备用通道并保存（UA 需与弹窗所用浏览器一致）',
+    { duration: 12000 },
+  )
 }
 
 async function testHanime() {
@@ -586,8 +557,6 @@ const profileAvatar = computed(() => {
   const raw = img?.large || img?.medium || img?.small || ''
   return applyImageMirror(raw.replace(/^http:\/\//, 'https://'))
 })
-
-onBeforeUnmount(() => stopHanimeVerify())
 
 onMounted(() => {
   void sync.ensureProfile()
@@ -1210,9 +1179,10 @@ async function onImportFile(ev: Event) {
                 </span>
               </div>
               <div class="btn-row" style="margin-bottom: 10px">
-                <!-- v0.33（§5U）推荐通道：弹窗内通过人机验证，服务端自动回填 Cookie 与 UA -->
-                <NButton type="primary" secondary size="small" :loading="hanimeVerifying" :disabled="!settings.svcEnabled" @click="openHanimeVerify">
-                  打开人机校验窗口（自动回填 Cookie 与 UA）
+                <!-- v0.33（§5U）：弹窗直开真实站点过验证（浏览器 TLS 可解）；自动回填通道被 CF
+                     TLS 指纹风控阻断（实测定案，服务端代理基建保留待 Tauri 转正） -->
+                <NButton type="primary" secondary size="small" :disabled="!settings.svcEnabled" @click="openHanimeVerify">
+                  打开 hanime1.me 过验证（弹窗）
                 </NButton>
               </div>
               <div class="sub-row2" style="margin-bottom: 8px">

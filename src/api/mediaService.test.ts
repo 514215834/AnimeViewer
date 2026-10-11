@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aiBatchSummary, buildHanimeVerifyUrl, buildStreamUrl, isDirectExt, needsTranscode, servicePositionId } from './mediaService'
+import { aiBatchSummary, buildStreamUrl, isDirectExt, needsTranscode, servicePositionId } from './mediaService'
 
 describe('v0.14 mediaService 纯函数', () => {
   it('buildStreamUrl：基础地址拼接 + 尾斜杠规范化', () => {
@@ -286,14 +286,3 @@ describe('v0.19 订阅观看基线（maxWatched 纯函数）', () => {
   })
 })
 
-/* ── v0.33（§5U）人机校验窗口地址 ── */
-describe('v0.33 buildHanimeVerifyUrl', () => {
-  it('token 走路径段（弹窗内整站资源无法带自定义头），尾斜杠保证相对资源落代理命名空间，尾斜杠规范化', () => {
-    expect(buildHanimeVerifyUrl('http://127.0.0.1:8787', 'tok')).toBe('http://127.0.0.1:8787/api/hanime/verify/tok/')
-    expect(buildHanimeVerifyUrl('http://127.0.0.1:8787/', 'tok')).toBe('http://127.0.0.1:8787/api/hanime/verify/tok/')
-  })
-
-  it('token 特殊字符 URL 编码（路径段安全）', () => {
-    expect(buildHanimeVerifyUrl('http://s', 'a/b c')).toBe('http://s/api/hanime/verify/a%2Fb%20c/')
-  })
-})
