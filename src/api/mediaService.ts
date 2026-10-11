@@ -423,18 +423,27 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = 10000): 
     return (await res.json()) as T
   } catch (e) {
     if (e instanceof ServiceError) throw e
+    // 超时与真「不可达」（连接拒绝/DNS/CORS）分开文案：慢端点（如在线解析连通测试的服务端
+    // 出站探测）此前会把「服务端还在处理」误报成「服务不可达」（v0.32 补记七实测 10.27s > 10s）
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new ServiceError('unreachable', '媒体服务响应超时（服务端处理耗时超过请求时限，并非不可达）')
+    }
     throw new ServiceError('unreachable', '媒体服务不可达（请确认服务已启动且地址正确）')
   } finally {
     clearTimeout(timer)
   }
 }
 
-function post<T>(path: string, body?: unknown): Promise<T> {
-  return request<T>(path, {
-    method: 'POST',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+function post<T>(path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+  return request<T>(
+    path,
+    {
+      method: 'POST',
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    },
+    timeoutMs,
+  )
 }
 
 export const mediaService = {
@@ -773,7 +782,9 @@ export const mediaService = {
   },
   /** 连通测试（恒 200，ok=false 时 message 为三分类原因）；服务端抓取+容灾可到 60s 级——45s 超时 */
   testHanime(): Promise<SvcHanimeTest> {
-    return post<SvcHanimeTest>('/api/hanime/test')
+    // 45s 对齐 search/watch（v0.26 同族端点）：服务端出站探测站点（含质询页等待）实测 >10s，
+    // 默认 10s 超时会先于响应触发，把真实结果误报成「媒体服务不可达」（v0.32 补记七）
+    return post<SvcHanimeTest>('/api/hanime/test', undefined, 45000)
   },
   hanimeSearch(params: { query?: string; genre?: string; sort?: string; page?: number }): Promise<SvcHanimeSearchResult> {
     const qs = new URLSearchParams()
