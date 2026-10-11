@@ -513,18 +513,17 @@ let hanimeVerifyTimer: number | null = null
 
 async function openHanimeVerify() {
   if (!settings.svcEnabled || hanimeVerifying.value) return
-  const baseline = await mediaService.hanimeConfig().then((c) => c.cookieUpdatedAt ?? 0).catch(() => 0)
-  const win = window.open(
-    buildHanimeVerifyUrl(settings.svcUrl, settings.svcToken),
-    'av-hanime-verify',
-    'width=1040,height=820',
-  )
+  // window.open 必须在用户手势的同步调用栈内执行——await 之后开窗会被浏览器按程序弹窗拦截
+  // （IAB/Chrome 实测必现）。先同步开空白窗并立即导航，再异步取基线启动轮询。
+  const win = window.open('about:blank', 'av-hanime-verify', 'width=1040,height=820')
   if (!win) {
     message.warning('校验窗口被浏览器拦截——请允许本站弹出窗口后重试')
     return
   }
+  win.location.href = buildHanimeVerifyUrl(settings.svcUrl, settings.svcToken)
   hanimeVerifying.value = true
   hanimeError.value = ''
+  const baseline = await mediaService.hanimeConfig().then((c) => c.cookieUpdatedAt ?? 0).catch(() => 0)
   hanimeVerifyTimer = window.setInterval(async () => {
     if (win.closed) {
       stopHanimeVerify()
