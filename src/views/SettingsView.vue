@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import {
   NAlert,
@@ -33,7 +33,7 @@ import type { IdbStats } from '../utils/idbCache'
 import { clearErrLog, formatDiagnostics, readErrLog } from '../utils/errlog'
 import type { ErrLogEntry } from '../utils/errlog'
 import { exportMedia, importMedia } from '../utils/mediaStore'
-import { mediaService, ServiceError, type SvcDownloadEngine, type SvcHealth, type SvcStatus } from '../api/mediaService'
+import { buildHanimeVerifyUrl, mediaService, ServiceError, type SvcDownloadEngine, type SvcHealth, type SvcStatus } from '../api/mediaService'
 import MediaLibraryDrawer from '../components/MediaLibraryDrawer.vue'
 
 const message = useMessage()
@@ -505,6 +505,53 @@ async function clearHanimeCookie() {
   }
 }
 
+/* ── v0.33（§5U）人机校验窗口：弹窗打开服务端校验反向代理，用户在弹窗内通过 Cloudflare 验证，
+ *    服务端自动捕获 Cookie（Set-Cookie 增量入 jar）与浏览器真实 UA 并落库；本页轮询 cookieUpdatedAt
+ *    变化感知回填成功。替代「手动复制 Cookie+UA」流程（保留为备用通道）。 ── */
+const hanimeVerifying = ref(false)
+let hanimeVerifyTimer: number | null = null
+
+async function openHanimeVerify() {
+  if (!settings.svcEnabled || hanimeVerifying.value) return
+  const baseline = await mediaService.hanimeConfig().then((c) => c.cookieUpdatedAt ?? 0).catch(() => 0)
+  const win = window.open(
+    buildHanimeVerifyUrl(settings.svcUrl, settings.svcToken),
+    'av-hanime-verify',
+    'width=1040,height=820',
+  )
+  if (!win) {
+    message.warning('校验窗口被浏览器拦截——请允许本站弹出窗口后重试')
+    return
+  }
+  hanimeVerifying.value = true
+  hanimeError.value = ''
+  hanimeVerifyTimer = window.setInterval(async () => {
+    if (win.closed) {
+      stopHanimeVerify()
+      return
+    }
+    try {
+      const c = await mediaService.hanimeConfig()
+      if ((c.cookieUpdatedAt ?? 0) > baseline) {
+        stopHanimeVerify()
+        hanime.hasCookie = c.hasCookie
+        hanimeUaDraft.value = c.ua
+        message.success('校验通过：Cookie 与 User-Agent 已自动写入，无需手动粘贴')
+      }
+    } catch {
+      /* 服务瞬时不可达：下一轮再试 */
+    }
+  }, 2000)
+}
+
+function stopHanimeVerify() {
+  hanimeVerifying.value = false
+  if (hanimeVerifyTimer !== null) {
+    window.clearInterval(hanimeVerifyTimer)
+    hanimeVerifyTimer = null
+  }
+}
+
 async function testHanime() {
   hanimeTesting.value = true
   hanimeError.value = ''
@@ -540,6 +587,8 @@ const profileAvatar = computed(() => {
   const raw = img?.large || img?.medium || img?.small || ''
   return applyImageMirror(raw.replace(/^http:\/\//, 'https://'))
 })
+
+onBeforeUnmount(() => stopHanimeVerify())
 
 onMounted(() => {
   void sync.ensureProfile()
@@ -1161,18 +1210,24 @@ async function onImportFile(ev: Event) {
                   />
                 </span>
               </div>
+              <div class="btn-row" style="margin-bottom: 10px">
+                <!-- v0.33（§5U）推荐通道：弹窗内通过人机验证，服务端自动回填 Cookie 与 UA -->
+                <NButton type="primary" secondary size="small" :loading="hanimeVerifying" :disabled="!settings.svcEnabled" @click="openHanimeVerify">
+                  打开人机校验窗口（自动回填 Cookie 与 UA）
+                </NButton>
+              </div>
               <div class="sub-row2" style="margin-bottom: 8px">
                 <NInput
                   v-model:value="hanimeCookieDraft"
                   type="textarea"
                   :rows="2"
-                  placeholder="浏览器 Cookie（可选，明文不回显）。触发人机质询时必填：浏览器打开 hanime1.me 通过验证 → F12 → 网络 → 任一请求 → 复制请求头 Cookie 整段粘贴此处（质询 Cookie 与 User-Agent 绑定，请同时填写下方 UA）"
+                  placeholder="备用通道 · 浏览器 Cookie（明文不回显，非空保存=更新）：浏览器打开 hanime1.me 通过验证 → F12 → 网络 → 任一请求 → 复制请求头 Cookie 整段粘贴（质询 Cookie 与 User-Agent 绑定，需同时填写下方 UA）"
                 />
               </div>
               <div class="sub-row2" style="margin-bottom: 8px">
                 <NInput
                   v-model:value="hanimeUaDraft"
-                  placeholder="浏览器 User-Agent（与质询 Cookie 绑定，建议配对填写）：同一条请求头复制 User-Agent 整串粘贴；留空 = 不改动（服务端默认 Chrome/126）"
+                  placeholder="备用通道 · 浏览器 User-Agent（与质询 Cookie 配对）：同一条请求头复制整串粘贴；留空 = 不改动"
                 />
               </div>
               <div class="svc-status ai-status">
@@ -1187,10 +1242,11 @@ async function onImportFile(ev: Event) {
                 </div>
               </div>
               <div class="svc-tip">
-                页面解析与视频转发都在服务端进行：hanime1.com 已 301 并入 hanime1.me（唯一实体，WAF 拦机房出口），
-                服务端按 直连→代理 容灾（视频流经服务端 Range 转发，签名直链不落前端）；质询 Cookie 按域名区域 +
-                出口 IP + User-Agent 三重绑定——粘贴 Cookie 后仍被质询时，配对粘贴同一请求头的 UA，并确认浏览器
-                与服务端走同一代理出口。剧集 Tab 搜索后可播放或「绑定」到单集（重进直达）。
+                校验窗口原理：弹窗全程经本机媒体服务代理访问站点——Cloudflare 看到的出口 IP 与后续服务端
+                抓取完全一致，UA 用浏览器真实值、Cookie 从验证响应自动捕获，通过即自动回填（cf_clearance
+                按域名区域 + 出口 IP + UA 三重绑定，三者由代理解耦对齐）。若弹窗内呈现「封锁页」或验证
+                循环（Cloudflare 对代理链路 TLS 指纹的风控边界），回退上方备用手动通道。视频流仍经服务端
+                Range 转发；剧集 Tab 搜索后可播放或「绑定」到单集（重进直达）。
               </div>
             </div>
           </NCollapseItem>

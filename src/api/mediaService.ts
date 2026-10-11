@@ -168,6 +168,12 @@ export function buildStreamUrl(baseUrl: string, token: string, fileId: number, t
   return `${base}/api/stream/${fileId}?${qs.toString()}`
 }
 
+/** v0.33（§5U）人机校验窗口地址（纯函数）：弹窗打开服务端校验反向代理——token 走路径段
+ *  （弹窗内整站资源与重定向链无法携带 X-AV-Token 头）；尾斜杠保证相对资源落在代理命名空间 */
+export function buildHanimeVerifyUrl(baseUrl: string, token: string): string {
+  return `${baseUrl.trim().replace(/\/+$/, '')}/api/hanime/verify/${encodeURIComponent(token)}/`
+}
+
 /** v0.15 O1 流代理地址（纯函数）：直链/HLS 经服务代理转发（Token 查询参数传递） */
 export function buildProxyUrl(baseUrl: string, token: string, targetUrl: string): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
@@ -1093,6 +1099,8 @@ export interface SvcHanimeConfig {
   ua: string
   /** cookie 不回传明文，只回是否已配置 */
   hasCookie: boolean
+  /** v0.33 校验代理自动回填/手动保存的最后时间戳（前端轮询感知回填成功；旧版服务端无此字段） */
+  cookieUpdatedAt?: number | null
 }
 
 export interface SvcHanimeSearchItem {
