@@ -24,3 +24,6 @@ tsconfig.tsbuildinfo
 # Tauri 构建产物残留（v1.0 桌面化时重建工程）
 release/
 src-tauri/
+
+# 测试产物（Playwright/E2E 走查截图与运行态）
+test-results/
